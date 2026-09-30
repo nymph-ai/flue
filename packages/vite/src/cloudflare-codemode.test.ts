@@ -139,8 +139,11 @@ describe('Cloudflare Worker bundle', () => {
 				scripts.flatMap(([file, code]) =>
 					[...code.matchAll(new RegExp(pattern.source, 'g'))].map((match) => {
 						// rolldown heads each source module's code with `//#region <path>`.
-						const region = [...code.slice(0, match.index).matchAll(/\/\/#region (\S+)/g)].at(-1)?.[1];
-						return `${file} [${region ?? 'no region'}]: …${code.slice(Math.max(0, match.index - 80), match.index + 60)}…`;
+						// An import at the top of a chunk precedes every region: name the chunk's modules.
+						const region =
+							[...code.slice(0, match.index).matchAll(/\/\/#region (\S+)/g)].at(-1)?.[1] ??
+							[...new Set([...code.matchAll(/\/\/#region (\S+)/g)].map((m) => m[1]))].join(', ');
+						return `${file} [${region}]: …${code.slice(Math.max(0, match.index - 80), match.index + 60)}…`;
 					}),
 				);
 			// The MCP client is in the Worker (the coordinator's connection cache)...
