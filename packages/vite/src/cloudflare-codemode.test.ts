@@ -137,9 +137,11 @@ describe('Cloudflare Worker bundle', () => {
 			/** Every match of `pattern` in the Worker's scripts, with its file and surroundings. */
 			const findings = (pattern: RegExp) =>
 				scripts.flatMap(([file, code]) =>
-					[...code.matchAll(new RegExp(pattern.source, 'g'))].map(
-						(match) => `${file}: …${code.slice(Math.max(0, match.index - 120), match.index + 80)}…`,
-					),
+					[...code.matchAll(new RegExp(pattern.source, 'g'))].map((match) => {
+						// rolldown heads each source module's code with `//#region <path>`.
+						const region = [...code.slice(0, match.index).matchAll(/\/\/#region (\S+)/g)].at(-1)?.[1];
+						return `${file} [${region ?? 'no region'}]: …${code.slice(Math.max(0, match.index - 80), match.index + 60)}…`;
+					}),
 				);
 			// The MCP client is in the Worker (the coordinator's connection cache)...
 			expect(findings(/Mcp-Session-Id/).length).toBeGreaterThan(0);
