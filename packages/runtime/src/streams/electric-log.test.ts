@@ -7,19 +7,22 @@
  *    `src/store.ts` `append`/`validateProducer`): the same statuses, headers
  *    and bodies, including where the Node and Rust servers differ.
  * 2. Canned responses for the mapping edge cases.
- * 3. A real server, when `FLUE_DS_URL` is set to its stream root. Skipped
- *    otherwise. To run it:
+ * 3. A real server, when `FLUE_DS_URL` is set to its stream root (skipped
+ *    otherwise). `scripts/test-durable-streams-server.sh` installs and starts
+ *    `@durable-streams/server` outside the workspace, plus a webhook receiver
+ *    (`FLUE_DS_WEBHOOK_URL`, `FLUE_DS_WEBHOOK_CAPTURE_URL`), then runs this file:
  *
  *    ```sh
- *    # terminal 1 — the reference server (what Electric's agents-server embeds)
- *    npm i --prefix /tmp/ds @durable-streams/server
- *    node --input-type=module -e "import { DurableStreamTestServer } from '/tmp/ds/node_modules/@durable-streams/server/dist/index.js'; \
- *      await new DurableStreamTestServer({ port: 4437, longPollTimeout: 2000 }).start()"
- *    # terminal 2
- *    FLUE_DS_URL=http://127.0.0.1:4437/v1/stream pnpm --filter @flue/runtime exec vitest run src/streams/electric-log.test.ts
+ *    pnpm --filter @flue/runtime exec bash scripts/test-durable-streams-server.sh
  *    ```
  */
 import { describe, expect, it } from 'vitest';
+import {
+	jwksWebhookKeys,
+	parseWebhookBody,
+	verifyWebhookSignature,
+	webhookJwksUrl,
+} from '../entity/webhook.ts';
 import { defineDurableStreamLogContractTests } from '../test-utils/define-durable-stream-log-contract-tests.ts';
 import { ElectricDurableStreamLog } from './electric-log.ts';
 import { DurableStreamLogError } from './log.ts';
@@ -365,14 +368,74 @@ defineDurableStreamLogContractTests('ElectricDurableStreamLog (Node reference se
 	},
 });
 
-const realServer = (globalThis as { process?: { env: Record<string, string | undefined> } }).process
-	?.env.FLUE_DS_URL;
+const env =
+	(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+const realServer = env.FLUE_DS_URL;
+const webhookUrl = env.FLUE_DS_WEBHOOK_URL;
+const webhookCaptureUrl = env.FLUE_DS_WEBHOOK_CAPTURE_URL;
 
 describe.skipIf(!realServer)('ElectricDurableStreamLog against FLUE_DS_URL', () => {
 	defineDurableStreamLogContractTests('real Durable Streams server', {
 		create: () => new ElectricDurableStreamLog({ baseUrl: realServer as string }),
 		pathPrefix: `flue-contract/${crypto.randomUUID()}/`,
 	});
+
+	it.skipIf(!webhookUrl || !webhookCaptureUrl)(
+		'delivers a signed wake that the webhook verifier accepts',
+		async () => {
+			const root = realServer as string;
+			const prefix = `flue-hooks-${crypto.randomUUID().slice(0, 8)}`;
+			const subscription = await fetch(`${root}/__ds/subscriptions/${prefix}`, {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					type: 'webhook',
+					pattern: `${prefix}/*`,
+					webhook: { url: webhookUrl },
+				}),
+			});
+			expect([200, 201]).toContain(subscription.status);
+			const log = new ElectricDurableStreamLog({ baseUrl: root });
+			const inbox = `${prefix}/inbox`;
+			await log.ensure(inbox);
+			const appended = await log.append(inbox, {
+				messages: [{ from: 'alice', text: 'hi' }],
+				producer: { id: 'alice->inbox', epoch: 0, seq: 0 },
+			});
+			if (appended.status !== 'appended') throw new Error(`append: ${appended.status}`);
+
+			let captured: { header: string | null; body: string } | undefined;
+			for (let attempt = 0; attempt < 100 && !captured; attempt++) {
+				const response = await fetch(webhookCaptureUrl as string);
+				const value = response.ok
+					? ((await response.json()) as { header: string | null; body: string })
+					: undefined;
+				if (value?.body.includes(prefix)) captured = value;
+				else await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			if (!captured) throw new Error('no webhook delivery captured');
+
+			const keys = jwksWebhookKeys({ url: webhookJwksUrl(root) });
+			expect(
+				await verifyWebhookSignature({ body: captured.body, header: captured.header, keys }),
+			).toMatchObject({ ok: true });
+			expect(
+				(
+					await verifyWebhookSignature({
+						body: `${captured.body} `,
+						header: captured.header,
+						keys,
+					})
+				).ok,
+			).toBe(false);
+			const wake = parseWebhookBody(captured.body);
+			expect(wake.subscription_id).toBe(prefix);
+			expect(wake.streams.find((stream) => stream.path === inbox)).toMatchObject({
+				tail_offset: appended.nextOffset,
+				has_pending: true,
+			});
+		},
+	);
 });
 
 // ─── Mapping ────────────────────────────────────────────────────────────────
