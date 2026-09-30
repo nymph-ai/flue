@@ -14,7 +14,12 @@ import {
 	type Skill as PiSkill,
 } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
-import type { ConversationId, DocumentReader, ToolRegistration } from '@earendil-works/pi-durable';
+import type {
+	ConversationId,
+	DocumentReader,
+	ToolExecutionResult,
+	ToolRegistration,
+} from '@earendil-works/pi-durable';
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
 import { createPackagedSkillReadTool, formatPackagedSkillFilePath } from '../agent.ts';
 import { decodeBase64 } from '../base64.ts';
@@ -104,7 +109,7 @@ export function activateSkillRegistration(resolve: SkillResolver): ToolRegistrat
 			'Load the full instructions for one available skill before performing work that matches its description. Supporting resources remain lazy until explicitly read.',
 		parameters: Type.Object({ name: Type.String({ description: 'Name of the skill to activate' }) }),
 		replay: 'safe',
-		async execute(args, api, context) {
+		async execute(args, api, context): Promise<ToolExecutionResult> {
 			const name =
 				typeof args === 'object' && args !== null && !Array.isArray(args) && typeof args.name === 'string'
 					? args.name

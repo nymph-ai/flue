@@ -31,6 +31,7 @@ import {
 	type Harness,
 	type ModelRef,
 	type TaskId,
+	type ToolExecutionResult,
 	type ToolRegistration,
 	type Tx,
 } from '@earendil-works/pi-durable';
@@ -151,12 +152,14 @@ export const DelegateTask = defineTask<DelegateInput, DelegateState, DelegateRes
 				);
 				return;
 			}
-			const entry = await runtime.entry(AssistantEntry, settled.answer, context);
-			const text = answerText(entry?.model?.[0] as AssistantMessage | undefined);
-			await runtime.commit(
-				() => ({ status: 'terminal', outcome: { status: 'completed', result: { text, conversationId: child } } }),
-				context,
-			);
+			const answer = settled.answer;
+			// `runtime.entry` sees only the task's own conversation; the answer lives
+			// in the child, so read it through the commit's global entry lookup.
+			await runtime.commit(async (tx) => {
+				const entry = await tx.entry(AssistantEntry, answer);
+				const text = answerText(entry?.model?.[0] as AssistantMessage | undefined);
+				return { status: 'terminal', outcome: { status: 'completed', result: { text, conversationId: child } } };
+			}, context);
 		},
 	},
 	abort: (_task, runtime, context) =>
@@ -234,7 +237,7 @@ export function createSubagentToolRegistration(host: DelegationHost): ToolRegist
 		// A rerun finds the delegation it already started (task-scoped doc) and
 		// the child's submission (request id), so replay never duplicates work.
 		replay: 'safe',
-		async execute(args, api, context) {
+		async execute(args, api, context): Promise<ToolExecutionResult> {
 			const { prompt, agent } = args as { prompt: string; agent: string };
 			const roster = await host.rosterFor(api.conversationId, api, context);
 			const subagent = roster.find((candidate) => candidate.name === agent);

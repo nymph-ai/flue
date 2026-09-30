@@ -127,7 +127,7 @@ export function flueToolRegistration(tool: ToolDefinition, deps: FlueToolDeps = 
 			}
 			try {
 				const runContext = scope
-					? ({ ...parsed.context, harness: scope.harness } as typeof parsed.context)
+					? ({ ...parsed.context, harness: scope.harness } as unknown as typeof parsed.context)
 					: parsed.context;
 				const resolved = resolveToolRun(
 					tool,

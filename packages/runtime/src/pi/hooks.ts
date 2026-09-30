@@ -243,8 +243,12 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 	) =>
 		deps.commit(async (tx) => {
 			const doc = await tx.doc(FlueRuns, conversationId);
-			const run = (doc.runs[key] ??= { started: [], appends: [], anchor: 0, metadata: {}, continuations: 0 });
-			update(run as FlueRunState);
+			// Assign first, then re-read: the draft only tracks writes made through it.
+			if (doc.runs[key] === undefined) {
+				doc.runs[key] = { started: [], appends: [], anchor: 0, metadata: {}, continuations: 0 };
+			}
+			const run = doc.runs[key];
+			if (run) update(run as FlueRunState);
 		}, context);
 
 	return {
