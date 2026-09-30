@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentSubmissionStore } from '../agent-execution-store.ts';
 import type { ConversationRecord } from '../conversation-records.ts';
 import type { ConversationStreamStore } from '../runtime/conversation-stream-store.ts';
+import { compareOffsets } from '../streams/offset.ts';
 
 export interface ConversationStreamStoreContractBackend {
 	create():
@@ -63,6 +64,13 @@ async function claimContractSubmission(
 	});
 }
 
+/**
+ * Offsets are opaque (Durable Streams PROTOCOL §8): the suite never assumes a
+ * format. It asserts only what the runtime relies on — every offset a store
+ * mints is a non-empty token other than the `-1`/`now` sentinels, unique, and
+ * strictly increasing in byte-wise lexicographic order, and a batch's optional
+ * `ordinal` is a strictly increasing integer.
+ */
 export function defineConversationStreamStoreContractTests(
 	label: string,
 	backend: ConversationStreamStoreContractBackend,
@@ -205,7 +213,7 @@ export function defineConversationStreamStoreContractTests(
 				instanceId: 'contract',
 			});
 			const producer = await stream.acquireProducer('agents/echo/contract', 'coordinator');
-			await stream.append({
+			const first = await stream.append({
 				path: 'agents/echo/contract',
 				producerId: producer.producerId,
 				producerEpoch: producer.producerEpoch,
@@ -225,7 +233,7 @@ export function defineConversationStreamStoreContractTests(
 				}),
 			).rejects.toThrow();
 			expect(await stream.getMeta('agents/echo/contract')).toMatchObject({
-				nextOffset: '0000000000000000_0000000000000000',
+				nextOffset: first.offset,
 				nextProducerSequence: 1,
 			});
 		});
@@ -251,7 +259,8 @@ export function defineConversationStreamStoreContractTests(
 			});
 
 			const read = await stream.read('agents/echo/contract');
-			expect(read.batches).toEqual([{ offset: result.offset, records: [record] }]);
+			expect(read.batches).toHaveLength(1);
+			expect(read.batches[0]).toMatchObject({ offset: result.offset, records: [record] });
 			expect(read.nextOffset).toBe(result.offset);
 			expect(read.upToDate).toBe(true);
 
@@ -306,7 +315,7 @@ export function defineConversationStreamStoreContractTests(
 				incarnation: producer.incarnation,
 				producerSequence: 0,
 			};
-			await stream.append({
+			const first = await stream.append({
 				...base,
 				records: [userRecord('record_large', 'entry_large', text)],
 			});
@@ -318,7 +327,7 @@ export function defineConversationStreamStoreContractTests(
 				}),
 			).rejects.toThrow();
 			expect(await stream.getMeta('agents/echo/contract')).toMatchObject({
-				nextOffset: '0000000000000000_0000000000000000',
+				nextOffset: first.offset,
 				nextProducerSequence: 1,
 			});
 		});
@@ -405,9 +414,9 @@ export function defineConversationStreamStoreContractTests(
 					records: [record],
 				}),
 			).rejects.toThrow();
-			await expect(stream.append({ ...base, records: [record] })).resolves.toEqual({
-				offset: '0000000000000000_0000000000000000',
-			});
+			const settled = await stream.append({ ...base, records: [record] });
+			expect(settled).toEqual({ offset: expect.any(String) });
+			expect((await stream.getMeta('agents/echo/contract'))?.nextOffset).toBe(settled.offset);
 		});
 
 		it('authorizes a submission-owned append for the running claimed attempt', async () => {
@@ -597,6 +606,74 @@ export function defineConversationStreamStoreContractTests(
 				}),
 			).rejects.toThrow();
 			expect((await stream.read('agents/echo/contract')).batches).toHaveLength(0);
+		});
+
+		it('mints opaque offsets that strictly increase lexicographically', async () => {
+			const { stream } = await create();
+			await stream.createStream('agents/echo/contract', {
+				agentName: 'echo',
+				instanceId: 'contract',
+			});
+			expect((await stream.getMeta('agents/echo/contract'))?.nextOffset).toBe('-1');
+			expect(await stream.read('agents/echo/contract')).toMatchObject({
+				batches: [],
+				nextOffset: '-1',
+				upToDate: true,
+			});
+			const producer = await stream.acquireProducer('agents/echo/contract', 'coordinator');
+			const offsets: string[] = [];
+			for (let index = 0; index < 12; index++) {
+				const { offset } = await stream.append({
+					path: 'agents/echo/contract',
+					producerId: producer.producerId,
+					producerEpoch: producer.producerEpoch,
+					incarnation: producer.incarnation,
+					producerSequence: index,
+					records: [userRecord(`record_${index}`, `entry_${index}`)],
+				});
+				expect(offset).not.toBe('-1');
+				expect(offset).not.toBe('now');
+				expect(offset.length).toBeGreaterThan(0);
+				expect(offset).not.toMatch(/[,&=?/]/);
+				offsets.push(offset);
+				expect((await stream.getMeta('agents/echo/contract'))?.nextOffset).toBe(offset);
+			}
+			expect(new Set(offsets).size).toBe(offsets.length);
+			for (let index = 1; index < offsets.length; index++) {
+				expect(compareOffsets(offsets[index - 1] as string, offsets[index] as string)).toBe(-1);
+				// Plain string ordering, not only the helper: any consumer may
+				// compare offsets lexicographically (PROTOCOL §8(2)).
+				expect((offsets[index - 1] as string) < (offsets[index] as string)).toBe(true);
+			}
+			expect([...offsets].reverse().sort()).toEqual(offsets);
+
+			// Read batches carry exactly the minted offsets, in order, and any
+			// store-supplied ordinals strictly increase.
+			const read = await stream.read('agents/echo/contract');
+			expect(read.batches.map((batch) => batch.offset)).toEqual(offsets);
+			expect(read.nextOffset).toBe(offsets.at(-1));
+			const ordinals = read.batches
+				.map((batch) => batch.ordinal)
+				.filter((ordinal) => ordinal !== undefined);
+			if (ordinals.length > 0) {
+				expect(ordinals).toHaveLength(offsets.length);
+				for (const [index, ordinal] of ordinals.entries()) {
+					expect(Number.isSafeInteger(ordinal)).toBe(true);
+					if (index > 0) expect(ordinal).toBeGreaterThan(ordinals[index - 1] as number);
+				}
+			}
+
+			// Resuming from any minted offset returns exactly the later batches.
+			for (const [index, offset] of offsets.entries()) {
+				const after = await stream.read('agents/echo/contract', { offset });
+				expect(after.batches.map((batch) => batch.offset)).toEqual(offsets.slice(index + 1));
+				expect(after.nextOffset).toBe(offsets.at(-1));
+			}
+			expect(await stream.read('agents/echo/contract', { offset: 'now' })).toMatchObject({
+				batches: [],
+				nextOffset: offsets.at(-1),
+				upToDate: true,
+			});
 		});
 
 		it('replays strictly after a batch offset', async () => {

@@ -16,6 +16,7 @@ export default defineConfig({
 		'src/test-utils/define-store-contract-tests.ts',
 		'src/test-utils/define-attachment-store-contract-tests.ts',
 		'src/test-utils/define-conversation-stream-store-contract-tests.ts',
+		'src/test-utils/define-durable-stream-log-contract-tests.ts',
 	],
 	format: ['esm'],
 	dts: true,

@@ -22,8 +22,23 @@ export interface ConversationProducerClaim {
 }
 
 export interface ConversationStreamBatch {
+	/**
+	 * The batch's offset: an opaque token, unique within the stream and
+	 * strictly increasing in byte-wise lexicographic order across appends
+	 * (Durable Streams PROTOCOL §8). The runtime only echoes, compares for
+	 * equality, and orders offsets (`compareOffsets`); it never parses them.
+	 */
 	offset: string;
 	records: ConversationRecord[];
+	/**
+	 * Strictly increasing integer position of the batch within the stream,
+	 * stamped onto projected chunks as `position.batch` (the SDK's dedup
+	 * key). Every first-party store supplies it. It is optional only for
+	 * adapters written before it existed: for those, the runtime falls back
+	 * to decoding the legacy `formatOffset` shape and fails loudly for any
+	 * other offset format.
+	 */
+	ordinal?: number;
 }
 
 export interface ConversationStreamReadResult {
@@ -429,9 +444,10 @@ export class InMemoryConversationStreamStore implements ConversationStreamStore 
 		const limit = clampLimit(options?.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
 		const page = stream.batches.slice(startAfter + 1, startAfter + 1 + limit);
 		return {
-			batches: page.map((batch) => ({
+			batches: page.map((batch, index) => ({
 				offset: batch.offset,
 				records: JSON.parse(batch.data) as ConversationRecord[],
+				ordinal: startAfter + 1 + index,
 			})),
 			nextOffset: page.at(-1)?.offset ?? formatOffset(startAfter),
 			upToDate: startAfter + page.length >= head,
@@ -730,6 +746,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 			records: JSON.parse(
 				this.materializeBatchData('read', path, row.seq as number, row.data as string),
 			) as ConversationRecord[],
+			ordinal: row.seq as number,
 		}));
 		return {
 			batches,

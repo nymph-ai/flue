@@ -242,6 +242,7 @@ class SqlConversationStreamStore implements ConversationStreamStore {
 		const batches = page.map((row) => ({
 			offset: formatOffset(Number(row.seq)),
 			records: JSON.parse(String(row.data)) as ConversationRecord[],
+			ordinal: Number(row.seq),
 		}));
 		return {
 			batches,
