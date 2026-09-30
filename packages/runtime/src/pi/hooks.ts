@@ -225,7 +225,11 @@ function signalMessages(texts: readonly string[], timestamp: number): UserMessag
 
 /** Build the Flue `GenerationHooks` for one host. */
 export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks> {
-	/** Latest request messages per generation task, for the `onYield` aggregates. */
+	/**
+	 * Latest request messages per conversation, for the `onYield` aggregates. A
+	 * conversation runs one generation at a time, and `onYield` always follows
+	 * its own request in the same invocation, so the entry is never stale.
+	 */
 	const lastRequest = new Map<number, readonly Message[]>();
 
 	const runKeyOf = async (api: HookApi, context: Context) => {
@@ -318,7 +322,7 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 					];
 				}
 			}
-			lastRequest.set(api.taskId, messages);
+			lastRequest.set(api.conversationId, messages);
 			return messages === request.messages ? undefined : { messages };
 		},
 
@@ -330,8 +334,7 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 			if (!run) return undefined;
 			const runs = await api.snapshot(FlueRuns, api.conversationId, context);
 			const state = runs?.runs[run.key];
-			const messages = lastRequest.get(api.taskId) ?? [];
-			lastRequest.delete(api.taskId);
+			const messages = lastRequest.get(api.conversationId) ?? [];
 			const response = responseAggregates(messages, state?.anchor ?? messages.length, answer);
 			const signal = context.abortSignal ?? new AbortController().signal;
 
