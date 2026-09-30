@@ -296,7 +296,8 @@ class ConversationStreamStoreLog implements DurableStreamLog {
 		while (true) {
 			const read = await this.store.read(path, { offset: state.foldedThrough, limit: FOLD_PAGE });
 			for (const batch of read.batches) {
-				for (const record of batch.records) {
+				for (const stored of batch.records) {
+					const record: unknown = stored;
 					if (!isAppendEnvelope(record)) {
 						throw new DurableStreamLogError({
 							code: 'protocol',
@@ -325,7 +326,8 @@ class ConversationStreamStoreLog implements DurableStreamLog {
 		}
 		const messages: unknown[] = [];
 		for (const batch of read.batches) {
-			for (const record of batch.records) {
+			for (const stored of batch.records) {
+				const record: unknown = stored;
 				if (!isAppendEnvelope(record)) {
 					throw new DurableStreamLogError({
 						code: 'protocol',
