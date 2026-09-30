@@ -498,14 +498,16 @@ export class StreamStorage implements Storage {
 
 		for (const envelope of [...replay.envelopes, ...local]) {
 			this.db.armReplay(envelope.seq);
-			let seq: Seq | undefined;
+			let seq: Seq;
 			try {
 				seq = await this.index.commit(envelope.writes, context);
-			} finally {
-				const arm = this.db.disarm();
-				if (seq !== undefined && (!arm.consumed || arm.seq !== seq)) {
-					throw new TransactionShapeError(`replayed seq ${envelope.seq} committed outside its transaction.`);
-				}
+			} catch (error) {
+				this.db.disarm();
+				throw error;
+			}
+			const arm = this.db.disarm();
+			if (!arm.consumed || arm.seq !== seq) {
+				throw new TransactionShapeError(`replayed seq ${envelope.seq} committed outside its transaction.`);
 			}
 			if (seq !== envelope.seq) {
 				throw new Error(`[flue] Pi log replay diverged: envelope seq ${envelope.seq} replayed as seq ${seq}.`);

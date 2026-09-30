@@ -23,6 +23,7 @@ import {
 import {
 	type Conversation,
 	ConversationConfig,
+	type Cursor,
 	createRegistry,
 	defineDoc,
 	Harness,
@@ -360,11 +361,11 @@ export function recordedBatches(): Promise<StorageWrite[][]> {
 
 // ─── Snapshot of every Pi read ──────────────────────────────────────────────
 
-async function scanAll<T, C>(
-	scan: (cursor: C | undefined) => Promise<{ readonly items: readonly T[]; readonly next?: C }>,
+async function scanAll<T>(
+	scan: (cursor: Cursor | undefined) => Promise<{ readonly items: readonly T[]; readonly next?: Cursor }>,
 ): Promise<T[]> {
 	const items: T[] = [];
-	let cursor: C | undefined;
+	let cursor: Cursor | undefined;
 	do {
 		const page = await scan(cursor);
 		items.push(...page.items);
