@@ -213,6 +213,7 @@ export class RedisConversationStreamStore implements ConversationStreamStore {
 			batches.push({
 				offset: formatOffset(integer(sequence)),
 				records: JSON.parse(data) as ConversationRecord[],
+				ordinal: integer(sequence),
 			});
 		}
 		return {

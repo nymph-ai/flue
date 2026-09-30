@@ -5,7 +5,7 @@ import {
 	reduceConversationRecordsInPlace,
 } from './conversation-reducer.ts';
 import type { ConversationStreamStore } from './runtime/conversation-stream-store.ts';
-import { parseOffset } from './runtime/stream-offsets.ts';
+import { compareOffsets } from './streams/offset.ts';
 
 /**
  * One resident reduced-state fold per (store, path), shared by every reader
@@ -69,7 +69,7 @@ export class ConversationFoldHost {
 		}
 		if (
 			!this.state ||
-			parseOffset(state.recordsThroughOffset) >= parseOffset(this.state.recordsThroughOffset)
+			compareOffsets(state.recordsThroughOffset, this.state.recordsThroughOffset) >= 0
 		) {
 			this.state = state;
 		}
@@ -131,7 +131,7 @@ export class ConversationFoldHost {
 		// the store; keep whichever reflects more of the stream.
 		if (
 			next &&
-			parseOffset(next.recordsThroughOffset) > parseOffset(this.state.recordsThroughOffset)
+			compareOffsets(next.recordsThroughOffset, this.state.recordsThroughOffset) > 0
 		) {
 			this.state = next;
 		}

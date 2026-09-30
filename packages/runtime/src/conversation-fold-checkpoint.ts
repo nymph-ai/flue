@@ -34,7 +34,7 @@ import type {
 	ConversationFoldCheckpoint,
 	ConversationStreamStore,
 } from './runtime/conversation-stream-store.ts';
-import { parseOffset } from './runtime/stream-offsets.ts';
+import { compareOffsets } from './streams/offset.ts';
 
 /**
  * Appends between the writer's durable checkpoints. Low enough that a cold
@@ -192,7 +192,7 @@ export async function seedReducedConversationState(
 			);
 			return createReducedInstanceState();
 		}
-		if (atOrBefore !== undefined && parseOffset(checkpoint.offset) > parseOffset(atOrBefore)) {
+		if (atOrBefore !== undefined && compareOffsets(checkpoint.offset, atOrBefore) > 0) {
 			// Defensive against a store that ignored the bound.
 			return createReducedInstanceState();
 		}
@@ -204,7 +204,7 @@ export async function seedReducedConversationState(
 			);
 			return createReducedInstanceState();
 		}
-		if (parseOffset(checkpoint.offset) > parseOffset(meta.nextOffset)) {
+		if (compareOffsets(checkpoint.offset, meta.nextOffset) > 0) {
 			// The frontier rule: a checkpoint is a lower bound on knowledge,
 			// never an authority on the head. Ahead-of-head means the log was
 			// truncated or restored from a backup — the checkpoint must not win.

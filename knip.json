@@ -5,6 +5,8 @@
 	"ignoreIssues": {
 		"packages/runtime/src/runtime/schemas.ts": ["duplicates"],
 		"packages/runtime/src/sandbox.ts": ["duplicates"],
+		"packages/runtime/src/streams/*.ts": ["exports", "types"],
+		"packages/runtime/src/entity/*.ts": ["exports", "types"],
 		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"]
 	},
 	"workspaces": {

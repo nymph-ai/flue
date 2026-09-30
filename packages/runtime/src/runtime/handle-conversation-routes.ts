@@ -15,6 +15,7 @@ import {
 	StreamOffsetGoneError,
 	toHttpResponse,
 } from '../errors.ts';
+import { compareOffsets, isResumeOffset } from '../streams/offset.ts';
 import type { AttachmentStore } from './attachment-store.ts';
 import {
 	applyHistoryWindow,
@@ -32,7 +33,6 @@ import type {
 	ConversationStreamReadResult,
 	ConversationStreamStore,
 } from './conversation-stream-store.ts';
-import { parseOffset } from './stream-offsets.ts';
 
 const SECURITY_HEADERS = {
 	'X-Content-Type-Options': 'nosniff',
@@ -202,9 +202,10 @@ async function updatesResponse(options: {
 	// loud with a structured 416 before any response commits — this guard
 	// covers the plain, long-poll, and SSE paths, and without it the
 	// store-level invariant throw would surface as a silently-retried 500
-	// (or, on SSE, after the 200 already streamed). Compare numerically:
-	// the offset format check above does not require fixed-width padding.
-	if (parseOffset(offset) > parseOffset(meta.nextOffset)) {
+	// (or, on SSE, after the 200 already streamed). Offsets are opaque and
+	// ordered lexicographically (PROTOCOL §8); a client resumes only from
+	// offsets this store minted.
+	if (compareOffsets(offset, meta.nextOffset) > 0) {
 		return errorResponse(
 			new StreamOffsetGoneError({ path: options.path, offset, nextOffset: meta.nextOffset }),
 		);
@@ -273,8 +274,8 @@ function resetWindowProjector(
  * head directly — the overwhelmingly common case: clients resume from a
  * history response's or admission receipt's `Stream-Next-Offset`. A lagging
  * offset (older than the head) rebuilds its prefix by replay, exactly as
- * before. Compared numerically: the wire offset format does not require
- * fixed-width padding.
+ * before. Offsets are opaque tokens the store minted, so an exact hit is
+ * string equality.
  */
 async function stateAtOffset(
 	store: ConversationStreamStore,
@@ -282,7 +283,7 @@ async function stateAtOffset(
 	offset: string,
 ): Promise<ReducedInstanceState> {
 	const state = await getConversationFoldHost(store, path).getStateAtHead();
-	if (parseOffset(state.recordsThroughOffset) === parseOffset(offset)) return state;
+	if (state.recordsThroughOffset === offset) return state;
 	return loadReducedConversationPrefix({ store, path, offset });
 }
 
@@ -396,7 +397,7 @@ function singleOffset(url: URL): string | Response {
 		return errorResponse(new InvalidRequestError({ reason: 'Exactly one offset is required.' }));
 	}
 	const offset = offsets[0] as string;
-	if (offset !== '-1' && !/^\d+_\d+$/.test(offset)) {
+	if (!isResumeOffset(offset)) {
 		return errorResponse(new InvalidRequestError({ reason: 'Invalid offset format.' }));
 	}
 	return offset;
