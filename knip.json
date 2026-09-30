@@ -5,6 +5,9 @@
 	"ignoreIssues": {
 		"packages/runtime/src/runtime/schemas.ts": ["duplicates"],
 		"packages/runtime/src/sandbox.ts": ["duplicates"],
+		// The Flue Pi adapter (PI_UPGRADE_PLAN.md §7 steps 6, 10, 11) is not wired
+		// into the coordinators until step 8; its exports are its public surface.
+		"packages/runtime/src/pi/*.ts": ["exports", "types"],
 		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"]
 	},
 	"workspaces": {
@@ -32,7 +35,8 @@
 			]
 		},
 		"packages/runtime": {
-			"entry": ["test/fixtures/durable-boundary-child.mjs"],
+			// src/pi/host.ts: the Pi adapter entry until the step-8 cutover imports it.
+			"entry": ["test/fixtures/durable-boundary-child.mjs", "src/pi/host.ts"],
 			"ignoreDependencies": [
 				"@hono/node-server",
 				// consumed by the Pi adapter (PI_UPGRADE_PLAN.md §7)
