@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs src/streams/electric-log.test.ts against the real Durable Streams Node
+# Runs src/streams/electric-log.test.ts and the StreamStorage crash/replay
+# suite (src/pi/stream-storage.electric.test.ts) against the real Durable Streams Node
 # reference server (`@durable-streams/server`, the server Electric's
 # agents-server embeds), including a webhook subscription whose signed wake
 # is verified by src/entity/webhook.ts.
@@ -77,4 +78,4 @@ done
 FLUE_DS_URL="http://127.0.0.1:${ds_port}/v1/stream" \
 FLUE_DS_WEBHOOK_URL="http://127.0.0.1:${hook_port}/hook" \
 FLUE_DS_WEBHOOK_CAPTURE_URL="http://127.0.0.1:${hook_port}/captured" \
-	vitest run src/streams/electric-log.test.ts "$@"
+	vitest run src/streams/electric-log.test.ts src/pi/stream-storage.electric.test.ts "$@"
