@@ -57,6 +57,16 @@ import {
 	scanAgents,
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
+import {
+	CHILD_PROCESS_STUB_SOURCE,
+	CLOUDFLARE_STUB_ALIASES,
+	CROSS_SPAWN_STUB_SOURCE,
+	RESOLVED_CHILD_PROCESS_STUB,
+	RESOLVED_CROSS_SPAWN_STUB,
+	scanCodeModeUsage,
+	VIRTUAL_CHILD_PROCESS_STUB,
+	VIRTUAL_CROSS_SPAWN_STUB,
+} from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
 import {
 	cloudflareOrderingError,
@@ -182,6 +192,8 @@ interface FluePluginState {
 	isPreview: boolean;
 	/** Whether the config hook took the Cloudflare path (sibling detected). */
 	cloudflarePrepared: boolean;
+	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: adds the Worker Loader binding). */
+	codeMode: boolean;
 	/** Serializes and coalesces watcher-driven re-scans. */
 	watchQueue: WatchQueue;
 	resolved: FlueResolvedProjectInfo | undefined;
@@ -204,6 +216,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		target: 'node',
 		isPreview: false,
 		cloudflarePrepared: false,
+		codeMode: false,
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
@@ -226,6 +239,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				name: agent.bindingName,
 				class_name: agent.className,
 			}));
+		},
+		get codeMode() {
+			return state.codeMode;
 		},
 		customizerInvoked: false,
 	};
@@ -350,6 +366,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					throw cloudflareOrderingError();
 				}
 				if (project.db) throw dbOnCloudflareError();
+				state.codeMode = await scanCodeModeUsage(project.sourceRoot);
 				state.cloudflarePrepared = true;
 				workerConfigSource.configReady = true;
 				// The dependency resolver stays inert (root unset): the Worker
@@ -361,8 +378,10 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				// CORS matches the Node target: workerd requests flow
 				// through Vite's middleware stack, and separate-origin local
 				// clients need the durable-stream coordination headers exposed.
+				// The aliases stub the process spawners pi-mcp's stdio transport
+				// would pull in (see cloudflare-codemode.ts).
 				return {
-					resolve: { dedupe: RUNTIME_DEDUPE },
+					resolve: { dedupe: RUNTIME_DEDUPE, alias: CLOUDFLARE_STUB_ALIASES },
 					...(isBuild ? {} : { server: { cors: userConfig.server?.cors ?? DEV_CORS } }),
 				} satisfies UserConfig;
 			}
@@ -526,6 +545,10 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					return bootstrap.server;
 				case VIRTUAL_WORKER_ENTRY:
 					return RESOLVED_WORKER_ENTRY;
+				case VIRTUAL_CROSS_SPAWN_STUB:
+					return RESOLVED_CROSS_SPAWN_STUB;
+				case VIRTUAL_CHILD_PROCESS_STUB:
+					return RESOLVED_CHILD_PROCESS_STUB;
 				default:
 					return undefined;
 			}
@@ -535,6 +558,8 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (id === RESOLVED_DB_STUB) {
 				return 'export default undefined;\n';
 			}
+			if (id === RESOLVED_CROSS_SPAWN_STUB) return CROSS_SPAWN_STUB_SOURCE;
+			if (id === RESOLVED_CHILD_PROCESS_STUB) return CHILD_PROCESS_STUB_SOURCE;
 			if (id === RESOLVED_AGENTS) {
 				return generateScannedAgentsModule(state.agents);
 			}

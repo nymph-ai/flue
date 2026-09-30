@@ -21,6 +21,8 @@
  *   - `main` → `virtual:flue/worker`, the generated Worker entry served by
  *     the `flue()` plugin (left alone when the user set their own `main`);
  *   - one Durable Object binding per scanned `'use agent'` agent;
+ *   - the `LOADER` Worker Loader binding, when a module calls `useCodeMode()`
+ *     (Code Mode runs scripts in Dynamic Workers);
  *   - the `nodejs_compat` compatibility flag (unioned in);
  *   - validation of a user-set `compatibility_date` against Flue's floor.
  *
@@ -39,6 +41,7 @@
  * its own `flue()` instance, concurrent Vite servers in one process never
  * cross-talk.
  */
+import { mergeCodeModeLoaderBinding } from './cloudflare-codemode.ts';
 import { stackless } from './diagnostics.ts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -71,6 +74,8 @@ export interface FlueWorkerConfigSource {
 	isPreview: boolean;
 	/** The scanned per-agent Durable Object bindings. */
 	readonly doBindings: readonly FlueDoBinding[];
+	/** Whether a module under the source root calls `useCodeMode()`. */
+	readonly codeMode: boolean;
 	/** Set by the customizer so `configResolved` can diagnose missing wiring. */
 	customizerInvoked: boolean;
 }
@@ -132,7 +137,7 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
+		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings, source.codeMode);
 	};
 }
 
@@ -163,6 +168,7 @@ export function cloudflareOrderingError(): Error {
 function applyFlueWorkerConfig(
 	config: Record<string, unknown>,
 	doBindings: readonly FlueDoBinding[],
+	codeMode: boolean,
 ): void {
 	validateCompatibilityDate(config);
 
@@ -184,6 +190,10 @@ function applyFlueWorkerConfig(
 	}
 
 	mergeDurableObjectBindings(config, doBindings);
+
+	// Code Mode's Dynamic Workers need a Worker Loader binding. Added only
+	// when used: Dynamic Workers require the Workers Paid plan.
+	if (codeMode) mergeCodeModeLoaderBinding(config);
 
 	// compatibility_date and name are left to the sibling's own defaults when
 	// unset (its date default tracks the workerd version it bundles, which is
