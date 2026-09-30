@@ -81,7 +81,7 @@
 		"build": "tsdown",
 		"prepack": "node ../../scripts/build-docs.mjs runtime",
 		"check:types": "tsc --noEmit",
-		"test": "vitest run && vitest run --config vitest.workers.config.ts",
+		"test": "vitest run && node scripts/workers-tests.mjs",
 		"test:watch": "vitest"
 	},
 	"dependencies": {

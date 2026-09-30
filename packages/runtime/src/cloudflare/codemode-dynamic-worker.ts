@@ -24,8 +24,8 @@
  *   limit applies.
  * - A script that spins without yielding (`while (true) {}`) is stopped by
  *   the Dynamic Worker's `limits.cpuMs`, set to the deadline. The host
- *   reports `timeout` when the deadline passes; it cannot preempt the isolate
- *   itself (local workerd does not enforce CPU limits).
+ *   reports `timeout` when its own timer fires; it has no way to preempt the
+ *   Dynamic Worker's isolate beyond dropping the RPC session.
  *
  * The callbacks are passed as RPC arguments of `run()` rather than as an
  * `env.HOST` binding: a Worker Loader `env` is fixed when the Worker is
@@ -465,6 +465,8 @@ class DynamicWorkerExecution {
 		name: string,
 		args: string | undefined,
 	): Promise<{ ok: boolean; payload: string | undefined }> {
+		// Like pi-codemode's host, nothing the Worker sends after the result counts.
+		if (this.finished) return { ok: false, payload: 'Execution finished' };
 		const isTool = target === 'tool';
 		const record: CodemodeCall | undefined = isTool
 			? { name, status: 'cancelled', durationMs: 0 }

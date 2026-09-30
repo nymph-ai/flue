@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cloudflare } from '@cloudflare/vite-plugin';
-import { build } from 'vite';
+import { createBuilder } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	CHILD_PROCESS_STUB_SOURCE,
@@ -121,12 +121,15 @@ describe('Cloudflare Worker bundle', () => {
 				].join('\n'),
 			});
 
-			await build({
+			// `vite build` runs the environment builder when the config has one,
+			// which is how @cloudflare/vite-plugin builds the Worker environment.
+			const builder = await createBuilder({
 				root,
 				configFile: false,
 				logLevel: 'silent',
 				plugins: [flue(), cloudflare({ config: flueWorkerConfig() })],
 			});
+			await builder.buildApp();
 
 			const output = await readTree(path.join(root, 'dist'));
 			const javascript = [...output]

@@ -3,8 +3,10 @@
  * `CodemodeSandbox` (QuickJS) produces for each. The Node executor runs it in
  * `node.test.ts` — that is what pins these expectations to Pi — and the
  * Dynamic Worker executor runs the same corpus in
- * `dynamic-worker.workers.test.ts`, so a Flue executor that drifts from Pi's
- * script ABI fails a test (PI_UPGRADE_PLAN.md §5).
+ * `dynamic-worker.workers.test.ts` (inside workerd) and in
+ * `cloudflare/codemode-dynamic-worker.test.ts` (on a Node stand-in for the
+ * Worker Loader), so a Flue executor that drifts from Pi's script ABI fails a
+ * test (PI_UPGRADE_PLAN.md §5).
  *
  * Results are compared after {@link normalizeResult}: call durations and
  * stack traces are engine timing and engine text, and so are the messages of
@@ -388,7 +390,7 @@ export const CONFORMANCE_CASES: readonly ConformanceCase[] = [
 		timeoutMs: 200,
 		skip: {
 			dynamicWorker:
-				'A spinning script never yields to the host isolate, and workerd does not enforce `limits.cpuMs` locally, so the test would hang; on Cloudflare the CPU limit stops it.',
+				'A spinning Dynamic Worker is stopped by its `limits.cpuMs`, which is not verified under Miniflare; a spin there could hold the test until the pool times out.',
 		},
 		expected: {
 			ok: false,
