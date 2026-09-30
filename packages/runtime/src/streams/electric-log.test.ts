@@ -394,7 +394,11 @@ describe.skipIf(!realServer)('ElectricDurableStreamLog against FLUE_DS_URL', () 
 					webhook: { url: webhookUrl },
 				}),
 			});
-			expect([200, 201]).toContain(subscription.status);
+			if (subscription.status !== 200 && subscription.status !== 201) {
+				throw new Error(
+					`subscription PUT: ${subscription.status} ${await subscription.text()} (webhook subscriptions need the server's \`webhooks: true\`)`,
+				);
+			}
 			const log = new ElectricDurableStreamLog({ baseUrl: root });
 			const inbox = `${prefix}/inbox`;
 			await log.ensure(inbox);

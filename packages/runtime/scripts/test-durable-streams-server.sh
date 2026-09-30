@@ -28,7 +28,13 @@ import http from 'node:http';
 import { DurableStreamTestServer } from '@durable-streams/server';
 
 const [dsPort, hookPort] = process.argv.slice(2).map(Number);
-const server = new DurableStreamTestServer({ port: dsPort, host: '127.0.0.1', longPollTimeout: 2000 });
+// Webhook subscriptions are off unless asked for (`webhooks ?? false`).
+const server = new DurableStreamTestServer({
+	port: dsPort,
+	host: '127.0.0.1',
+	longPollTimeout: 2000,
+	webhooks: true,
+});
 await server.start();
 
 // The webhook receiver answers `{ done: true }` and keeps the last delivery,
