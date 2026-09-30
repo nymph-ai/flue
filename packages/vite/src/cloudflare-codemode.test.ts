@@ -132,17 +132,23 @@ describe('Cloudflare Worker bundle', () => {
 			await builder.buildApp();
 
 			const output = await readTree(path.join(root, 'dist'));
-			const javascript = [...output]
-				.filter(([file]) => /\.(?:m?js)$/.test(file))
-				.map(([, code]) => code)
-				.join('\n');
-			expect(javascript.length).toBeGreaterThan(0);
+			const scripts = [...output].filter(([file]) => /\.(?:m?js)$/.test(file));
+			expect(scripts.length).toBeGreaterThan(0);
+			/** Every match of `pattern` in the Worker's scripts, with its file and surroundings. */
+			const findings = (pattern: RegExp) =>
+				scripts.flatMap(([file, code]) =>
+					[...code.matchAll(new RegExp(pattern.source, 'g'))].map(
+						(match) => `${file}: …${code.slice(Math.max(0, match.index - 120), match.index + 80)}…`,
+					),
+				);
 			// The MCP client is in the Worker (the coordinator's connection cache)...
-			expect(javascript).toContain('Mcp-Session-Id');
+			expect(findings(/Mcp-Session-Id/).length).toBeGreaterThan(0);
 			// ...and its stdio transport, with the process spawner, is not.
-			expect(javascript).not.toMatch(/["'`](?:node:)?child_process["'`]/);
-			expect(javascript).not.toContain('cross-spawn');
-			expect(javascript).not.toContain('MCP stdio transport already started');
+			expect({
+				childProcess: findings(/["'`](?:node:)?child_process["'`]/),
+				crossSpawn: findings(/cross-spawn/),
+				stdioTransport: findings(/MCP stdio transport already started/),
+			}).toEqual({ childProcess: [], crossSpawn: [], stdioTransport: [] });
 
 			const deployConfig = [...output].find(([file]) => path.basename(file) === 'wrangler.json');
 			if (!deployConfig) throw new Error(`No wrangler.json in the build output: ${[...output.keys()].join(', ')}`);

@@ -19,6 +19,7 @@ import type {
 	CodemodeResult,
 	CodemodeStoreWrites,
 	CodemodeTool,
+	CodemodeToolContext,
 } from '../executor.ts';
 
 /** A 1×1 PNG. */
@@ -88,8 +89,11 @@ export interface ConformanceCase {
 	readonly store?: Record<string, unknown>;
 	/** Default 10 s: every case settles well before it unless it is about the deadline. */
 	readonly timeoutMs?: number;
-	/** Abort the execution this long after it starts, with `new Error('stop')`. */
-	readonly abortAfterMs?: number;
+	/**
+	 * Abort the execution with `new Error('stop')` once this tool has been
+	 * called — not after a fixed delay, which would race the sandbox start.
+	 */
+	readonly abortOnCall?: string;
 	/** The error message is the engine's own text; compare kind and name only. */
 	readonly engineMessage?: boolean;
 	/** Why an executor cannot run this case, by executor. */
@@ -376,10 +380,11 @@ export const CONFORMANCE_CASES: readonly ConformanceCase[] = [
 	{
 		name: 'the deadline covers time spent in tools',
 		code: 'text("waiting");\nawait tools.slow({});\nreturn 1;',
-		timeoutMs: 200,
+		// Long enough that the sandbox has started and reached the call first.
+		timeoutMs: 2_000,
 		expected: {
 			ok: false,
-			error: { kind: 'timeout', message: 'Execution timed out after 200 ms' },
+			error: { kind: 'timeout', message: 'Execution timed out after 2000 ms' },
 			output: [text('waiting')],
 			calls: [{ name: 'slow', status: 'cancelled' }],
 		},
@@ -402,7 +407,7 @@ export const CONFORMANCE_CASES: readonly ConformanceCase[] = [
 	{
 		name: 'aborting the signal aborts the script',
 		code: 'await tools.slow({});\nreturn 1;',
-		abortAfterMs: 100,
+		abortOnCall: 'slow',
 		expected: {
 			ok: false,
 			error: { kind: 'aborted', message: 'stop' },
@@ -443,12 +448,20 @@ export async function runConformanceCase(
 	testCase: ConformanceCase,
 ): Promise<NormalizedResult> {
 	const controller = new AbortController();
-	const timer =
-		testCase.abortAfterMs === undefined
-			? undefined
-			: setTimeout(() => controller.abort(new Error('stop')), testCase.abortAfterMs);
+	const tools = CONFORMANCE_TOOLS.map((tool) =>
+		tool.name === testCase.abortOnCall
+			? {
+					...tool,
+					execute: (args: unknown, context: CodemodeToolContext) => {
+						const running = tool.execute(args, context);
+						setTimeout(() => controller.abort(new Error('stop')), 0);
+						return running;
+					},
+				}
+			: tool,
+	);
 	try {
-		const result = await executor.execute(testCase.code, CONFORMANCE_TOOLS, {
+		const result = await executor.execute(testCase.code, tools, {
 			timeoutMs: testCase.timeoutMs ?? 10_000,
 			globals: CONFORMANCE_GLOBALS,
 			signal: controller.signal,
@@ -456,6 +469,6 @@ export async function runConformanceCase(
 		});
 		return normalizeResult(result, testCase.engineMessage);
 	} finally {
-		clearTimeout(timer);
+		controller.abort();
 	}
 }
