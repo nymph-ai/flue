@@ -58,13 +58,10 @@ import {
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
 import {
-	CHILD_PROCESS_STUB_SOURCE,
 	CLOUDFLARE_STUB_ALIASES,
 	CROSS_SPAWN_STUB_SOURCE,
-	RESOLVED_CHILD_PROCESS_STUB,
 	RESOLVED_CROSS_SPAWN_STUB,
 	scanCodeModeUsage,
-	VIRTUAL_CHILD_PROCESS_STUB,
 	VIRTUAL_CROSS_SPAWN_STUB,
 } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
@@ -378,7 +375,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				// CORS matches the Node target: workerd requests flow
 				// through Vite's middleware stack, and separate-origin local
 				// clients need the durable-stream coordination headers exposed.
-				// The aliases stub the process spawners pi-mcp's stdio transport
+				// The alias stubs the process spawner pi-mcp's stdio transport
 				// would pull in (see cloudflare-codemode.ts).
 				return {
 					resolve: { dedupe: RUNTIME_DEDUPE, alias: CLOUDFLARE_STUB_ALIASES },
@@ -547,8 +544,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					return RESOLVED_WORKER_ENTRY;
 				case VIRTUAL_CROSS_SPAWN_STUB:
 					return RESOLVED_CROSS_SPAWN_STUB;
-				case VIRTUAL_CHILD_PROCESS_STUB:
-					return RESOLVED_CHILD_PROCESS_STUB;
 				default:
 					return undefined;
 			}
@@ -559,7 +554,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				return 'export default undefined;\n';
 			}
 			if (id === RESOLVED_CROSS_SPAWN_STUB) return CROSS_SPAWN_STUB_SOURCE;
-			if (id === RESOLVED_CHILD_PROCESS_STUB) return CHILD_PROCESS_STUB_SOURCE;
 			if (id === RESOLVED_AGENTS) {
 				return generateScannedAgentsModule(state.agents);
 			}

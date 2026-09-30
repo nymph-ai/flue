@@ -6,7 +6,6 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import { createBuilder } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-	CHILD_PROCESS_STUB_SOURCE,
 	CODEMODE_LOADER_BINDING,
 	CROSS_SPAWN_STUB_SOURCE,
 	mergeCodeModeLoaderBinding,
@@ -62,50 +61,91 @@ describe('Code Mode detection and the Worker Loader binding', () => {
 		expect(config.worker_loaders).toEqual([{ binding: 'OTHER' }, { binding: CODEMODE_LOADER_BINDING }]);
 	});
 
-	it('stubs fail with a clear error when called', async () => {
+	it('the cross-spawn stub fails with a clear error when called', async () => {
 		const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'flue-codemode-stubs-'));
 		temporary.push(dir);
-		let count = 0;
-		const load = async (source: string) => {
-			const file = path.join(dir, `stub-${count++}.mjs`);
-			await fs.promises.writeFile(file, source);
-			return import(/* @vite-ignore */ pathToFileURL(file).href);
-		};
-		const crossSpawn = await load(CROSS_SPAWN_STUB_SOURCE);
+		const file = path.join(dir, 'cross-spawn.mjs');
+		await fs.promises.writeFile(file, CROSS_SPAWN_STUB_SOURCE);
+		const crossSpawn = await import(/* @vite-ignore */ pathToFileURL(file).href);
 		expect(() => crossSpawn.default('node')).toThrow(/cross-spawn is not available in a Cloudflare Worker/);
-		const childProcess = await load(CHILD_PROCESS_STUB_SOURCE);
-		expect(() => childProcess.spawn('node')).toThrow(/node:child_process is not available/);
-		expect(() => new childProcess.ChildProcess()).toThrow(/Streamable HTTP/);
+		expect(() => crossSpawn.sync('node')).toThrow(/Streamable HTTP/);
 	});
 });
 
+/**
+ * Build a Flue Cloudflare app with @flue/vite and @cloudflare/vite-plugin and
+ * return the files it emits. The fixture lives inside this package so it
+ * resolves @flue/runtime, hono and the Agents SDK through its node_modules.
+ */
+async function buildCloudflareFixture(agentSource: string): Promise<Map<string, string>> {
+	const packageRoot = fileURLToPath(new URL('..', import.meta.url));
+	const root = await fs.promises.mkdtemp(path.join(packageRoot, '.fixture-cloudflare-'));
+	temporary.push(root);
+	await writeFiles(root, {
+		'package.json': JSON.stringify({ name: 'flue-codemode-fixture', private: true, type: 'module' }),
+		'wrangler.jsonc': JSON.stringify({
+			name: 'codemode-fixture',
+			compatibility_date: '2026-06-01',
+			compatibility_flags: ['nodejs_compat'],
+			migrations: [{ tag: 'v1', new_sqlite_classes: ['FlueResearcherAgent'] }],
+		}),
+		'src/app.ts': [
+			"import { createAgentRouter } from '@flue/runtime/routing';",
+			"import { Hono } from 'hono';",
+			"import { Researcher } from './agents/researcher.ts';",
+			'const app = new Hono();',
+			"app.route('/agents/researcher', createAgentRouter(Researcher));",
+			'export default app;',
+			'',
+		].join('\n'),
+		'src/agents/researcher.ts': agentSource,
+	});
+	// `vite build` runs the environment builder when the config has one, which
+	// is how @cloudflare/vite-plugin builds the Worker environment.
+	const builder = await createBuilder({
+		root,
+		configFile: false,
+		logLevel: 'silent',
+		plugins: [flue(), cloudflare({ config: flueWorkerConfig() })],
+	});
+	await builder.buildApp();
+	return readTree(path.join(root, 'dist'));
+}
+
+/** Every match of `pattern` in the emitted scripts, with its chunk's source modules and surroundings. */
+function findings(output: Map<string, string>, pattern: RegExp) {
+	return [...output]
+		.filter(([file]) => /\.(?:m?js)$/.test(file))
+		.flatMap(([file, code]) =>
+			[...code.matchAll(new RegExp(pattern.source, 'g'))].map((match) => {
+				// rolldown heads each source module's code with `//#region <path>`;
+				// an import at the top of a chunk precedes them all, so it belongs
+				// to the chunk's modules as a whole.
+				const before = [...code.slice(0, match.index).matchAll(/\/\/#region (\S+)/g)].at(-1)?.[1];
+				const modules = before
+					? [before]
+					: [...new Set([...code.matchAll(/\/\/#region (\S+)/g)].map((region) => region[1] ?? ''))];
+				return {
+					file,
+					modules,
+					context: code.slice(Math.max(0, match.index - 80), match.index + 60),
+				};
+			}),
+		);
+}
+
+function deployConfigOf(output: Map<string, string>): Record<string, unknown> {
+	const entry = [...output].find(([file]) => path.basename(file) === 'wrangler.json');
+	if (!entry) throw new Error(`No wrangler.json in the build output: ${[...output.keys()].join(', ')}`);
+	return JSON.parse(entry[1]);
+}
+
 describe('Cloudflare Worker bundle', () => {
 	it(
-		'keeps child_process and cross-spawn out of the Worker and adds the Worker Loader binding',
+		'keeps the pi-mcp stdio transport and cross-spawn out of the Worker and adds the Worker Loader binding',
 		async () => {
-			// Inside the package, so the fixture resolves @flue/runtime, hono and
-			// the Agents SDK through this package's node_modules.
-			const packageRoot = fileURLToPath(new URL('..', import.meta.url));
-			const root = await fs.promises.mkdtemp(path.join(packageRoot, '.fixture-cloudflare-'));
-			temporary.push(root);
-			await writeFiles(root, {
-				'package.json': JSON.stringify({ name: 'flue-codemode-fixture', private: true, type: 'module' }),
-				'wrangler.jsonc': JSON.stringify({
-					name: 'codemode-fixture',
-					compatibility_date: '2026-06-01',
-					compatibility_flags: ['nodejs_compat'],
-					migrations: [{ tag: 'v1', new_sqlite_classes: ['FlueResearcherAgent'] }],
-				}),
-				'src/app.ts': [
-					"import { createAgentRouter } from '@flue/runtime/routing';",
-					"import { Hono } from 'hono';",
-					"import { Researcher } from './agents/researcher.ts';",
-					'const app = new Hono();',
-					"app.route('/agents/researcher', createAgentRouter(Researcher));",
-					'export default app;',
-					'',
-				].join('\n'),
-				'src/agents/researcher.ts': [
+			const output = await buildCloudflareFixture(
+				[
 					"'use agent';",
 					"import { useCodeMode, useMcpConnection, useModel } from '@flue/runtime';",
 					"import { DynamicWorkerCodemodeExecutor } from '@flue/runtime/cloudflare';",
@@ -119,45 +159,53 @@ describe('Cloudflare Worker bundle', () => {
 					'}',
 					'',
 				].join('\n'),
-			});
+			);
 
-			// `vite build` runs the environment builder when the config has one,
-			// which is how @cloudflare/vite-plugin builds the Worker environment.
-			const builder = await createBuilder({
-				root,
-				configFile: false,
-				logLevel: 'silent',
-				plugins: [flue(), cloudflare({ config: flueWorkerConfig() })],
-			});
-			await builder.buildApp();
-
-			const output = await readTree(path.join(root, 'dist'));
-			const scripts = [...output].filter(([file]) => /\.(?:m?js)$/.test(file));
-			expect(scripts.length).toBeGreaterThan(0);
-			/** Every match of `pattern` in the Worker's scripts, with its file and surroundings. */
-			const findings = (pattern: RegExp) =>
-				scripts.flatMap(([file, code]) =>
-					[...code.matchAll(new RegExp(pattern.source, 'g'))].map((match) => {
-						// rolldown heads each source module's code with `//#region <path>`.
-						// An import at the top of a chunk precedes every region: name the chunk's modules.
-						const region =
-							[...code.slice(0, match.index).matchAll(/\/\/#region (\S+)/g)].at(-1)?.[1] ??
-							[...new Set([...code.matchAll(/\/\/#region (\S+)/g)].map((m) => m[1]))].join(', ');
-						return `${file} [${region}]: …${code.slice(Math.max(0, match.index - 80), match.index + 60)}…`;
-					}),
-				);
 			// The MCP client is in the Worker (the coordinator's connection cache)...
-			expect(findings(/Mcp-Session-Id/).length).toBeGreaterThan(0);
+			expect(findings(output, /Mcp-Session-Id/).length).toBeGreaterThan(0);
 			// ...and its stdio transport, with the process spawner, is not.
-			expect({
-				childProcess: findings(/["'`](?:node:)?child_process["'`]/),
-				crossSpawn: findings(/cross-spawn/),
-				stdioTransport: findings(/MCP stdio transport already started/),
-			}).toEqual({ childProcess: [], crossSpawn: [], stdioTransport: [] });
+			expect(findings(output, /cross-spawn/)).toEqual([]);
+			expect(findings(output, /MCP stdio transport already started/)).toEqual([]);
+			// `node:child_process` imports exist only in @anthropic-ai/sdk's Node-only
+			// entries (agent-toolset/node, internal/node), which pi-ai reaches through
+			// a dynamic import and workerd satisfies with its built-in stub. Nothing
+			// else — pi-mcp included — may import it.
+			const childProcess = findings(output, /["'`](?:node:)?child_process["'`]/);
+			expect(
+				childProcess.filter(
+					({ modules }) => !modules.every((module) => module.includes('/@anthropic-ai/sdk/')),
+				),
+			).toEqual([]);
 
-			const deployConfig = [...output].find(([file]) => path.basename(file) === 'wrangler.json');
-			if (!deployConfig) throw new Error(`No wrangler.json in the build output: ${[...output.keys()].join(', ')}`);
-			expect(JSON.parse(deployConfig[1]).worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
+			expect(deployConfigOf(output).worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
+		},
+		180_000,
+	);
+
+	it(
+		'aliases a surviving cross-spawn import to the throwing stub',
+		async () => {
+			// cross-spawn is not installed where the fixture resolves from: only the
+			// alias lets this build succeed.
+			const output = await buildCloudflareFixture(
+				[
+					"'use agent';",
+					"import { useModel } from '@flue/runtime';",
+					"import spawn from 'cross-spawn';",
+					'',
+					'export function Researcher() {',
+					"\tuseModel('anthropic/claude-sonnet-4-6');",
+					"\tif (Math.random() > 2) spawn('node');",
+					"\treturn 'No processes here.';",
+					'}',
+					'',
+				].join('\n'),
+			);
+			expect(
+				findings(output, /cross-spawn is not available in a Cloudflare Worker/).length,
+			).toBeGreaterThan(0);
+			// No useCodeMode() in this app: no Worker Loader binding.
+			expect(deployConfigOf(output).worker_loaders).toBeUndefined();
 		},
 		180_000,
 	);
