@@ -15,19 +15,19 @@ import {
 	type ConversationRecord,
 	encodeCanonicalId,
 } from './conversation-records.ts';
-import { isDocumentMimeType } from './document-attachments.ts';
-import { AttachmentNotAvailableError, ConversationRecordInvariantError } from './errors.ts';
-import { fnv1a64 } from './fnv.ts';
-import { deepMergeMetadata } from './message-output.ts';
-import { createUserContextMessage, renderSignalMessage } from './message-rendering.ts';
-import type { ResourceSnapshot } from './resources.ts';
+import { isDocumentMimeType } from '../document-attachments.ts';
+import { AttachmentNotAvailableError, ConversationRecordInvariantError } from '../errors.ts';
+import { fnv1a64 } from '../fnv.ts';
+import { deepMergeMetadata } from '../message-output.ts';
+import { createUserContextMessage, renderSignalMessage } from '../message-rendering.ts';
+import type { ResourceSnapshot } from '../resources.ts';
 import {
 	createActionScopeName,
 	createTaskSessionName,
 	isDurableInvocationId,
 	isDurableTaskId,
 	isPublicSessionName,
-} from './session-identity.ts';
+} from '../session-identity.ts';
 
 interface ReducedEntryBase {
 	id: string;
@@ -107,7 +107,9 @@ interface ReducedAssistantToolCallBlock extends ReducedAssistantBlockBase {
 }
 
 type ReducedAssistantBlock =
-	ReducedAssistantTextBlock | ReducedAssistantReasoningBlock | ReducedAssistantToolCallBlock;
+	| ReducedAssistantTextBlock
+	| ReducedAssistantReasoningBlock
+	| ReducedAssistantToolCallBlock;
 
 export interface InProgressAssistantMessage {
 	messageId: string;
@@ -321,24 +323,6 @@ export interface ReducedContextEntry {
 	sourceEntry: ReducedEntry;
 }
 
-/**
- * Version of the reduced-state shape AND of the fold semantics that produce
- * it, stamped on every durable fold checkpoint
- * (conversation-fold-checkpoint.ts). A checkpoint is a cache over the log —
- * never authoritative — so a version mismatch is a cheap cache miss: the
- * loader discards it and replays from the origin.
- *
- * BUMP THIS on every change to `ReducedInstanceState`'s shape (fields,
- * container types, retention/downgrade behavior) or to
- * `applyConversationRecord`'s semantics. A decoded old-format state folded
- * forward would silently diverge from a from-scratch replay; the bump turns
- * that into a rebuild. Enforcement is mechanical: the checkpoint equivalence
- * suite deep-compares decode(encode(state)) and checkpoint-seeded loads
- * against from-scratch folds at every batch boundary, so shape drift without
- * a matching codec change fails CI.
- */
-export const REDUCED_STATE_FORMAT = 3;
-
 export function createReducedInstanceState(): ReducedInstanceState {
 	return {
 		recordsThroughOffset: '-1',
@@ -445,10 +429,7 @@ function cloneReducedInstanceState(state: ReducedInstanceState): ReducedInstance
 	};
 }
 
-export function applyConversationRecord(
-	state: ReducedInstanceState,
-	record: ConversationRecord,
-): void {
+function applyConversationRecord(state: ReducedInstanceState, record: ConversationRecord): void {
 	const accepted = state.recordsById.get(record.id);
 	if (accepted) {
 		// A stub compares by the digest of the record's canonical JSON — the
@@ -1102,7 +1083,7 @@ export function getActiveConversationPath(conversation: ReducedConversationState
 	return path.reverse();
 }
 
-export function buildConversationContextEntries(
+function buildConversationContextEntries(
 	conversation: ReducedConversationState,
 	options: ConversationProjectionOptions = {},
 ): ReducedContextEntry[] {
@@ -1129,13 +1110,6 @@ export function buildConversationContextEntries(
 		...pathToContextEntries(path.slice(keptStart, latestCompactionIndex), options),
 		...pathToContextEntries(path.slice(latestCompactionIndex + 1), options),
 	];
-}
-
-export function buildConversationContext(
-	conversation: ReducedConversationState,
-	options: ConversationProjectionOptions = {},
-): AgentMessage[] {
-	return buildConversationContextEntries(conversation, options).map((entry) => entry.message);
 }
 
 function pathToContextEntries(
@@ -1563,7 +1537,7 @@ function isCompleteToolBatch(
 	return true;
 }
 
-export function toolOutcomeKey(assistantMessageId: string, toolCallId: string): string {
+function toolOutcomeKey(assistantMessageId: string, toolCallId: string): string {
 	return JSON.stringify([assistantMessageId, toolCallId]);
 }
 
@@ -1571,7 +1545,7 @@ export function toolResultEntryId(assistantMessageId: string, toolCallId: string
 	return `entry_tool_result_${encodeCanonicalId(assistantMessageId)}_${encodeCanonicalId(toolCallId)}`;
 }
 
-export function conversationScopeKey(harness: string, session: string): string {
+function conversationScopeKey(harness: string, session: string): string {
 	return JSON.stringify([harness, session]);
 }
 

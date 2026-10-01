@@ -36,8 +36,14 @@ export class ScheduleBook {
 	 * cancelled key moves it. A fired key stays fired: a schedule id fires once.
 	 * Returns whether the key is armed afterwards.
 	 */
-	async arm(key: string, atMs: number, message: DeliveredMessage, context: Context): Promise<boolean> {
-		if (!Number.isFinite(atMs)) throw new TypeError(`[flue] Schedule "${key}" needs a finite time.`);
+	async arm(
+		key: string,
+		atMs: number,
+		message: DeliveredMessage,
+		context: Context,
+	): Promise<boolean> {
+		if (!Number.isFinite(atMs))
+			throw new TypeError(`[flue] Schedule "${key}" needs a finite time.`);
 		const armed = await this.#options.host.harness.commit(async (tx) => {
 			const schedule = await tx.doc(FlueSchedules, key, null);
 			if (schedule.status === 'fired') return false;
@@ -110,7 +116,8 @@ export class ScheduleBook {
 			fired.push(key);
 		}
 		const next = await this.next(context);
-		if (next !== undefined) await this.#options.armWake(next, { kind: 'schedule', scheduleId: 'next' });
+		if (next !== undefined)
+			await this.#options.armWake(next, { kind: 'schedule', scheduleId: 'next' });
 		return fired;
 	}
 
@@ -118,7 +125,9 @@ export class ScheduleBook {
 	async read(
 		key: string,
 		context: Context,
-	): Promise<{ readonly atMs: number; readonly message: JsonValue; readonly status: string } | undefined> {
+	): Promise<
+		{ readonly atMs: number; readonly message: JsonValue; readonly status: string } | undefined
+	> {
 		return this.#options.host.harness.snapshot(FlueSchedules, key, context);
 	}
 }

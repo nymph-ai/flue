@@ -7,7 +7,7 @@
  * implement it directly.
  */
 
-import type { SubmissionSettledRecord } from './conversation-records.ts';
+import type { SubmissionSettledRecord } from './legacy/conversation-records.ts';
 import type { AgentSubmissionInput } from './runtime/agent-submissions.ts';
 import type { AttachmentStore } from './runtime/attachment-store.ts';
 import type { ConversationStreamStore } from './runtime/conversation-stream-store.ts';
@@ -59,7 +59,12 @@ export const LEASE_DURATION_MS = 30_000;
  *   re-anchor it).
  */
 type AgentSubmissionStatus =
-	'queued' | 'running' | 'terminalizing' | 'settled' | 'joining' | 'joined';
+	| 'queued'
+	| 'running'
+	| 'terminalizing'
+	| 'settled'
+	| 'joining'
+	| 'joined';
 
 export interface AgentSubmission {
 	readonly sequence: number;
@@ -147,6 +152,12 @@ export type AgentDispatchAdmission =
  *
  * Stability: the lease method group mirrors the durable-execution engine and
  * is subject to change until 1.0. This applies to every backend equally.
+ *
+ * @deprecated Since the Pi Durable cutover (PI_UPGRADE_PLAN.md §7 step 8)
+ * the runtime no longer reads or writes this store: submissions, attempts,
+ * joins and settlements are Pi Durable records on the canonical log, and
+ * receipts are Pi documents. Adapters keep implementing it for one release
+ * so existing deployments stay compatible; it will be removed.
  */
 export interface AgentSubmissionStore {
 	// Query
@@ -386,9 +397,18 @@ export interface AgentSubmissionStore {
 
 /** The complete set of stores a {@link PersistenceAdapter} provides. */
 export interface PersistenceStores {
-	/** Durable agent submission lifecycle storage. */
-	readonly submissionStore: AgentSubmissionStore;
-	/** Canonical per-agent-instance conversation streams. */
+	/**
+	 * Durable agent submission lifecycle storage.
+	 *
+	 * @deprecated No longer read or written by the runtime (see
+	 * {@link AgentSubmissionStore}); optional, kept for adapter compatibility.
+	 */
+	readonly submissionStore?: AgentSubmissionStore;
+	/**
+	 * Durable streams: the canonical Pi Durable log of every agent instance
+	 * (one stream per instance, bridged by `conversationStreamStoreLog`), and
+	 * pre-upgrade conversation streams read for the one-time import.
+	 */
 	readonly conversationStreamStore: ConversationStreamStore;
 	/** Immutable attachment bytes referenced by canonical conversation records. */
 	readonly attachmentStore: AttachmentStore;

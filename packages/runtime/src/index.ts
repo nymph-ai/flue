@@ -114,6 +114,14 @@ export { createChannelRouter } from './runtime/channel-routes.ts';
 export { type FlueEventSubscriber, observe } from './runtime/events.ts';
 export { type AgentInstanceInfo, dispatch, getAgentInstance } from './runtime/flue-app.ts';
 export { isDynamicModel, setProvider } from './runtime/providers.ts';
+// Where every agent instance's canonical Pi log lives: an Electric (Durable
+// Streams) server instead of the app's own persistence.
+export {
+	type ElectricStreamsConfig,
+	electricStreams,
+	type FlueStreamsConfig,
+	setStreams,
+} from './runtime/streams-config.ts';
 export type { AgentIdentityBinding } from './runtime/registration.ts';
 export { __flueBindAgentModule } from './runtime/registration.ts';
 export {

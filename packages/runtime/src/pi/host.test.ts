@@ -85,7 +85,10 @@ function fixture(): Fixture {
 	};
 }
 
-function agent(config: Partial<AgentRuntimeConfig> = {}, lifecycle?: RenderedAgent['lifecycle']): RenderedAgent {
+function agent(
+	config: Partial<AgentRuntimeConfig> = {},
+	lifecycle?: RenderedAgent['lifecycle'],
+): RenderedAgent {
 	const render = renderedAgentFrom({ model: 'faux/faux-1', ...config });
 	return lifecycle ? { ...render, lifecycle } : render;
 }
@@ -128,7 +131,10 @@ function sections(messages: readonly Message[]): Record<string, string> {
 }
 
 function route(respond: (messages: readonly Message[]) => AssistantMessage): FauxResponseStep[] {
-	return Array.from({ length: 24 }, () => (request: { messages: Message[] }) => respond(request.messages));
+	return Array.from(
+		{ length: 24 },
+		() => (request: { messages: Message[] }) => respond(request.messages),
+	);
 }
 
 const call = (name: string, args: Record<string, unknown> = {}) =>
@@ -140,7 +146,11 @@ async function entries(host: FluePiHost, conversationId: ConversationId): Promis
 	return [...(page?.items ?? [])].reverse();
 }
 
-async function entryText(host: FluePiHost, conversationId: ConversationId, id: number): Promise<string> {
+async function entryText(
+	host: FluePiHost,
+	conversationId: ConversationId,
+	id: number,
+): Promise<string> {
 	const found = (await entries(host, conversationId)).find((entry) => entry.id === (id as EntryId));
 	return textOf(found?.model?.[0]);
 }
@@ -167,7 +177,9 @@ describe('FluePiHost admission and settlement', () => {
 		const settlement = await host.waitForSettlement(input.submissionId, context);
 		expect(settlement.outcome).toBe('completed');
 		expect(settlement.answeredBySubmissionId).toBeUndefined();
-		expect(await entryText(host, ROOT_CONVERSATION_ID, settlement.answerEntryId ?? -1)).toBe('hello back');
+		expect(await entryText(host, ROOT_CONVERSATION_ID, settlement.answerEntryId ?? -1)).toBe(
+			'hello back',
+		);
 		await host.close(context);
 	});
 
@@ -193,7 +205,9 @@ describe('FluePiHost admission and settlement', () => {
 		const host = await f.open();
 		const submissionId = await deriveKeyedSubmissionId(entity.type, entity.id, 'evt-2');
 		await host.admit(admission('first', { submissionId }), context);
-		const error = await host.admit(admission('different', { submissionId }), context).catch((e) => e);
+		const error = await host
+			.admit(admission('different', { submissionId }), context)
+			.catch((e) => e);
 		expect(error).toBeInstanceOf(SubmissionConflictError);
 		expect((error as SubmissionConflictError).status).toBe(409);
 		expect((error as SubmissionConflictError).submissionId).toBe(submissionId);
@@ -221,7 +235,9 @@ describe('FluePiHost admission and settlement', () => {
 		expect((again as AgentInstanceExistsError).uid).toBe(born.uid);
 		expect((again as AgentInstanceExistsError).status).toBe(409);
 
-		const mismatch = await host.admit(admission('x', { uid: 'inst_other' }), context).catch((e) => e);
+		const mismatch = await host
+			.admit(admission('x', { uid: 'inst_other' }), context)
+			.catch((e) => e);
 		expect(mismatch).toBeInstanceOf(AgentInstanceNotFoundError);
 		expect((mismatch as AgentInstanceNotFoundError).status).toBe(404);
 
@@ -269,7 +285,9 @@ describe('FluePiHost admission and settlement', () => {
 		expect(b.answeredBySubmissionId).toBe(first.submissionId);
 		expect(a.answeredBySubmissionId).toBeUndefined();
 		expect(c.answerEntryId).not.toBe(a.answerEntryId);
-		expect(await entryText(host, ROOT_CONVERSATION_ID, c.answerEntryId ?? -1)).toBe('answer-for-followup');
+		expect(await entryText(host, ROOT_CONVERSATION_ID, c.answerEntryId ?? -1)).toBe(
+			'answer-for-followup',
+		);
 		await host.close(context);
 	});
 });
@@ -373,7 +391,11 @@ describe('FluePiHost crash recovery', () => {
 describe('FluePiHost render mapping', () => {
 	it('maps model, thinking level, active tools and compaction onto the conversation', async () => {
 		const f = fixture();
-		const tool = defineTool({ name: 'lookup', description: 'Look something up.', run: () => 'found' });
+		const tool = defineTool({
+			name: 'lookup',
+			description: 'Look something up.',
+			run: () => 'found',
+		});
 		const host = await f.open(
 			agent({
 				thinkingLevel: 'high',
@@ -393,9 +415,10 @@ describe('FluePiHost render mapping', () => {
 		});
 
 		await host.applyRender(agent({ compaction: false }), context);
+		// `false` disables the threshold but keeps overflow recovery: enabled, no reserve.
 		expect(await root.getCompaction(context)).toEqual({
-			enabled: false,
-			reserveTokens: 16_384,
+			enabled: true,
+			reserveTokens: 0,
 			keepRecentTokens: 8_000,
 			backgroundTokens: 0,
 		});
@@ -424,7 +447,8 @@ describe('FluePiHost render mapping', () => {
 					{
 						run: (ctx) => {
 							finishes += 1;
-							if (finishes === 1) ctx.append({ kind: 'signal', type: 'nudge', body: 'one more pass' });
+							if (finishes === 1)
+								ctx.append({ kind: 'signal', type: 'nudge', body: 'one more pass' });
 						},
 					},
 				],
@@ -442,7 +466,9 @@ describe('FluePiHost render mapping', () => {
 		expect(seen[1]?.join('\n')).toContain('one more pass');
 		expect(seen[1]?.join('\n')).toContain('remember the tide');
 		expect(finishes).toBe(2);
-		const metadata = (await entries(host, ROOT_CONVERSATION_ID)).find((entry) => entry.kind === 'flue.metadata');
+		const metadata = (await entries(host, ROOT_CONVERSATION_ID)).find(
+			(entry) => entry.kind === 'flue.metadata',
+		);
 		expect(metadata?.data).toMatchObject({ metadata: { started: true, tools: 0 } });
 		await host.close(context);
 	});
@@ -460,9 +486,11 @@ describe('FluePiHost subagents and skills', () => {
 		f.faux.setResponses(
 			route((messages) => {
 				const message = last(messages);
-				if (message?.role === 'toolResult') return fauxAssistantMessage(`parent heard: ${textOf(message)}`);
+				if (message?.role === 'toolResult')
+					return fauxAssistantMessage(`parent heard: ${textOf(message)}`);
 				const text = textOf(message);
-				if (text === 'delegate please') return call('task', { agent: 'researcher', prompt: 'find the answer' });
+				if (text === 'delegate please')
+					return call('task', { agent: 'researcher', prompt: 'find the answer' });
 				if (text === 'direct question') return fauxAssistantMessage('direct answer');
 				if (text === 'find the answer') {
 					childSections = sections(messages);
@@ -471,7 +499,9 @@ describe('FluePiHost subagents and skills', () => {
 				return fauxAssistantMessage('unexpected');
 			}),
 		);
-		const host = await f.open(agent({ instructions: 'You are the parent.', subagents: [researcher] }));
+		const host = await f.open(
+			agent({ instructions: 'You are the parent.', subagents: [researcher] }),
+		);
 		const input = admission('delegate please');
 		await host.admit(input, context);
 		const settlement = await host.waitForSettlement(input.submissionId, context);
@@ -490,7 +520,11 @@ describe('FluePiHost subagents and skills', () => {
 		expect(children.items[0]?.owner?.conversationId).toBe(ROOT_CONVERSATION_ID);
 
 		// The programmatic twin: session.task().
-		const direct = await host.task(undefined, { agent: 'researcher', prompt: 'direct question' }, context);
+		const direct = await host.task(
+			undefined,
+			{ agent: 'researcher', prompt: 'direct question' },
+			context,
+		);
 		expect(direct.text).toBe('direct answer');
 		await host.close(context);
 	});
@@ -518,7 +552,9 @@ describe('FluePiHost subagents and skills', () => {
 		await host.admit(input, context);
 		const settlement = await host.waitForSettlement(input.submissionId, context);
 		expect(rootSections.flue_skills).toContain('<name>deploy</name>');
-		expect(rootSections.flue_skills).toContain('<description>Deploy the application.</description>');
+		expect(rootSections.flue_skills).toContain(
+			'<description>Deploy the application.</description>',
+		);
 		const activated = await entryText(host, ROOT_CONVERSATION_ID, settlement.answerEntryId ?? -1);
 		expect(activated).toContain('<skill name="deploy" location="/.flue/packaged-skills/');
 		expect(activated).toContain('Run the deploy script, then verify the health check.');

@@ -1,43 +1,8 @@
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
 import { expect, it } from 'vitest';
-import type { PersistenceAdapter } from './agent-execution-store.ts';
-import type { ConversationRecord } from './conversation-records.ts';
 import { init, instrument, useModel, useTool } from './index.ts';
-import { sqlite, start } from './node/index.ts';
-import type { ConversationStreamStore } from './runtime/conversation-stream-store.ts';
-
-function recordingDatabase() {
-	const database = sqlite();
-	const records: ConversationRecord[] = [];
-	const adapter: PersistenceAdapter = {
-		migrate: () => database.migrate?.(),
-		close: () => database.close?.(),
-		async connect() {
-			const stores = await database.connect();
-			const stream = stores.conversationStreamStore;
-			const recordingStream: ConversationStreamStore = {
-				createStream: (...args) => stream.createStream(...args),
-				acquireProducer: (...args) => stream.acquireProducer(...args),
-				async append(input) {
-					const result = await stream.append(input);
-					records.push(...structuredClone(input.records));
-					return result;
-				},
-				read: (...args) => stream.read(...args),
-				getMeta: (...args) => stream.getMeta(...args),
-				subscribe: (...args) => stream.subscribe(...args),
-				...(stream.putFoldCheckpoint
-					? { putFoldCheckpoint: stream.putFoldCheckpoint.bind(stream) }
-					: {}),
-				...(stream.getFoldCheckpoint
-					? { getFoldCheckpoint: stream.getFoldCheckpoint.bind(stream) }
-					: {}),
-			};
-			return { ...stores, conversationStreamStore: recordingStream };
-		},
-	};
-	return { adapter, records };
-}
+import { start } from './node/index.ts';
+import { readConversation, toolParts } from './runtime/conversation-test-support.ts';
 
 function hangUntilSignal(signal: AbortSignal | undefined): Promise<string> {
 	return new Promise((_resolve, reject) => {
@@ -65,7 +30,6 @@ it('settles a tool that exceeds its timeoutMs with a distinguishable error and c
 		}),
 		fauxAssistantMessage([fauxText('Continuing after the timeout.')], { stopReason: 'stop' }),
 	]);
-	const database = recordingDatabase();
 	const disposeInstrumentation = instrument({
 		dispose() {},
 		observe() {},
@@ -75,7 +39,6 @@ it('settles a tool that exceeds its timeoutMs with a distinguishable error and c
 	});
 	const runtime = await start({
 		agents: [SlowAgent],
-		db: database.adapter,
 		providers: [faux.provider],
 		env: {},
 	});
@@ -88,24 +51,21 @@ it('settles a tool that exceeds its timeoutMs with a distinguishable error and c
 		});
 
 		// The tool call settled as an error whose text names the deadline —
-		// distinguishable from a thrown tool error (the harness throws
-		// ToolTimeoutError; the recorded outcome carries the message the model
-		// saw). The submission itself did not fail.
-		const outcomes = database.records.filter((record) => record.type === 'tool_outcome');
-		expect(outcomes).toHaveLength(1);
-		expect(outcomes[0]).toMatchObject({
+		// distinguishable from a thrown tool error — and the submission itself
+		// did not fail: the turn continued with a follow-up answer.
+		const snapshot = await readConversation(SlowAgent, 'tool-timeout');
+		const tools = toolParts(snapshot);
+		expect(tools).toHaveLength(1);
+		expect(tools[0]).toMatchObject({
 			toolCallId: 'call_hung',
-			isError: true,
-			content: [{ type: 'text', text: 'Tool "hung" timed out after 40ms' }],
+			state: 'output-error',
+			errorText: expect.stringContaining('Tool "hung" timed out after 40ms'),
 		});
-
-		// The turn continued: a follow-up assistant message was produced after
-		// the timeout settlement instead of the submission failing.
-		const continuation = database.records
-			.filter((record) => record.type === 'assistant_text_delta')
-			.map((record) => (record as { delta?: string }).delta ?? '')
-			.join('');
-		expect(continuation).toContain('Continuing after the timeout.');
+		const assistant = snapshot.messages.find((message) => message.role === 'assistant');
+		expect(assistant?.parts.at(-1)).toMatchObject({
+			type: 'text',
+			text: 'Continuing after the timeout.',
+		});
 	} finally {
 		await agent.abort();
 		await runtime.stop();

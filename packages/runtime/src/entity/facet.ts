@@ -24,8 +24,18 @@ import {
 	type MutableReplicatedState,
 } from '@earendil-works/chord';
 import { createContextKey } from '@earendil-works/chord/context';
-import { type ConversationId, ROOT_CONVERSATION_ID, type ToolExecutionApi, type Tx } from '@earendil-works/pi-durable';
-import { A2A_SEND_ENTRY_KIND, type A2aDirective, type A2aSendEntryData, PUBLISH_ENTRY_KIND } from '../pi/a2a-entries.ts';
+import {
+	type ConversationId,
+	ROOT_CONVERSATION_ID,
+	type ToolExecutionApi,
+	type Tx,
+} from '@earendil-works/pi-durable';
+import {
+	A2A_SEND_ENTRY_KIND,
+	type A2aDirective,
+	type A2aSendEntryData,
+	PUBLISH_ENTRY_KIND,
+} from '../pi/a2a-entries.ts';
 import type { FluePiHost } from '../pi/host.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
@@ -48,9 +58,8 @@ import {
 } from './services.ts';
 
 /** The tool invocation a service call runs inside, set by `tools-facet.ts`. */
-export const ENTITY_TOOL_CALL: ContextKey<ToolExecutionApi> = createContextKey<ToolExecutionApi>(
-	'flue.entity.tool-call',
-);
+export const ENTITY_TOOL_CALL: ContextKey<ToolExecutionApi> =
+	createContextKey<ToolExecutionApi>('flue.entity.tool-call');
 
 /** Adds and removes explicit streams of this entity's wake subscription (`subscriptions.ts`). */
 export interface EntitySubscriptionPort {
@@ -96,7 +105,9 @@ export async function spawnedUid(child: EntityRef): Promise<string> {
 		'SHA-256',
 		new TextEncoder().encode(`flue-spawn-uid\n${child.type}\n${child.id}`),
 	);
-	const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+	const hex = [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, '0'))
+		.join('');
 	return `inst_sp_${hex.slice(0, 26)}`;
 }
 
@@ -109,7 +120,10 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 	const { host, entity: self, log, observations, schedules, subscriptions } = options;
 
 	/** Commit `change` through the tool call's own commit when inside one. */
-	function commit<T>(context: Context, change: (tx: Tx, conversationId: ConversationId) => Promise<T>): Promise<T> {
+	function commit<T>(
+		context: Context,
+		change: (tx: Tx, conversationId: ConversationId) => Promise<T>,
+	): Promise<T> {
 		const call = context.value(ENTITY_TOOL_CALL);
 		if (call) return call.commit((tx) => change(tx, call.conversationId), context);
 		return host.harness.commit((tx) => change(tx, ROOT_CONVERSATION_ID), context);
@@ -156,7 +170,11 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			A2A_SEND_ENTRY_KIND,
 			data as unknown as JsonValue,
 		);
-		return { messageId, submissionId: await deriveKeyedSubmissionId(target.type, target.id, messageId), deduplicated };
+		return {
+			messageId,
+			submissionId: await deriveKeyedSubmissionId(target.type, target.id, messageId),
+			deduplicated,
+		};
 	}
 
 	const messaging: EntityMessagingService = {
@@ -175,8 +193,10 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 
 	const lifecycle: EntityLifecycleService = {
 		async spawn(type, args, context) {
-			if (typeof type !== 'string' || type.length === 0) throw new EntityServiceError('spawn needs an agent type.');
-			if (typeof args.key !== 'string' || args.key.length === 0) throw new EntityServiceError('spawn needs a key.');
+			if (typeof type !== 'string' || type.length === 0)
+				throw new EntityServiceError('spawn needs an agent type.');
+			if (typeof args.key !== 'string' || args.key.length === 0)
+				throw new EntityServiceError('spawn needs a key.');
 			const child: EntityRef = { type, id: `${self.id}/${args.key}` };
 			const uid = await spawnedUid(child);
 			await log.ensure(inboxPath(child));
@@ -188,7 +208,11 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				child,
 				directiveMessageId(self, 'spawn', args.key),
 				message,
-				{ kind: 'spawn', uid, ...(args.initialData === undefined ? {} : { initialData: args.initialData }) },
+				{
+					kind: 'spawn',
+					uid,
+					...(args.initialData === undefined ? {} : { initialData: args.initialData }),
+				},
 				context,
 			);
 			return { ...child, uid };
@@ -234,7 +258,8 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 	return defineFacet({
 		id: 'flue.entity',
 		setup(env) {
-			const cursors: MutableReplicatedState<ObservationCursors> = env.replicatedState<ObservationCursors>({});
+			const cursors: MutableReplicatedState<ObservationCursors> =
+				env.replicatedState<ObservationCursors>({});
 			const refresh = async (context: Context) => {
 				cursors.replace(context, await observations.cursors(context));
 			};
@@ -244,7 +269,8 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				cursors,
 				async observe(source, observeOptions, context) {
 					const result = await observations.observe(source, observeOptions, context);
-					if (observeOptions.wake === true && subscriptions) await subscriptions.observe(self, [result.path]);
+					if (observeOptions.wake === true && subscriptions)
+						await subscriptions.observe(self, [result.path]);
 					await refresh(context);
 					return { key: result.key, offset: result.offset };
 				},

@@ -59,7 +59,12 @@ import { ulid } from 'ulidx';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { STREAM_START, type StreamOffset } from '../streams/offset.ts';
 import { type EntityAddress, entityProducerName, entityStreamRoot } from './a2a-entries.ts';
-import { CommitAssembler, createCommitEnvelope, decodeCommitEnvelope, type PiCommitEnvelope } from './commit-envelope.ts';
+import {
+	CommitAssembler,
+	createCommitEnvelope,
+	decodeCommitEnvelope,
+	type PiCommitEnvelope,
+} from './commit-envelope.ts';
 import {
 	type DrainResult,
 	ensureCommitOutboxSchema,
@@ -171,7 +176,11 @@ export class StreamStorage implements Storage {
 	private closed = false;
 	private poisoned: Error | undefined;
 
-	private constructor(options: StreamStorageOptions, db: FencedSqliteDatabase, index: SqliteStorage) {
+	private constructor(
+		options: StreamStorageOptions,
+		db: FencedSqliteDatabase,
+		index: SqliteStorage,
+	) {
 		this.options = options;
 		this.db = db;
 		this.index = index;
@@ -194,7 +203,9 @@ export class StreamStorage implements Storage {
 				options.onFenced(epoch, reason);
 			},
 			onReport: this.report,
-			...(options.maxMessageBytes === undefined ? {} : { maxMessageBytes: options.maxMessageBytes }),
+			...(options.maxMessageBytes === undefined
+				? {}
+				: { maxMessageBytes: options.maxMessageBytes }),
 			...(options.armWake === undefined ? {} : { armWake: options.armWake }),
 			...(options.backoff === undefined ? {} : { backoff: options.backoff }),
 		});
@@ -215,7 +226,9 @@ export class StreamStorage implements Storage {
 		});
 		this.cursors = {
 			get: (key) =>
-				db.prepare('SELECT value FROM flue_entity_cursors WHERE key = ?').get<{ value: string }>(key)?.value,
+				db
+					.prepare('SELECT value FROM flue_entity_cursors WHERE key = ?')
+					.get<{ value: string }>(key)?.value,
 			set: async (key, value) => {
 				await db.transactionUnarmed(() =>
 					db
@@ -226,7 +239,9 @@ export class StreamStorage implements Storage {
 				);
 			},
 			delete: async (key) => {
-				await db.transactionUnarmed(() => db.prepare('DELETE FROM flue_entity_cursors WHERE key = ?').run(key));
+				await db.transactionUnarmed(() =>
+					db.prepare('DELETE FROM flue_entity_cursors WHERE key = ?').run(key),
+				);
 			},
 		};
 		db.setCommitHook((seq, writes) => {
@@ -319,14 +334,19 @@ export class StreamStorage implements Storage {
 				}
 			}
 			if (this.poisoned instanceof TransactionShapeError) throw this.poisoned;
-			if (committed === undefined) throw new Error('[flue] SqliteStorage.commit resolved without a Seq.');
+			if (committed === undefined)
+				throw new Error('[flue] SqliteStorage.commit resolved without a Seq.');
 			return committed;
 		});
 		if (this.publish === 'await') {
 			await this.outbox
-				.waitForPublished(seq, this.now() + (this.options.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS))
+				.waitForPublished(
+					seq,
+					this.now() + (this.options.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS),
+				)
 				.catch((error) => this.report(error));
-			if (this.relayEnabled && !this.closed) await this.relay.drain().catch((error) => this.report(error));
+			if (this.relayEnabled && !this.closed)
+				await this.relay.drain().catch((error) => this.report(error));
 		} else {
 			this.kick();
 		}
@@ -352,7 +372,10 @@ export class StreamStorage implements Storage {
 		return this.index.scanConversations(query, limit, cursor, context);
 	}
 
-	entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(
+		id: EntryId,
+		context: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 	entry(
 		conversationId: ConversationId,
 		id: EntryId,
@@ -361,7 +384,9 @@ export class StreamStorage implements Storage {
 	entry(
 		...args: [EntryId, Context] | [ConversationId, EntryId, Context]
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined> {
-		return args.length === 2 ? this.index.entry(args[0], args[1]) : this.index.entry(args[0], args[1], args[2]);
+		return args.length === 2
+			? this.index.entry(args[0], args[1])
+			: this.index.entry(args[0], args[1], args[2]);
 	}
 
 	findLatestHeadMarker(
@@ -415,11 +440,19 @@ export class StreamStorage implements Storage {
 		return this.index.submissionByRequest(conversationId, requestId, context);
 	}
 
-	findDocument(address: DocumentAddress, at: DocumentPoint, context: Context): Promise<DocumentRecord | undefined> {
+	findDocument(
+		address: DocumentAddress,
+		at: DocumentPoint,
+		context: Context,
+	): Promise<DocumentRecord | undefined> {
 		return this.index.findDocument(address, at, context);
 	}
 
-	document(id: DocumentId, at: DocumentPoint, context: Context): Promise<StoredDocument | undefined> {
+	document(
+		id: DocumentId,
+		at: DocumentPoint,
+		context: Context,
+	): Promise<StoredDocument | undefined> {
 		return this.index.document(id, at, context);
 	}
 
@@ -570,10 +603,14 @@ export class StreamStorage implements Storage {
 			}
 			const arm = this.db.disarm();
 			if (!arm.consumed || arm.seq !== seq) {
-				throw new TransactionShapeError(`replayed seq ${envelope.seq} committed outside its transaction.`);
+				throw new TransactionShapeError(
+					`replayed seq ${envelope.seq} committed outside its transaction.`,
+				);
 			}
 			if (seq !== envelope.seq) {
-				throw new Error(`[flue] Pi log replay diverged: envelope seq ${envelope.seq} replayed as seq ${seq}.`);
+				throw new Error(
+					`[flue] Pi log replay diverged: envelope seq ${envelope.seq} replayed as seq ${seq}.`,
+				);
 			}
 		}
 
@@ -614,7 +651,8 @@ export class StreamStorage implements Storage {
 				envelopes.push(envelope);
 				lastInBatch = envelope.seq;
 			}
-			if (lastInBatch !== undefined && !assembler.pending) offsets.set(lastInBatch, batch.nextOffset);
+			if (lastInBatch !== undefined && !assembler.pending)
+				offsets.set(lastInBatch, batch.nextOffset);
 			offset = batch.nextOffset;
 			if (batch.upToDate || batch.messages.length === 0) break;
 		}

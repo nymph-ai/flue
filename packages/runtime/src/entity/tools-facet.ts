@@ -12,7 +12,12 @@
 import { type Context, defineFacet, type Facet, type JsonValue } from '@earendil-works/chord';
 import { withContextValue } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
-import type { Registry, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
+import type {
+	Registry,
+	ToolExecutionApi,
+	ToolExecutionResult,
+	ToolRegistration,
+} from '@earendil-works/pi-durable';
 import { ENTITY_TOOL_CALL } from './facet.ts';
 import { entityKey } from './paths.ts';
 import {
@@ -61,7 +66,9 @@ function entityArg(args: Args, name: string): EntityRef | undefined {
 	const value = args[name];
 	if (typeof value !== 'object' || value === null) return undefined;
 	const ref = value as Record<string, unknown>;
-	return typeof ref.type === 'string' && typeof ref.id === 'string' ? { type: ref.type, id: ref.id } : undefined;
+	return typeof ref.type === 'string' && typeof ref.id === 'string'
+		? { type: ref.type, id: ref.id }
+		: undefined;
 }
 
 function messageArg(args: Args): EntityMessage {
@@ -94,7 +101,9 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 					text: Type.Optional(Type.String({ description: 'The message text.' })),
 					data: Type.Optional(Type.Unknown({ description: 'Structured JSON payload.' })),
 					message_id: Type.Optional(
-						Type.String({ description: 'Idempotency key; a repeat with the same id is delivered once.' }),
+						Type.String({
+							description: 'Idempotency key; a repeat with the same id is delivered once.',
+						}),
 					),
 				}),
 				replay: 'safe',
@@ -121,7 +130,8 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 			},
 			{
 				name: 'publish_event',
-				description: "Publish an event to this agent's public events stream, which other agents can observe.",
+				description:
+					"Publish an event to this agent's public events stream, which other agents can observe.",
 				parameters: Type.Object({
 					event: Type.Unknown({ description: 'The event, any JSON value.' }),
 					event_id: Type.Optional(Type.String({ description: 'Idempotency key for the event.' })),
@@ -131,7 +141,12 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 					try {
 						const args = raw as Args;
 						const eventId = optionalString(args, 'event_id');
-						const result = await publishFromArgs(messaging, args, eventId, callScoped(api, context));
+						const result = await publishFromArgs(
+							messaging,
+							args,
+							eventId,
+							callScoped(api, context),
+						);
 						return text(`Published event ${result.eventId}.`, result);
 					} catch (error) {
 						return failure(error);
@@ -145,9 +160,15 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 				parameters: Type.Object({
 					key: Type.String({ description: 'Name for this observation.' }),
 					entity: Type.Optional(EntityRefSchema),
-					stream: Type.Optional(Type.String({ description: 'A stream path, when not observing an agent.' })),
-					from: Type.Optional(Type.String({ description: 'Start offset; "-1" reads from the beginning.' })),
-					wake: Type.Optional(Type.Boolean({ description: 'Wake this agent when the stream grows.' })),
+					stream: Type.Optional(
+						Type.String({ description: 'A stream path, when not observing an agent.' }),
+					),
+					from: Type.Optional(
+						Type.String({ description: 'Start offset; "-1" reads from the beginning.' }),
+					),
+					wake: Type.Optional(
+						Type.Boolean({ description: 'Wake this agent when the stream grows.' }),
+					),
 					poll: Type.Optional(Type.Boolean({ description: 'Also read what is there now.' })),
 					limit: Type.Optional(Type.Number({ description: 'Most items to read now.' })),
 				}),
@@ -176,7 +197,8 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 							},
 							scoped,
 						);
-						if (args.poll !== true) return text(`Observing "${key}" from ${observed.offset}.`, observed);
+						if (args.poll !== true)
+							return text(`Observing "${key}" from ${observed.offset}.`, observed);
 						const limit = typeof args.limit === 'number' ? args.limit : undefined;
 						const batch = await observation.poll(key, limit === undefined ? {} : { limit }, scoped);
 						return text(
@@ -195,7 +217,9 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 				parameters: Type.Object({
 					type: Type.String({ description: 'Agent name of the child.' }),
 					key: Type.String({ description: 'Child key; the child id is "<this id>/<key>".' }),
-					initial_data: Type.Optional(Type.Unknown({ description: 'Creation data for the child.' })),
+					initial_data: Type.Optional(
+						Type.Unknown({ description: 'Creation data for the child.' }),
+					),
 					text: Type.Optional(Type.String({ description: 'First message to the child.' })),
 				}),
 				replay: 'safe',
@@ -209,7 +233,9 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 							type,
 							{
 								key,
-								...(args.initial_data === undefined ? {} : { initialData: args.initial_data as JsonValue }),
+								...(args.initial_data === undefined
+									? {}
+									: { initialData: args.initial_data as JsonValue }),
 								...(typeof args.text === 'string' ? { message: { text: args.text } } : {}),
 							},
 							callScoped(api, context),
@@ -229,7 +255,9 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 					delay_ms: Type.Optional(Type.Number({ description: 'Milliseconds from now.' })),
 					at_ms: Type.Optional(Type.Number({ description: 'Absolute time, epoch milliseconds.' })),
 					target: Type.Optional(EntityRefSchema),
-					schedule_id: Type.Optional(Type.String({ description: 'Id for the schedule (to cancel or move it).' })),
+					schedule_id: Type.Optional(
+						Type.String({ description: 'Id for the schedule (to cancel or move it).' }),
+					),
 				}),
 				replay: 'safe',
 				async execute(raw, api, context) {

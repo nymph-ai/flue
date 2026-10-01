@@ -16,7 +16,12 @@ import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import type { Message } from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'vitest';
-import { openStreamStorage, removeTempFiles, snapshotReads, tempFile } from '../pi/stream-storage-test-support.ts';
+import {
+	openStreamStorage,
+	removeTempFiles,
+	snapshotReads,
+	tempFile,
+} from '../pi/stream-storage-test-support.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import { ElectricDurableStreamLog } from '../streams/electric-log.ts';
 import {
@@ -50,7 +55,9 @@ async function startRoute(world: TestWorld, root: string, reports: unknown[]) {
 	const listening = new Promise<AddressInfo>((resolve) => {
 		resolveInfo = resolve;
 	});
-	const server = serve({ fetch: route.fetch, port: 0, hostname: '127.0.0.1' }, (info) => resolveInfo(info));
+	const server = serve({ fetch: route.fetch, port: 0, hostname: '127.0.0.1' }, (info) =>
+		resolveInfo(info),
+	);
 	const info = await listening;
 	return {
 		url: `http://127.0.0.1:${info.port}/__flue/streams/wake`,
@@ -68,7 +75,9 @@ async function settled(entity: TestEntity, submissionId: string): Promise<string
 }
 
 async function deleteSubscription(root: string, id: string): Promise<void> {
-	await fetch(`${root}/__ds/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+	await fetch(`${root}/__ds/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
+		() => {},
+	);
 }
 
 describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
@@ -94,13 +103,15 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				if (last?.role === 'toolResult') return answer('Asked Bob.');
 				const text = textOf(last);
 				if (text.includes('pong')) return answer('Bob answered pong.');
-				if (text.includes('ask bob')) return toolCall('send_message', { target: BOB, text: 'ping' });
+				if (text.includes('ask bob'))
+					return toolCall('send_message', { target: BOB, text: 'ping' });
 				return answer('ok');
 			});
 			const bob = world.entity(BOB, (messages: readonly Message[]) => {
 				const last = lastMessage(messages);
 				if (last?.role === 'toolResult') return answer('Replied to Alice.');
-				if (textOf(last).includes('ping')) return toolCall('send_message', { target: ALICE, text: 'pong' });
+				if (textOf(last).includes('ping'))
+					return toolCall('send_message', { target: ALICE, text: 'pong' });
 				return answer('ok');
 			});
 
@@ -115,7 +126,9 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				},
 				context,
 			);
-			expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe('completed');
+			expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
+				'completed',
+			);
 			await alice.flush();
 
 			// Bob is asleep until the server's webhook wakes him.
@@ -123,7 +136,11 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				const inbox = await readAll(log, inboxPath(BOB));
 				return inbox.length > 0 ? inbox : undefined;
 			});
-			const bobSubmission = await deriveKeyedSubmissionId(BOB.type, BOB.id, (ping as { messageId: string }).messageId);
+			const bobSubmission = await deriveKeyedSubmissionId(
+				BOB.type,
+				BOB.id,
+				(ping as { messageId: string }).messageId,
+			);
 			expect(await settled(bob, bobSubmission)).toBe('completed');
 			await bob.flush();
 
@@ -153,7 +170,11 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				await entity.flush();
 				const seq = entity.lastSeq();
 				const reads = await snapshotReads(entity.requireStorage(), seq);
-				const rebuilt = await openStreamStorage({ file: await tempFile(), log, entity: entity.ref });
+				const rebuilt = await openStreamStorage({
+					file: await tempFile(),
+					log,
+					entity: entity.ref,
+				});
 				try {
 					expect(await snapshotReads(rebuilt.storage, seq)).toEqual(reads);
 				} finally {
@@ -190,14 +211,25 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 			const runtime = await alice.open();
 			await bob.open();
 			await runtime.observation.observe({ stream }, { key: 'hn', wake: true }, context);
-			const item = { type: 'society.observation', v: 1, source: 'rsshub', id: 'hn-1', title: 'Story 1' };
-			const appended = await log.append(stream, { messages: [item], producer: { id: `rsshub-${run}`, epoch: 0, seq: 0 } });
+			const item = {
+				type: 'society.observation',
+				v: 1,
+				source: 'rsshub',
+				id: 'hn-1',
+				title: 'Story 1',
+			};
+			const appended = await log.append(stream, {
+				messages: [item],
+				producer: { id: `rsshub-${run}`, epoch: 0, seq: 0 },
+			});
 			expect(appended.status).toBe('appended');
 			const observed = await eventually(async () => {
 				const entries = (await alice.entries()).filter((entry) => entry.kind === 'flue.observed');
 				return entries.length > 0 ? entries : undefined;
 			});
-			expect(observed.map((entry) => entry.data)).toEqual([expect.objectContaining({ key: 'hn', stream, item })]);
+			expect(observed.map((entry) => entry.data)).toEqual([
+				expect.objectContaining({ key: 'hn', stream, item }),
+			]);
 			expect(world.woken.map((wake) => wake.entity)).toEqual([`${ALICE.type}/alice`]);
 			expect((await bob.entries()).some((entry) => entry.kind === 'flue.observed')).toBe(false);
 		} finally {

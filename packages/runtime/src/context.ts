@@ -285,3 +285,41 @@ export function skillCatalogEntries(skills: Record<string, RegisteredSkill>): Sk
 		...(skill.description ? { description: skill.description } : {}),
 	}));
 }
+
+/**
+ * Workspace context for the Pi system prompt (`pi/registry-bridge.ts`'s
+ * `flue_context` section): AGENTS.md (and CLAUDE.md), the date, the working
+ * directory and its listing — everything `composeSystemPrompt` adds besides
+ * the instructions and the catalogs, which Pi renders as their own sections —
+ * and the `.agents/skills` the sandbox provides.
+ */
+export async function discoverWorkspace(
+	env: Sandbox | undefined,
+): Promise<{ context: string; skills: WorkspaceSkill[] }> {
+	const agentsMd = env ? await readAgentsMd(env, env.cwd) : '';
+	const skills = env ? Object.values(await discoverLocalSkills(env, env.cwd)) : [];
+	let directoryListing: string[] | undefined;
+	if (env) {
+		try {
+			directoryListing = await env.readdir(env.cwd);
+		} catch {
+			// The cwd may not exist yet.
+		}
+	}
+	const date = new Date().toLocaleDateString('en-US', {
+		weekday: 'short',
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+	});
+	const parts: string[] = [];
+	if (agentsMd) parts.push(agentsMd, '');
+	parts.push(`Date: ${date}`);
+	if (env) {
+		parts.push(`Working directory: ${env.cwd}`);
+		if (directoryListing && directoryListing.length > 0) {
+			parts.push('', 'Directory structure:', directoryListing.join('\n'));
+		}
+	}
+	return { context: parts.join('\n'), skills };
+}

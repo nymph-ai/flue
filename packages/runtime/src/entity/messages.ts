@@ -63,12 +63,20 @@ export function deliveredFromEntity(
 		kind: 'signal',
 		type,
 		body: bodyOf(message),
-		attributes: { from_type: from.type, from_id: from.id, from: entityKey(from), message_id: messageId },
+		attributes: {
+			from_type: from.type,
+			from_id: from.id,
+			from: entityKey(from),
+			message_id: messageId,
+		},
 	};
 }
 
 /** What a self-schedule delivers when it fires. */
-export function deliveredFromSchedule(scheduleId: string, message: EntityMessage): DeliveredMessage {
+export function deliveredFromSchedule(
+	scheduleId: string,
+	message: EntityMessage,
+): DeliveredMessage {
 	return {
 		kind: 'signal',
 		type: 'schedule.fired',

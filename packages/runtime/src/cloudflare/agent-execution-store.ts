@@ -1,10 +1,5 @@
-import type { AgentSubmissionStore } from '../agent-execution-store.ts';
 import { describeErrorChain, formatErrorForLog } from '../errors.ts';
 import { SqliteConversationStreamStore } from '../runtime/conversation-stream-store.ts';
-import {
-	createSqlAgentExecutionStoreFromSql,
-	ensureSqlAgentExecutionTables,
-} from '../sql-agent-execution-store.ts';
 import { ensureSqlAttachmentTable, SqliteAttachmentStore } from '../sql-attachment-store.ts';
 import type { SqlStorage } from '../sql-storage.ts';
 
@@ -47,28 +42,5 @@ export function createSqlConversationStores(storage: DurableObjectStorage, class
 		};
 	} catch (cause) {
 		throw initFailure(className, 'SQLite conversation stores', cause);
-	}
-}
-
-export function createSqlAgentExecutionStore(
-	storage: DurableObjectStorage | undefined,
-	className: string,
-): AgentSubmissionStore {
-	const sql = storage?.sql;
-	const transactionSync = storage?.transactionSync;
-	if (!sql || typeof sql.exec !== 'function' || typeof transactionSync !== 'function') {
-		throw new Error(
-			`[flue] Cloudflare durable agent class "${className}" requires Durable Object SQLite. ` +
-				`Add "${className}" to a Wrangler migration's "new_sqlite_classes" list before its first deploy; ` +
-				`do not use legacy "new_classes". Existing KV-backed Durable Object classes cannot be converted ` +
-				`to SQLite in place.`,
-		);
-	}
-	try {
-		ensureSqlAgentExecutionTables(sql);
-		const runTransaction = <T>(closure: () => T): T => transactionSync.call(storage, closure) as T;
-		return createSqlAgentExecutionStoreFromSql(sql, runTransaction);
-	} catch (cause) {
-		throw initFailure(className, 'SQLite execution store', cause);
 	}
 }

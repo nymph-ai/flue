@@ -71,15 +71,21 @@ export interface EntitySubscriptions extends EntitySubscriptionPort {
 	ensureObserver(entity: EntityRef): Promise<EnsuredSubscription>;
 }
 
-export function createEntitySubscriptions(options: EntitySubscriptionsOptions): EntitySubscriptions {
+export function createEntitySubscriptions(
+	options: EntitySubscriptionsOptions,
+): EntitySubscriptions {
 	const root = options.root.replace(/\/+$/, '');
 	const fetchImpl = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
 	const ensured = new Set<string>();
 
-	const url = (id: string, suffix = '') => `${root}/__ds/subscriptions/${encodeURIComponent(id)}${suffix}`;
+	const url = (id: string, suffix = '') =>
+		`${root}/__ds/subscriptions/${encodeURIComponent(id)}${suffix}`;
 
 	async function request(target: string, init: RequestInit): Promise<Response> {
-		const headers = { ...(await options.headers?.()), ...(init.headers as Record<string, string> | undefined) };
+		const headers = {
+			...(await options.headers?.()),
+			...(init.headers as Record<string, string> | undefined),
+		};
 		return fetchImpl(target, { ...init, headers });
 	}
 
@@ -127,14 +133,20 @@ export function createEntitySubscriptions(options: EntitySubscriptionsOptions): 
 
 	async function ensureObserver(entity: EntityRef): Promise<EnsuredSubscription> {
 		const id = observeSubscriptionId(entity);
-		const result = await put(id, subscriptionBody(wirePath(wakeAnchorPath(entity)), 'flue entity observations'));
+		const result = await put(
+			id,
+			subscriptionBody(wirePath(wakeAnchorPath(entity)), 'flue entity observations'),
+		);
 		ensured.add(id);
 		return result;
 	}
 
 	return {
 		ensureInbox: () =>
-			put(options.inboxSubscriptionId ?? INBOX_SUBSCRIPTION_ID, subscriptionBody(INBOX_PATTERN, 'flue entity inboxes')),
+			put(
+				options.inboxSubscriptionId ?? INBOX_SUBSCRIPTION_ID,
+				subscriptionBody(INBOX_PATTERN, 'flue entity inboxes'),
+			),
 		ensureObserver,
 		async observe(entity, streams) {
 			if (streams.length === 0) return;

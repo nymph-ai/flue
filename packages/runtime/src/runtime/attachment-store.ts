@@ -1,4 +1,4 @@
-import type { AttachmentRef } from '../conversation-records.ts';
+import type { AttachmentRef } from '../legacy/conversation-records.ts';
 import { AttachmentConflictError, AttachmentIntegrityError } from '../errors.ts';
 
 export interface PutAttachmentInput {

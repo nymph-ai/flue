@@ -1,7 +1,6 @@
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai';
-import type { ResourceSnapshot } from './resources.ts';
-import { generateEntryId, generateRecordId } from './runtime/ids.ts';
-import type { PromptUsage } from './types.ts';
+import type { ResourceSnapshot } from '../resources.ts';
+import type { PromptUsage } from '../types.ts';
 
 interface ConversationRecordEnvelope {
 	v: 1;
@@ -31,7 +30,8 @@ export interface AttachmentRef {
 }
 
 export type CanonicalUserContent =
-	{ type: 'text'; text: string } | { type: 'attachment'; attachment: AttachmentRef };
+	| { type: 'text'; text: string }
+	| { type: 'attachment'; attachment: AttachmentRef };
 
 export type CanonicalToolResultContent =
 	| Extract<ToolResultMessage['content'][number], { type: 'text' }>
@@ -410,11 +410,6 @@ interface ToolStepSettledRecord extends ConversationRecordEnvelope {
 	value: unknown;
 }
 
-/** The deterministic memo id one durable step settles under. */
-export function toolStepRecordId(toolCallId: string, stepName: string): string {
-	return `record_tool_step_${encodeCanonicalId(toolCallId)}_${encodeCanonicalId(stepName)}`;
-}
-
 export function encodeCanonicalId(id: string): string {
 	const bytes = new TextEncoder().encode(id);
 	let binary = '';
@@ -463,11 +458,3 @@ export type ConversationRecord =
 	| MessageMetadataRecord
 	| ToolStepSettledRecord
 	| ResourceSnapshotRecord;
-
-export function generateConversationRecordId(): string {
-	return generateRecordId();
-}
-
-export function generateConversationEntryId(): string {
-	return generateEntryId();
-}

@@ -15,7 +15,6 @@ import { InvalidRequestError, RouteNotFoundError } from '../errors.ts';
 import type { CloudflareRuntime, FlueRuntime } from './flue-app.ts';
 import { handleAgentRequest } from './handle-agent.ts';
 import {
-	handleAgentAttachmentRead,
 	handleAgentConversationHead,
 	handleAgentConversationRead,
 } from './handle-conversation-routes.ts';
@@ -39,15 +38,11 @@ export async function executeAgentConversationRead(
 ): Promise<Response> {
 	const { agentName, instanceId, request } = target;
 	if (rt.target === 'node') {
-		const streamPath = agentStreamPath(agentName, instanceId);
+		const source = await rt.conversationSource(agentName, instanceId);
 		if (request.method === 'HEAD') {
-			return handleAgentConversationHead(rt.conversationStreamStore, streamPath);
+			return handleAgentConversationHead(source, agentStreamPath(agentName, instanceId));
 		}
-		return handleAgentConversationRead({
-			store: rt.conversationStreamStore,
-			path: streamPath,
-			request,
-		});
+		return handleAgentConversationRead({ source, request });
 	}
 
 	// Cloudflare: forward to the agent DO.
@@ -98,12 +93,7 @@ export async function executeAgentAttachmentRead(
 ): Promise<Response> {
 	const { agentName, instanceId } = target;
 	if (rt.target === 'node') {
-		return handleAgentAttachmentRead({
-			conversationStore: rt.conversationStreamStore,
-			attachmentStore: rt.attachmentStore,
-			path: agentStreamPath(agentName, instanceId),
-			attachmentId: target.attachmentId,
-		});
+		return rt.readAttachment(agentName, instanceId, target.attachmentId);
 	}
 	// Cloudflare: forward to the agent DO, which owns the attachment bytes and
 	// recognizes the download intent by the canonical path tail.

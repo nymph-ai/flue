@@ -106,7 +106,11 @@ function isDirective(value: unknown): value is A2aDirective {
 	if (!isRecord(value)) return false;
 	switch (value.kind) {
 		case 'schedule':
-			return typeof value.scheduleId === 'string' && value.scheduleId.length > 0 && Number.isFinite(value.atMs);
+			return (
+				typeof value.scheduleId === 'string' &&
+				value.scheduleId.length > 0 &&
+				Number.isFinite(value.atMs)
+			);
 		case 'cancel-schedule':
 			return typeof value.scheduleId === 'string' && value.scheduleId.length > 0;
 		case 'spawn':

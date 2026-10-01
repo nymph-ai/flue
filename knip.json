@@ -6,15 +6,7 @@
 		"packages/runtime/src/runtime/schemas.ts": ["duplicates"],
 		"packages/runtime/src/sandbox.ts": ["duplicates"],
 		"packages/runtime/src/streams/*.ts": ["exports", "types"],
-		"packages/runtime/src/entity/*.ts": ["exports", "types"],
-		// The Flue Pi adapter (PI_UPGRADE_PLAN.md §7 steps 6, 10, 11) is not wired
-		// into the coordinators until step 8; its exports are its public surface.
-		"packages/runtime/src/pi/*.ts": ["exports", "types"],
-		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"],
-		// Read by the Pi registry bridge once the coordinators cut over
-		// (PI_UPGRADE_PLAN.md §7 step 8); remove with the other temporary ignores.
-		"packages/runtime/src/pi/codemode/tool.ts": ["exports", "types"],
-		"packages/runtime/src/hooks/use-code-mode.ts": ["exports", "types"]
+		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"]
 	},
 	"workspaces": {
 		".": {
@@ -41,13 +33,8 @@
 			]
 		},
 		"packages/runtime": {
-			// src/pi/host.ts: the Pi adapter entry until the step-8 cutover imports it.
-			"entry": ["test/fixtures/durable-boundary-child.mjs", "src/pi/host.ts"],
-			"ignoreDependencies": [
-				"@hono/node-server",
-				// consumed by the Pi adapter (PI_UPGRADE_PLAN.md §7)
-				"@earendil-works/pi-durable"
-			]
+			"entry": ["test/fixtures/durable-boundary-child.mjs"],
+			"ignoreDependencies": ["@hono/node-server"]
 		},
 		"packages/vite": {
 			"ignoreDependencies": ["@earendil-works/pi-ai"]

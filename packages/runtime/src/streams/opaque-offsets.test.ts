@@ -1,17 +1,16 @@
 /**
  * Step 2 of PI_UPGRADE_PLAN.md: the runtime treats conversation-stream offsets
- * as opaque. These tests run the store contract, the HTTP read routes, the
- * shared fold host and the in-process observer against stores whose offsets
+ * as opaque. These tests run the store contract, the HTTP read routes (over
+ * a pre-upgrade record stream: `legacy/conversation-source.ts`) and the
+ * in-process observer against stores whose offsets
  * are NOT the `formatOffset` shape — an Electric-style `<segment>_<bytes>`
  * token with a non-zero segment, and a token with a random per-stream prefix —
  * so any leftover integer parsing in the runtime core fails here.
  */
 import { describe, expect, it } from 'vitest';
-import { getConversationFoldHost } from '../conversation-fold-host.ts';
 import type { ConversationStreamChunk } from '../conversation-public.ts';
-import { loadReducedConversationState } from '../conversation-reader.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
-import { createReducedInstanceState } from '../conversation-reducer.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
+import { legacyConversationSource } from '../legacy/conversation-source.ts';
 import {
 	type ConversationFoldCheckpoint,
 	type ConversationProducerClaim,
@@ -21,10 +20,7 @@ import {
 	type ConversationStreamStore,
 	InMemoryConversationStreamStore,
 } from '../runtime/conversation-stream-store.ts';
-import {
-	observeSubmissionSettlement,
-	projectConversationRead,
-} from '../runtime/conversation-observer.ts';
+import { observeSubmissionSettlement } from '../runtime/conversation-observer.ts';
 import { handleAgentConversationRead } from '../runtime/handle-conversation-routes.ts';
 import { parseOffset } from '../runtime/stream-offsets.ts';
 import { defineConversationStreamStoreContractTests } from '../test-utils/define-conversation-stream-store-contract-tests.ts';
@@ -207,7 +203,11 @@ const created: ConversationRecord = {
 	createdAt: timestamp,
 };
 
-function userMessage(id: string, parentId: string | null, submissionId?: string): ConversationRecord {
+function userMessage(
+	id: string,
+	parentId: string | null,
+	submissionId?: string,
+): ConversationRecord {
 	return {
 		...envelope(`record_${id}`, submissionId),
 		type: 'user_message',
@@ -331,24 +331,12 @@ for (const [label, mint] of variants) {
 			).toBe(true);
 		});
 
-		it('advances the shared fold host and orders adopted states by opaque offset', async () => {
+		it('bounds fold checkpoints by lexicographic offset order', async () => {
 			const store = new OpaqueOffsetConversationStreamStore(mint());
 			const { append } = await createConversation(store);
 			const first = await append([created]);
-			const host = getConversationFoldHost(store, path);
-			const atFirst = await host.getStateAtHead();
-			expect(atFirst.recordsThroughOffset).toBe(first.offset);
-
 			const second = await append([userMessage('entry_m0', null)]);
-			const atSecond = await host.getStateAtHead();
-			expect(atSecond.recordsThroughOffset).toBe(second.offset);
-
-			// An older state never replaces a newer one.
 			const meta = await store.getMeta(path);
-			host.adoptState(atFirst, meta?.incarnation ?? '');
-			expect((await host.getStateAtHead()).recordsThroughOffset).toBe(second.offset);
-
-			// Fold checkpoints are bounded by lexicographic offset order.
 			await store.putFoldCheckpoint(path, {
 				offset: second.offset,
 				incarnation: meta?.incarnation ?? '',
@@ -356,8 +344,6 @@ for (const [label, mint] of variants) {
 				data: '{}',
 			});
 			expect(await store.getFoldCheckpoint(path, { atOrBefore: first.offset })).toBeNull();
-			const loaded = await loadReducedConversationState({ store, path });
-			expect(loaded.recordsThroughOffset).toBe(second.offset);
 		});
 
 		it('observes a submission settlement and projects ordinals', async () => {
@@ -367,8 +353,7 @@ for (const [label, mint] of variants) {
 			const { offset } = await append([userMessage('entry_m0', null, 'sub_1')]);
 			const events: ConversationStreamChunk[] = [];
 			const settlement = observeSubmissionSettlement({
-				store,
-				path,
+				source: legacyConversationSource(store, path),
 				submissionId: 'sub_1',
 				offset,
 				onEvent: (chunk) => events.push(chunk),
@@ -381,15 +366,16 @@ for (const [label, mint] of variants) {
 				position: { batch: 1_000 + 7 * 2, index: 0 },
 			});
 
-			// The projection helper also stamps store ordinals.
+			// The projection stamps store ordinals.
 			const read = await store.read(path);
-			const projected = projectConversationRead(createReducedInstanceState(), read);
-			expect(projected.offset).toBe(read.nextOffset);
-			expect(projected.items.length).toBeGreaterThan(0);
-			for (const chunk of projected.items) {
+			const projected = await legacyConversationSource(store, path).read('-1');
+			if (projected === 'aborted') throw new Error('unexpected abort');
+			expect(projected.nextOffset).toBe(read.nextOffset);
+			expect(projected.chunks.length).toBeGreaterThan(0);
+			for (const chunk of projected.chunks) {
 				expect([1_000, 1_007, 1_014]).toContain(chunk.position.batch);
 			}
-			expect(projected.items.at(-1)?.position.batch).toBe(1_014);
+			expect(projected.chunks.at(-1)?.position.batch).toBe(1_014);
 		});
 	});
 }
@@ -399,12 +385,18 @@ describe('stores without ordinals', () => {
 		const opaque = new OpaqueOffsetConversationStreamStore(electricStyle);
 		const { append } = await createConversation(opaque);
 		await append([created]);
-		const read = await opaque.read(path);
-		const stripped = {
-			...read,
-			batches: read.batches.map(({ ordinal: _ordinal, ...batch }) => batch),
+		const stripping: ConversationStreamStore = {
+			createStream: (...args) => opaque.createStream(...args),
+			acquireProducer: (...args) => opaque.acquireProducer(...args),
+			append: (...args) => opaque.append(...args),
+			getMeta: (...args) => opaque.getMeta(...args),
+			subscribe: (...args) => opaque.subscribe(...args),
+			async read(...args) {
+				const read = await opaque.read(...args);
+				return { ...read, batches: read.batches.map(({ ordinal: _ordinal, ...batch }) => batch) };
+			},
 		};
-		expect(() => projectConversationRead(createReducedInstanceState(), stripped)).toThrow(
+		await expect(legacyConversationSource(stripping, path).read('-1')).rejects.toThrow(
 			/carries no ordinal/,
 		);
 	});

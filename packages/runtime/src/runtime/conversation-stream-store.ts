@@ -1,6 +1,6 @@
 import { clampLimit } from '../adapter-helpers.ts';
 import type { AgentSubmissionStore } from '../agent-execution-store.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
 import { ConversationStreamStoreError } from '../errors.ts';
 import { migrateFlueSqlSchema } from '../format-version.ts';
 import { parseSessionStorageKey } from '../session-identity.ts';

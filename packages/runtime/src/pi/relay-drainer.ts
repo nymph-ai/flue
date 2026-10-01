@@ -31,7 +31,11 @@
  * - `not-found` — the target stream does not exist yet: create it, retry.
  */
 
-import { DurableStreamLogError, type AppendOutcome, type DurableStreamLog } from '../streams/log.ts';
+import {
+	DurableStreamLogError,
+	type AppendOutcome,
+	type DurableStreamLog,
+} from '../streams/log.ts';
 import type { FencedSqliteDatabase } from './fenced-sqlite-database.ts';
 
 export type RelayDrainResult =
@@ -130,7 +134,9 @@ export class RelayDrainer {
 	}
 
 	pending(): number {
-		const row = this.db.prepare('SELECT COUNT(*) AS n FROM flue_relay_outbox').get<{ n: number | bigint }>();
+		const row = this.db
+			.prepare('SELECT COUNT(*) AS n FROM flue_relay_outbox')
+			.get<{ n: number | bigint }>();
 		return Number(row?.n ?? 0);
 	}
 
@@ -159,14 +165,18 @@ export class RelayDrainer {
 
 	/** Whether the Pi commit `seq` is on the canonical log (no outbox row at or below it). */
 	private published(seq: number): boolean {
-		return this.db.prepare('SELECT seq FROM flue_pi_outbox WHERE seq <= ? LIMIT 1').get(seq) === undefined;
+		return (
+			this.db.prepare('SELECT seq FROM flue_pi_outbox WHERE seq <= ? LIMIT 1').get(seq) ===
+			undefined
+		);
 	}
 
 	private async drainOnce(external: AbortSignal | undefined): Promise<RelayDrainResult> {
 		const signal = external ? AbortSignal.any([external, this.abort.signal]) : this.abort.signal;
 		let published = false;
 		while (true) {
-			if (this.fence) return { status: 'fenced', target: this.fence.target, currentEpoch: this.fence.epoch };
+			if (this.fence)
+				return { status: 'fenced', target: this.fence.target, currentEpoch: this.fence.epoch };
 			if (this.closed || signal.aborted) return { status: 'closed' };
 			const head = this.db.prepare(HEAD_SQL).get<RowShape>();
 			if (!head) {
@@ -231,7 +241,9 @@ export class RelayDrainer {
 				}
 				case 'stream-seq-conflict':
 					// Relay appends carry no Stream-Seq; a server answering this is outside the protocol.
-					this.onReport(new Error(`[flue] Relay target "${row.target}" answered a Stream-Seq conflict.`));
+					this.onReport(
+						new Error(`[flue] Relay target "${row.target}" answered a Stream-Seq conflict.`),
+					);
 					return this.backoff(new Error('unexpected stream-seq conflict'));
 				case 'fenced':
 					return this.poison(row.target, outcome.currentEpoch);

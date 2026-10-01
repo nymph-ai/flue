@@ -1,0 +1,259 @@
+{
+	"scenario": "tool-calls",
+	"replies": [
+		{
+			"ok": true,
+			"text": "Done: ABC, and explode failed.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"offset": "0000000000000000_0000000000000017",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNU1Y1QldKOTlNVERLWTM3TTAz",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+					"timestamp": "2026-10-01T00:06:04.352Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Look up abc and explode.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+					"turnId": "turn_01M3TCGMT2YX94EVRCD0PBD9JW",
+					"timestamp": "2026-10-01T00:06:04.354Z",
+					"parts": [
+						{
+							"type": "dynamic-tool",
+							"toolName": "lookup",
+							"toolCallId": "call_lookup",
+							"state": "output-available",
+							"input": {
+								"key": "abc"
+							},
+							"output": {
+								"value": "ABC"
+							},
+							"durationMs": 5
+						},
+						{
+							"type": "dynamic-tool",
+							"toolName": "explode",
+							"toolCallId": "call_explode",
+							"state": "output-error",
+							"input": {},
+							"errorText": "kaboom",
+							"durationMs": 2
+						},
+						{
+							"type": "text",
+							"text": "Done: ABC, and explode failed.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+					"timestamp": "2026-10-01T00:06:04.384Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMSV6THH72Q2BE3WE269"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMSV6THH72Q2BE3WE269"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNU1Y1QldKOTlNVERLWTM3TTAz",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+				"timestamp": "2026-10-01T00:06:04.352Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Look up abc and explode.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+			"turnId": "turn_01M3TCGMT2YX94EVRCD0PBD9JW",
+			"timestamp": "2026-10-01T00:06:04.354Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"toolCallId": "call_lookup",
+			"toolName": "lookup",
+			"input": {
+				"key": "abc"
+			},
+			"timestamp": "2026-10-01T00:06:04.355Z",
+			"position": {
+				"batch": 5,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"toolCallId": "call_explode",
+			"toolName": "explode",
+			"input": {},
+			"timestamp": "2026-10-01T00:06:04.356Z",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"timestamp": "2026-10-01T00:06:04.356Z",
+			"position": {
+				"batch": 7,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"toolCallId": "call_lookup",
+			"output": {
+				"value": "ABC"
+			},
+			"durationMs": 5,
+			"timestamp": "2026-10-01T00:06:04.362Z",
+			"position": {
+				"batch": 10,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output-error",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"toolCallId": "call_explode",
+			"errorText": "kaboom",
+			"durationMs": 2,
+			"timestamp": "2026-10-01T00:06:04.362Z",
+			"position": {
+				"batch": 10,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+			"turnId": "turn_01M3TCGMTTARTWXJNVN4JMDCDY",
+			"timestamp": "2026-10-01T00:06:04.379Z",
+			"position": {
+				"batch": 11,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"kind": "text",
+			"delta": "Done: ABC, and explo",
+			"position": {
+				"batch": 13,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"kind": "text",
+			"delta": "de failed.",
+			"position": {
+				"batch": 14,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"messageId": "entry_01M3TCGMT28XHRN1S7XDTAF1NH",
+			"timestamp": "2026-10-01T00:06:04.383Z",
+			"position": {
+				"batch": 16,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMSWJFTH74DHTK68QCX9",
+			"submissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMSV5BWJ99MTDKY37M03",
+			"timestamp": "2026-10-01T00:06:04.384Z",
+			"position": {
+				"batch": 17,
+				"index": 0
+			}
+		}
+	]
+}

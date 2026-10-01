@@ -1,50 +1,13 @@
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
-import { expect, it } from 'vitest';
-import type { PersistenceAdapter } from './agent-execution-store.ts';
-import type { ConversationRecord } from './conversation-records.ts';
 import {
-	init,
-	instrument,
-	useAgentStart,
-	useModel,
-	usePersistentState,
-	useSandbox,
-} from './index.ts';
-import { local, sqlite, start } from './node/index.ts';
-import type { ConversationStreamStore } from './runtime/conversation-stream-store.ts';
-
-function recordingDatabase() {
-	const database = sqlite();
-	const records: ConversationRecord[] = [];
-	const adapter: PersistenceAdapter = {
-		migrate: () => database.migrate?.(),
-		close: () => database.close?.(),
-		async connect() {
-			const stores = await database.connect();
-			const stream = stores.conversationStreamStore;
-			const recordingStream: ConversationStreamStore = {
-				createStream: (...args) => stream.createStream(...args),
-				acquireProducer: (...args) => stream.acquireProducer(...args),
-				async append(input) {
-					const result = await stream.append(input);
-					records.push(...structuredClone(input.records));
-					return result;
-				},
-				read: (...args) => stream.read(...args),
-				getMeta: (...args) => stream.getMeta(...args),
-				subscribe: (...args) => stream.subscribe(...args),
-				...(stream.putFoldCheckpoint
-					? { putFoldCheckpoint: stream.putFoldCheckpoint.bind(stream) }
-					: {}),
-				...(stream.getFoldCheckpoint
-					? { getFoldCheckpoint: stream.getFoldCheckpoint.bind(stream) }
-					: {}),
-			};
-			return { ...stores, conversationStreamStore: recordingStream };
-		},
-	};
-	return { adapter, records };
-}
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type Message,
+} from '@earendil-works/pi-ai';
+import { expect, it } from 'vitest';
+import { init, useAgentStart, useModel, usePersistentState, useSandbox } from './index.ts';
+import { local, start } from './node/index.ts';
+import { readConversation, toolParts } from './runtime/conversation-test-support.ts';
 
 function waitForAbort(signal: AbortSignal | undefined): Promise<never> {
 	if (!signal) throw new Error('Expected the tool to receive an abort signal.');
@@ -54,12 +17,12 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<never> {
 	});
 }
 
-it('repairs an aborted partial sequential tool batch before recording the failure assistant', async () => {
+it('aborts a sequential tool round mid-call: the rest never runs, its state write never lands', async () => {
 	const firstStarted = Promise.withResolvers<void>();
 	const calls = { first: 0, second: 0 };
 	function AbortBatch() {
 		useModel('faux/model');
-		const [, setPhase] = usePersistentState('phase', 'initial');
+		const [phase, setPhase] = usePersistentState('phase', 'initial');
 		useAgentStart(() => setPhase('started'));
 		useSandbox({
 			...local(),
@@ -89,9 +52,10 @@ it('repairs an aborted partial sequential tool batch before recording the failur
 				},
 			],
 		});
-		return 'Run the supplied tool calls.';
+		return `Run the supplied tool calls. Phase: ${String(phase)}.`;
 	}
 
+	const requests: string[] = [];
 	const faux = fauxProvider({ models: [{ id: 'model' }] });
 	faux.setResponses([
 		fauxAssistantMessage(
@@ -99,30 +63,16 @@ it('repairs an aborted partial sequential tool batch before recording the failur
 				fauxToolCall('first', {}, { id: 'call_first' }),
 				fauxToolCall('second', {}, { id: 'call_second' }),
 			],
-			{ stopReason: 'toolUse' },
+			{
+				stopReason: 'toolUse',
+			},
 		),
-		fauxAssistantMessage([fauxText('Recovered.')], { stopReason: 'stop' }),
-	]);
-	const database = recordingDatabase();
-	const observedErrors: unknown[] = [];
-	const disposeInstrumentation = instrument({
-		dispose() {},
-		observe() {},
-		async interceptor(_operation, _context, next) {
-			try {
-				return await next();
-			} catch (error) {
-				observedErrors.push(error);
-				throw error;
-			}
+		(context: { messages: Message[] }) => {
+			requests.push(JSON.stringify(context.messages));
+			return fauxAssistantMessage('Recovered.');
 		},
-	});
-	const runtime = await start({
-		agents: [AbortBatch],
-		db: database.adapter,
-		providers: [faux.provider],
-		env: {},
-	});
+	]);
+	const runtime = await start({ agents: [AbortBatch], providers: [faux.provider], env: {} });
 	const agent = init(AbortBatch, { id: 'abort-partial-batch' });
 
 	try {
@@ -134,45 +84,32 @@ it('repairs an aborted partial sequential tool batch before recording the failur
 			message: expect.stringMatching(/aborted/i),
 		});
 		expect(calls).toEqual({ first: 1, second: 0 });
-		expect(
-			observedErrors.filter(
-				(error) => error instanceof Error && error.name === 'ConversationRecordInvariantError',
-			),
-		).toEqual([]);
 
-		const outcomes = database.records.filter((record) => record.type === 'tool_outcome');
-		expect(outcomes.map((record) => record.toolCallId)).toEqual(['call_first', 'call_second']);
-		expect(outcomes[1]).toMatchObject({
-			isError: true,
-			content: [
-				{
-					type: 'text',
-					text: expect.stringContaining('outcome is unknown'),
-				},
-			],
-		});
-		expect(
-			database.records.filter((record) => record.type === 'tool_results_committed'),
-		).toMatchObject([{ outcomeIds: outcomes.map((outcome) => outcome.id) }]);
-		expect(database.records.filter((record) => record.type === 'state_write')).toMatchObject([
-			{ value: 'started' },
+		// Both calls settle as errors in the public conversation, and the
+		// terminal advisory marks the submission aborted.
+		const snapshot = await readConversation(AbortBatch, 'abort-partial-batch');
+		expect(toolParts(snapshot).map((part) => [part.toolCallId, part.state])).toEqual([
+			['call_first', 'output-error'],
+			['call_second', 'output-error'],
 		]);
-		expect(
-			database.records.find(
-				(record) => record.type === 'signal' && record.signalType === 'submission_aborted',
-			),
-		).toMatchObject({
-			attributes: {
-				interruptedTools: JSON.stringify([{ name: 'second', id: 'call_second' }]),
-			},
+		expect(snapshot.messages.find((message) => message.settlement !== undefined)).toMatchObject({
+			role: 'system',
+			purpose: 'advisory',
+			settlement: { outcome: 'aborted' },
 		});
+		expect(snapshot.settlements).toMatchObject([
+			{ submissionId: receipt.submissionId, outcome: 'aborted' },
+		]);
 
+		// The next delivery runs normally, and sees the state the lifecycle
+		// callback committed — not the aborted tool's write.
 		await expect(agent.read(await agent.dispatch('Continue.'))).resolves.toMatchObject({
 			text: 'Recovered.',
 		});
+		expect(requests.at(-1)).toContain('Phase: started.');
+		expect(requests.join('')).not.toContain('must-not-commit');
 	} finally {
 		await agent.abort();
 		await runtime.stop();
-		await disposeInstrumentation();
 	}
 });

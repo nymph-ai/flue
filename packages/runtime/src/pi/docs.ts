@@ -63,6 +63,12 @@ export type FlueReceiptState = {
 	attempts: number;
 	classification?: FlueReceiptClassification;
 	traceCarrier?: { [key: string]: string };
+	/**
+	 * The delivered message as the public conversation shows it: the
+	 * `DeliveredMessage` with attachment bytes replaced by their refs
+	 * (`pi/projection.ts` `DisplayMessage`).
+	 */
+	message?: JsonValue;
 };
 
 export const FlueReceipts = defineDocFamily<FlueReceiptState, null>({
@@ -113,17 +119,20 @@ export const FlueSessions = defineDoc<FlueSessionsState>({
 	initial: () => ({ sessions: {} }),
 });
 
-/** One `usePersistentState` slot, keyed by state name, per conversation. */
-export type FlueStateSlot = { value: JsonValue };
+/**
+ * `usePersistentState` values of the instance, by state name. One session
+ * document rather than a family: a render reads every value up front
+ * (synchronously, inside the agent function), so the set must be
+ * enumerable. Written by the tool (or lifecycle hook) whose callback called
+ * the setter, in its own commit.
+ */
+export type FlueStateValues = { values: { [name: string]: JsonValue } };
 
-export const FlueState = defineDocFamily<FlueStateSlot, JsonValue>({
+export const FlueState = defineDoc<FlueStateValues>({
 	kind: 'flue.state',
 	version: 1,
-	family: true,
-	scope: 'conversation',
-	history: 'rewindable',
-	fork: 'asOf',
-	initial: (seed) => ({ value: seed }),
+	scope: 'session',
+	initial: () => ({ values: {} }),
 });
 
 /** A self-schedule: admitted with `requestId = "sched:{id}"` when it fires. */

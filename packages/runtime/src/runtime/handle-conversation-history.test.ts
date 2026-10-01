@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationStreamChunk } from '../conversation-public.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
-import { toolResultEntryId } from '../conversation-reducer.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
+import { toolResultEntryId } from '../legacy/conversation-reducer.ts';
 import { InMemoryConversationStreamStore } from './conversation-stream-store.ts';
 import { handleAgentConversationRead } from './handle-conversation-routes.ts';
 
