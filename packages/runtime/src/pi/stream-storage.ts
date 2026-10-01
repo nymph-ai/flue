@@ -67,6 +67,7 @@ import {
 	SqliteCommitOutbox,
 } from './commit-outbox.ts';
 import { FencedSqliteDatabase, TransactionShapeError } from './fenced-sqlite-database.ts';
+import { RelayDrainer, type RelayDrainResult } from './relay-drainer.ts';
 
 export interface StreamStorageOptions {
 	/**
@@ -103,6 +104,19 @@ export interface StreamStorageOptions {
 	/** Mints the storage incarnation of a new log. Default: a ULID. */
 	readonly newIncarnation?: () => string;
 	readonly backoff?: { readonly initialMs?: number; readonly maxMs?: number };
+	/**
+	 * Post relay rows (A2A sends, publishes) after their commit is on the log.
+	 * Default `true`; `false` leaves them in `flue_relay_outbox` (tests of the
+	 * Pi log alone).
+	 */
+	readonly relay?: boolean;
+}
+
+/** Advisory key/value cursors kept beside the index (`flue_entity_cursors`). */
+export interface EntityCursorStore {
+	get(key: string): string | undefined;
+	set(key: string, value: string): Promise<void>;
+	delete(key: string): Promise<void>;
 }
 
 /** The log and this database do not belong together. */
@@ -141,6 +155,9 @@ export class StreamStorage implements Storage {
 	readonly path: string;
 	readonly producerId: string;
 	readonly outbox: SqliteCommitOutbox;
+	/** Posts A2A sends and publishes once their commit is on the log. */
+	readonly relay: RelayDrainer;
+	readonly cursors: EntityCursorStore;
 
 	private readonly db: FencedSqliteDatabase;
 	private readonly log: DurableStreamLog;
@@ -148,6 +165,7 @@ export class StreamStorage implements Storage {
 	private readonly now: () => number;
 	private readonly publish: 'async' | 'await';
 	private readonly report: (error: unknown) => void;
+	private readonly relayEnabled: boolean;
 	private index: SqliteStorage;
 	private queue: Promise<unknown> = Promise.resolve();
 	private closed = false;
@@ -180,6 +198,37 @@ export class StreamStorage implements Storage {
 			...(options.armWake === undefined ? {} : { armWake: options.armWake }),
 			...(options.backoff === undefined ? {} : { backoff: options.backoff }),
 		});
+		this.relayEnabled = options.relay ?? true;
+		this.relay = new RelayDrainer({
+			database: db,
+			log: options.log,
+			now: this.now,
+			onFenced: (target, epoch) => {
+				this.poisoned ??= new StorageRejected(
+					`[flue] Relay target "${target}" is fenced (epoch ${epoch}): a newer writer owns this entity; this storage accepts no more commits.`,
+				);
+				options.onFenced(epoch, 'relay');
+			},
+			onReport: this.report,
+			...(options.armWake === undefined ? {} : { armWake: options.armWake }),
+			...(options.backoff === undefined ? {} : { backoff: options.backoff }),
+		});
+		this.cursors = {
+			get: (key) =>
+				db.prepare('SELECT value FROM flue_entity_cursors WHERE key = ?').get<{ value: string }>(key)?.value,
+			set: async (key, value) => {
+				await db.transactionUnarmed(() =>
+					db
+						.prepare(
+							'INSERT INTO flue_entity_cursors (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+						)
+						.run(key, value),
+				);
+			},
+			delete: async (key) => {
+				await db.transactionUnarmed(() => db.prepare('DELETE FROM flue_entity_cursors WHERE key = ?').run(key));
+			},
+		};
 		db.setCommitHook((seq, writes) => {
 			const producer = this.outbox.requireProducer();
 			this.outbox.enqueueSync(
@@ -230,10 +279,21 @@ export class StreamStorage implements Storage {
 		return this.poisoned;
 	}
 
-	/** Publish what is pending now (the host's alarm / wake entry point). */
-	drain(signal?: AbortSignal): Promise<DrainResult> {
+	/**
+	 * Publish what is pending now (the host's alarm / wake entry point): the
+	 * Pi outbox, then the relay rows whose commits it put on the log.
+	 */
+	async drain(signal?: AbortSignal): Promise<DrainResult> {
+		if (this.closed) return { status: 'closed' };
+		const result = await this.outbox.drain(signal);
+		if (this.relayEnabled && !this.closed) await this.relay.drain(signal);
+		return result;
+	}
+
+	/** Post the relay rows whose commits are on the log. */
+	drainRelay(signal?: AbortSignal): Promise<RelayDrainResult> {
 		if (this.closed) return Promise.resolve({ status: 'closed' });
-		return this.outbox.drain(signal);
+		return this.relay.drain(signal);
 	}
 
 	// ─── Storage: commit ─────────────────────────────────────────────────────
@@ -266,6 +326,7 @@ export class StreamStorage implements Storage {
 			await this.outbox
 				.waitForPublished(seq, this.now() + (this.options.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS))
 				.catch((error) => this.report(error));
+			if (this.relayEnabled && !this.closed) await this.relay.drain().catch((error) => this.report(error));
 		} else {
 			this.kick();
 		}
@@ -378,6 +439,7 @@ export class StreamStorage implements Storage {
 		this.closed = true;
 		await this.queue.catch(() => {});
 		await this.outbox.close();
+		await this.relay.close();
 		try {
 			await this.index.close(context);
 		} finally {
@@ -460,6 +522,7 @@ export class StreamStorage implements Storage {
 					this.now() + (this.options.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS),
 				);
 			}
+			if (this.relayEnabled) await this.relay.drain().catch((error) => this.report(error));
 		} else {
 			this.kick();
 		}
@@ -579,7 +642,10 @@ export class StreamStorage implements Storage {
 
 	private kick(): void {
 		if (this.closed || this.poisoned) return;
-		this.outbox.drain().catch((error) => this.report(error));
+		this.outbox
+			.drain()
+			.then(() => (this.relayEnabled && !this.closed ? this.relay.drain() : undefined))
+			.catch((error) => this.report(error));
 	}
 
 	private assertOpen(): void {
