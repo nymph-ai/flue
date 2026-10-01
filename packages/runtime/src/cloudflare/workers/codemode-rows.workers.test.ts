@@ -21,16 +21,16 @@ import { dora } from './turn-driver.ts';
 type Rows = { rowsRead: number; rowsWritten: number };
 
 /**
- * Measured 2026-10-01 (sql + key-value keys): the 10-call turn 586 read /
- * 218 written, the cold store() turn 617 / 234. On `@cloudflare/codemode`
- * the same turns cost 679 / 276 and 711 / 239, of which its facet's tables
- * 69 / 58 and 10 / 5 (BuildBuddy a9066d83-090a-40b4-9fb8-75a11f06cb30; that
- * run's server was a 40-issue tracker, this one 40 notes, with the same
- * call shape). The ceilings leave a little room for the scheduler's polling.
+ * Billed rows measured 2026-10-01 on the Agents SDK 0.24 `Lifecycle`: the
+ * 10-call turn 342 read / 219 written, the cold store() turn 421 / 232
+ * (BuildBuddy f6beb3ca-b899-47fa-b493-7371bdc4b51c). On `@cloudflare/codemode`
+ * and the SDK 0.20 `Agent` the same turns cost 679 / 276 and 711 / 239, of
+ * which the Code Mode facet's own tables 69 / 58 and 10 / 5 — rows this
+ * design never writes (BuildBuddy a9066d83-090a-40b4-9fb8-75a11f06cb30).
  */
 const BUDGET: Record<'tenCalls' | 'coldStore', Rows> = {
-	tenCalls: { rowsRead: 650, rowsWritten: 230 },
-	coldStore: { rowsRead: 650, rowsWritten: 245 },
+	tenCalls: { rowsRead: 380, rowsWritten: 235 },
+	coldStore: { rowsRead: 460, rowsWritten: 250 },
 };
 
 function take(label: string): TraceSummary {
