@@ -1,44 +1,40 @@
 /**
  * MCP client: `@modelcontextprotocol/client` over Streamable HTTP, speaking
- * the stateless 2026-07-28 protocol (docs/cloudflare-native.md rule 6).
+ * the stateless 2026-07-28 protocol and nothing else
+ * (docs/cloudflare-native.md rule 6).
  *
- * - `connect()` probes with `server/discover`; a server on an earlier
- *   revision is negotiated down to the 2025 `initialize` handshake by the SDK.
- * - Nothing standing is held open (rule 8): no `subscriptions/listen`, no
- *   `listChanged` handlers, and the 2025-era standalone GET stream is refused
- *   at the fetch layer. Tool lists are refreshed when their cache hint
+ * - `connect()` probes with `server/discover`, pinned to 2026-07-28: there is
+ *   no fallback to the 2025 `initialize` handshake, so there are no sessions.
+ *   A server that does not offer 2026-07-28 is refused with
+ *   {@link McpProtocolVersionError}, naming the versions it offered or its
+ *   `server/discover` answer.
+ * - Nothing standing is held open (rule 8): no `subscriptions/listen` and no
+ *   `listChanged` handlers. Tool lists are refreshed when their cache hint
  *   (`ttlMs`) expires, or on the next wake when the server gave none.
  * - A connection keeps no state the protocol needs: a fresh client after a
- *   Durable Object eviction works mid-conversation. A 2025-era server that
- *   forgets its session (HTTP 404) gets a fresh session and the request is
- *   retried once.
- * - `input_required` (multi-round-trip requests): a leg that carries only
- *   `requestState` is retried by the SDK; a leg that asks for input fails the
- *   tool call with {@link McpInputRequiredError}, naming what the server
- *   asked for — Flue has no human-in-the-loop channel inside a turn. Flue
- *   advertises no elicitation, sampling or roots capability, so a compliant
- *   server does not ask in the first place.
- * - stdio is a Node capability registered by `@flue/runtime/node`; this module
- *   never imports the stdio transport, so it never reaches a Worker bundle.
+ *   Durable Object eviction works mid-conversation.
+ * - `input_required` (multi-round-trip requests): a leg carrying only
+ *   `requestState` is sent again with it; a leg with input requests is put
+ *   to the question seam (`questions.ts`, rule 9), and its answer is sent
+ *   back with the server's `requestState`. When the seam cannot answer, the
+ *   call fails with {@link McpInputRequiredError}.
  */
 import {
 	type CallToolResult,
 	Client,
 	type FetchLike,
-	SdkHttpError,
+	isInputRequiredResult,
+	SdkError,
+	SdkErrorCode,
 	StreamableHTTPClientTransport,
 	type Tool,
-	type Transport,
+	UnsupportedProtocolVersionError,
 } from '@modelcontextprotocol/client';
 import { version as runtimeVersion } from '../package.json' with { type: 'json' };
 import { fnv1a64 } from './fnv.ts';
 import { createMcpAuthProvider } from './mcp-oauth.ts';
-import {
-	isStdioDefinition,
-	type McpConnectionDefinition,
-	type McpHttpConnectionDefinition,
-	type McpStdioConnectionDefinition,
-} from './mcp-types.ts';
+import type { McpConnectionDefinition } from './mcp-types.ts';
+import { askQuestion, type McpInputQuestion, QuestionParkedError } from './questions.ts';
 import {
 	type McpCallResult,
 	type McpToolSource,
@@ -51,12 +47,14 @@ import type { ToolDefinition } from './types.ts';
 export type {
 	McpAuth,
 	McpConnectionDefinition,
-	McpHttpConnectionDefinition,
 	McpOAuth,
-	McpStdioConnectionDefinition,
 	McpToolAnnotations,
 	McpTransport,
 } from './mcp-types.ts';
+
+/** The one MCP protocol revision Flue speaks. */
+export const MCP_PROTOCOL_VERSION = '2026-07-28';
+
 
 /** The per-request timeout Flue documents for `timeoutMs`. */
 const DEFAULT_MCP_REQUEST_TIMEOUT_MS = 60_000;
@@ -89,22 +87,11 @@ export interface McpConnectionCache extends McpConnectionResolver {
 	close(): Promise<void>;
 }
 
-/** Creates the stdio transport of a definition. Registered by `@flue/runtime/node`. */
-export type McpStdioTransportFactory = (
-	definition: McpStdioConnectionDefinition,
-) => Transport | Promise<Transport>;
-
-let stdioTransportFactory: McpStdioTransportFactory | undefined;
-
-/** Install the stdio transport (`@flue/runtime/node` does, at import). */
-export function setMcpStdioTransportFactory(factory: McpStdioTransportFactory | undefined): void {
-	stdioTransportFactory = factory;
-}
 
 /**
- * A server answered a call with `input_required`: it wants input (an
- * elicitation, a sampling request or the roots list) that nothing in an
- * agent turn can supply.
+ * A server answered a call with `input_required` (an elicitation, a sampling
+ * request or the roots list) and the question seam could not get an answer;
+ * `reason` says why (by default, that questions are not wired yet).
  */
 export class McpInputRequiredError extends Error {
 	override readonly name = 'McpInputRequiredError';
@@ -112,8 +99,35 @@ export class McpInputRequiredError extends Error {
 		readonly server: string,
 		readonly method: string,
 		readonly inputRequests: Readonly<Record<string, unknown>>,
+		readonly reason?: string,
 	) {
-		super(describeInputRequests(server, method, inputRequests));
+		super(
+			[describeInputRequests(server, method, inputRequests), ...(reason ? [reason] : [])].join(
+				'\n',
+			),
+		);
+	}
+}
+
+/**
+ * A server does not speak MCP 2026-07-28, the only revision Flue supports.
+ * `offered` lists the versions it named, when it named any; `answer`
+ * describes its `server/discover` answer otherwise.
+ */
+export class McpProtocolVersionError extends Error {
+	override readonly name = 'McpProtocolVersionError';
+	constructor(
+		readonly server: string,
+		readonly url: string,
+		readonly offered: readonly string[] | undefined,
+		readonly answer: string | undefined,
+	) {
+		super(
+			`[flue] MCP server "${server}" (${url}) does not speak MCP ${MCP_PROTOCOL_VERSION}, the only protocol revision Flue supports; servers on earlier revisions are not supported. ` +
+				(offered && offered.length > 0
+					? `It offered: ${offered.join(', ')}.`
+					: `Its server/discover answer: ${answer ?? 'none'}.`),
+		);
 	}
 }
 
@@ -135,45 +149,107 @@ function describeInputRequests(
 		return parts.join('');
 	});
 	return [
-		`[flue] MCP server "${server}" answered ${method} with input_required: it needs input this agent cannot provide during a turn.`,
+		`[flue] MCP server "${server}" answered ${method} with input_required, and no answer could be obtained.`,
 		...(lines.length > 0
 			? ['Requested inputs:', ...lines]
 			: ['The server sent no input requests, only request state.']),
 	].join('\n');
 }
 
+
+const MAX_INPUT_ROUNDS = 10;
+const STATE_ONLY_PACING_MS = 250;
+
 /**
- * The SDK client with Flue's answer to `input_required`: a typed error
- * naming the requested inputs, instead of the SDK's auto-fulfilment through
- * request handlers Flue never registers.
+ * The SDK client pinned to 2026-07-28, with Flue's answer to
+ * `input_required`: questions go to the seam instead of the SDK's
+ * auto-fulfilment through request handlers Flue never registers.
  */
 class FlueMcpClient extends Client {
 	constructor(private readonly serverName: string) {
 		super(
 			{ name: 'flue', version: runtimeVersion },
 			{
-				// server/discover first; a 2025-era server falls back to initialize.
-				versionNegotiation: { mode: 'auto' },
+				// server/discover only: no fallback to the 2025 initialize handshake.
+				versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
 				capabilities: {},
 			},
 		);
 	}
 
-	/**
-	 * A leg carrying only `requestState` asks the client to call again — the
-	 * SDK's driver does that. A leg with input requests needs answers Flue
-	 * cannot give, so it fails here, naming what was asked.
-	 */
-	protected override _resolveNonCompleteResult(
+	protected override async _resolveNonCompleteResult(
 		...[decoded, flow]: Parameters<Client['_resolveNonCompleteResult']>
 	): Promise<unknown> {
-		const inputRequests = decoded.inputRequests ?? {};
-		if (Object.keys(inputRequests).length === 0)
-			return super._resolveNonCompleteResult(decoded, flow);
-		return Promise.reject(
-			new McpInputRequiredError(this.serverName, flow.request.method, inputRequests),
-		);
+		const params = (flow.request.params ?? {}) as Record<string, unknown>;
+		const signal = flow.options?.signal;
+		let leg: { inputRequests?: Record<string, unknown>; requestState?: string } = decoded;
+		for (let round = 1; ; round++) {
+			if (round > MAX_INPUT_ROUNDS) {
+				throw new Error(
+					`[flue] MCP server "${this.serverName}" kept answering ${flow.request.method} with input_required after ${MAX_INPUT_ROUNDS} rounds.`,
+				);
+			}
+			const inputRequests = leg.inputRequests ?? {};
+			let inputResponses: Readonly<Record<string, unknown>> | undefined;
+			if (Object.keys(inputRequests).length === 0) {
+				// Only requestState: the server asks to be called again with it.
+				await new Promise((resolve) => setTimeout(resolve, STATE_ONLY_PACING_MS));
+			} else {
+				const question = mcpInputQuestion(
+					this.serverName,
+					flow.request.method,
+					params,
+					inputRequests,
+					leg.requestState,
+				);
+				try {
+					const answer = await askQuestion(question, signal);
+					inputResponses = answer.kind === 'mcp-input' ? answer.inputResponses : undefined;
+				} catch (error) {
+					if (error instanceof QuestionParkedError) throw error;
+					throw new McpInputRequiredError(
+						this.serverName,
+						flow.request.method,
+						inputRequests,
+						error instanceof Error ? error.message : String(error),
+					);
+				}
+			}
+			const result = await flow.retry(
+				{
+					...params,
+					...(inputResponses ? { inputResponses } : {}),
+					...(leg.requestState !== undefined ? { requestState: leg.requestState } : {}),
+				},
+				{
+					...(flow.options?.timeout !== undefined ? { timeout: flow.options.timeout } : {}),
+					...(signal ? { signal } : {}),
+					allowInputRequired: true,
+				},
+			);
+			if (!isInputRequiredResult(result)) return result;
+			leg = result;
+		}
 	}
+}
+
+function mcpInputQuestion(
+	server: string,
+	method: string,
+	params: Record<string, unknown>,
+	inputRequests: Record<string, unknown>,
+	requestState: string | undefined,
+): McpInputQuestion {
+	const { inputResponses: _responses, requestState: _state, ...original } = params;
+	return {
+		kind: 'mcp-input',
+		id: `mcp:${server}:${fnv1a64(JSON.stringify([method, original, requestState ?? null]))}`,
+		server,
+		method,
+		params: original,
+		inputRequests,
+		...(requestState !== undefined ? { requestState } : {}),
+	};
 }
 
 /** One live server: a client that can be rebuilt at any time, and its tool listing. */
@@ -201,12 +277,13 @@ class McpServerLink {
 		if (!this.#client) {
 			const pending = (async () => {
 				const client = new FlueMcpClient(this.definition.name);
-				const transport = await createTransport(this.definition);
+				const probe: DiscoverProbe = {};
+				const transport = createTransport(this.definition, probe);
 				try {
 					await client.connect(transport, { timeout: this.#requestOptions.timeout });
 				} catch (error) {
 					await client.close().catch(() => undefined);
-					throw error;
+					throw await refusedProtocol(this.definition, error, probe);
 				}
 				return client;
 			})();
@@ -218,29 +295,6 @@ class McpServerLink {
 		return this.#client;
 	}
 
-	/** Drop the client so the next request connects afresh. */
-	async #reset(): Promise<void> {
-		const stale = this.#client;
-		this.#client = undefined;
-		await stale?.then((client) => client.close()).catch(() => undefined);
-	}
-
-	/**
-	 * Run one request, reconnecting once when a 2025-era server has forgotten
-	 * the session (HTTP 404 on a request that carried one). The server never
-	 * executed it, so the retry cannot repeat an effect.
-	 */
-	async #withSession<T>(run: (client: FlueMcpClient) => Promise<T>): Promise<T> {
-		const client = await this.#connect();
-		try {
-			return await run(client);
-		} catch (error) {
-			if (!isSessionExpired(error, client)) throw error;
-			await this.#reset();
-			return run(await this.#connect());
-		}
-	}
-
 	/**
 	 * The server's tools, refreshed when the listing's cache hint expired.
 	 * Without a hint the listing holds for this link's lifetime — one wake on
@@ -248,48 +302,72 @@ class McpServerLink {
 	 */
 	async listing(): Promise<{ tools: Tool[]; instructions?: string }> {
 		if (this.#listing && Date.now() < this.#listing.expiresAt) return this.#listing;
-		return this.#withSession(async (client) => {
-			const result = await client.listTools(undefined, {
-				...this.#requestOptions,
-				cacheMode: 'refresh',
-			});
-			const ttlMs = (result as { ttlMs?: unknown }).ttlMs;
-			const instructions = client.getInstructions();
-			this.#listing = {
-				tools: result.tools,
-				...(instructions ? { instructions } : {}),
-				expiresAt:
-					typeof ttlMs === 'number' && Number.isFinite(ttlMs)
-						? Date.now() + Math.max(ttlMs, 1_000)
-						: Number.POSITIVE_INFINITY,
-			};
-			return this.#listing;
+		const client = await this.#connect();
+		const result = await client.listTools(undefined, {
+			...this.#requestOptions,
+			cacheMode: 'refresh',
 		});
+		const ttlMs = (result as { ttlMs?: unknown }).ttlMs;
+		const instructions = client.getInstructions();
+		this.#listing = {
+			tools: result.tools,
+			...(instructions ? { instructions } : {}),
+			expiresAt:
+				typeof ttlMs === 'number' && Number.isFinite(ttlMs)
+					? Date.now() + Math.max(ttlMs, 1_000)
+					: Number.POSITIVE_INFINITY,
+		};
+		return this.#listing;
 	}
 
-	call(tool: Tool, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
-		return this.#withSession(
-			(client) =>
-				client.callTool(
-					{ name: tool.name, arguments: args },
-					{ ...this.#requestOptions, toolDefinition: tool, ...(signal ? { signal } : {}) },
-				) as Promise<CallToolResult>,
-		);
+	async call(
+		tool: Tool,
+		args: Record<string, unknown>,
+		signal?: AbortSignal,
+	): Promise<CallToolResult> {
+		const client = await this.#connect();
+		return (await client.callTool(
+			{ name: tool.name, arguments: args },
+			{ ...this.#requestOptions, toolDefinition: tool, ...(signal ? { signal } : {}) },
+		)) as CallToolResult;
 	}
 
 	async close(): Promise<void> {
 		this.#closed = true;
-		await this.#reset();
+		const stale = this.#client;
+		this.#client = undefined;
+		await stale?.then((client) => client.close()).catch(() => undefined);
 	}
 }
 
-function isSessionExpired(error: unknown, client: Client): boolean {
-	return (
-		SdkHttpError.isInstance(error) &&
-		error.status === 404 &&
-		client.getProtocolEra() === 'legacy' &&
-		(client.transport as { sessionId?: string } | undefined)?.sessionId !== undefined
-	);
+/** The `server/discover` answer a connect saw, kept for the refusal message. */
+interface DiscoverProbe {
+	answer?: Promise<string>;
+}
+
+/**
+ * A connect that failed because the server does not offer 2026-07-28
+ * becomes one {@link McpProtocolVersionError}; any other failure (network,
+ * authorization, timeout) passes through unchanged.
+ */
+async function refusedProtocol(
+	definition: McpConnectionDefinition,
+	error: unknown,
+	probe: DiscoverProbe,
+): Promise<unknown> {
+	const url = String(definition.url);
+	if (UnsupportedProtocolVersionError.isInstance(error)) {
+		return new McpProtocolVersionError(definition.name, url, [...error.supported], undefined);
+	}
+	if (
+		SdkError.isInstance(error) &&
+		error.code === SdkErrorCode.EraNegotiationFailed &&
+		/offer(?:ed)? pinned protocol version/.test(error.message)
+	) {
+		const answer = probe.answer ? await probe.answer.catch(() => undefined) : undefined;
+		return new McpProtocolVersionError(definition.name, url, undefined, answer ?? error.message);
+	}
+	return error;
 }
 
 /**
@@ -366,30 +444,21 @@ export async function createMcpConnection(
 	}
 }
 
-async function createTransport(definition: McpConnectionDefinition): Promise<Transport> {
-	if (isStdioDefinition(definition)) {
-		if (!stdioTransportFactory) {
-			throw new Error(
-				`[flue] MCP server "${definition.name}" uses transport 'stdio', which this target cannot run: ` +
-					'a Cloudflare Worker cannot start processes. Serve the MCP server over Streamable HTTP and set `url` instead.',
-			);
-		}
-		return stdioTransportFactory(definition);
-	}
-	return createHttpTransport(definition);
-}
 
-function createHttpTransport(definition: McpHttpConnectionDefinition): Transport {
+function createTransport(
+	definition: McpConnectionDefinition,
+	probe: DiscoverProbe,
+): StreamableHTTPClientTransport {
 	if (definition.transport === 'sse') {
 		throw new Error(
 			`[flue] MCP server "${definition.name}" is declared with transport 'sse' (the legacy HTTP+SSE transport), which Flue does not support: it needs a standing stream, and an agent holds no connection open between wakes. ` +
-				"Point `url` at the server's Streamable HTTP endpoint and drop `transport: 'sse'` — servers that still offer legacy SSE almost always serve Streamable HTTP too.",
+				"Point `url` at the server's Streamable HTTP endpoint and drop `transport: 'sse'`.",
 		);
 	}
 	const url = definition.url instanceof URL ? definition.url : new URL(definition.url);
 	return new StreamableHTTPClientTransport(url, {
 		requestInit: mergeRequestInit(definition.requestInit, definition.headers),
-		fetch: withoutStandingStreams(definition.fetch),
+		fetch: recordingDiscover(definition.fetch, probe),
 		...(definition.auth === undefined
 			? {}
 			: {
@@ -406,18 +475,44 @@ function createHttpTransport(definition: McpHttpConnectionDefinition): Transport
 }
 
 /**
- * Answer the 2025-era standalone GET stream with 405 before it reaches the
- * network: the spec lets a server decline it, and the client then carries on
- * request/response only. Rule 8 — no standing connections from an agent.
+ * Keep a description of the answer to `server/discover`, so a server that
+ * does not speak 2026-07-28 is refused with what it actually said.
  */
-function withoutStandingStreams(base: typeof fetch | undefined): FetchLike {
-	return (input, init) => {
-		const method = (
-			init?.method ?? (input instanceof Request ? input.method : 'GET')
-		).toUpperCase();
-		if (method === 'GET') return Promise.resolve(new Response(null, { status: 405 }));
-		return (base ?? fetch)(input, init);
+function recordingDiscover(base: typeof fetch | undefined, probe: DiscoverProbe): FetchLike {
+	return async (input, init) => {
+		const response = await (base ?? fetch)(input, init);
+		if (typeof init?.body === 'string' && init.body.includes('"server/discover"')) {
+			probe.answer = describeDiscoverAnswer(response.clone());
+		}
+		return response;
 	};
+}
+
+async function describeDiscoverAnswer(response: Response): Promise<string> {
+	const text = (await response.text()).trim();
+	const json =
+		text
+			.split('\n')
+			.find((line) => line.startsWith('data:'))
+			?.slice(5)
+			.trim() ?? text;
+	try {
+		const message = JSON.parse(json) as {
+			result?: { supportedVersions?: unknown };
+			error?: { code?: unknown; message?: unknown; data?: { supported?: unknown } };
+		};
+		const versions = message.result?.supportedVersions;
+		if (Array.isArray(versions)) {
+			return `HTTP ${response.status}, supportedVersions ${versions.join(', ')}`;
+		}
+		if (message.error) {
+			const supported = message.error.data?.supported;
+			return `HTTP ${response.status}, JSON-RPC error ${String(message.error.code)} ${JSON.stringify(message.error.message ?? '')}${Array.isArray(supported) ? `, supported ${supported.join(', ')}` : ''}`;
+		}
+	} catch {
+		// Not JSON: describe the raw answer below.
+	}
+	return `HTTP ${response.status}${text ? ` ${JSON.stringify(text.slice(0, 200))}` : ''}`;
 }
 
 function mergeRequestInit(
@@ -540,6 +635,7 @@ function adaptServerTools(
 				...(tool.description ? { description: tool.description } : {}),
 				inputSchema: normalizeInputSchema(tool.inputSchema),
 				...(tool.outputSchema ? { outputSchema: tool.outputSchema as object } : {}),
+				...(tool.annotations ? { annotations: Object.freeze({ ...tool.annotations }) } : {}),
 			},
 			call,
 		};

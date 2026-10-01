@@ -2,8 +2,8 @@
  * The MCP client against real servers from `@modelcontextprotocol/server`,
  * in process: a stateless 2026-07-28 endpoint (`createMcpHandler`), and a
  * 2025-11-25-only endpoint (a sessionful Streamable HTTP transport that
- * refuses the 2026 envelope). Every request goes through an injected
- * `fetch`, which records what crossed the wire.
+ * refuses the 2026 envelope), which Flue must refuse. Every request goes
+ * through an injected `fetch`, which records what crossed the wire.
  */
 import {
 	createMcpHandler,
@@ -16,9 +16,15 @@ import {
 	createMcpConnection,
 	createMcpConnectionCache,
 	McpInputRequiredError,
+	McpProtocolVersionError,
 	mcpToolName,
 } from './mcp.ts';
 import type { McpConnectionDefinition } from './mcp-types.ts';
+import {
+	type FlueQuestion,
+	QuestionParkedError,
+	setQuestionHandler,
+} from './questions.ts';
 import { getMcpToolSource, getPreparedToolAdapter } from './tool-adapter.ts';
 import type { ToolDefinition } from './types.ts';
 
@@ -102,7 +108,7 @@ function modernServer(tools: readonly ToolSpec[], listing: { ttlMs?: number } = 
 	return { seen, fetch: fetchFn };
 }
 
-/** A 2025-11-25 server: sessions, no `server/discover`. `forget()` drops every session. */
+/** A 2025-11-25 server: sessions, no `server/discover`. */
 function legacyServer(tools: readonly ToolSpec[]) {
 	const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
 	const { seen, record } = recorder();
@@ -140,7 +146,7 @@ function legacyServer(tools: readonly ToolSpec[]) {
 		await buildServer(tools).connect(transport);
 		return transport.handleRequest(request);
 	}) as typeof fetch;
-	return { seen, fetch: fetchFn, forget: () => sessions.clear() };
+	return { seen, fetch: fetchFn };
 }
 
 const echo: ToolSpec = {
@@ -164,6 +170,7 @@ function textOf(output: Awaited<ReturnType<typeof run>>): string {
 
 afterEach(() => {
 	vi.useRealTimers();
+	setQuestionHandler(undefined);
 });
 
 describe('stateless MCP (2026-07-28)', () => {
@@ -266,20 +273,42 @@ describe('stateless MCP (2026-07-28)', () => {
 		await connection.close();
 	});
 
-	it('fails an input_required answer with an error naming the requested inputs', async () => {
+	/** A server whose tools/call asks for confirmation once, then answers with what it got. */
+	function askingServer() {
 		const server = modernServer([echo]);
-		// The 2026 server SDK refuses to ask a client that declared no
-		// elicitation capability, as it should; this server ignores that rule.
-		const asking = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const calls: Record<string, unknown>[] = [];
+		const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
 			const request = new Request(input, init);
 			if (request.method === 'POST') {
-				const body = (await request.clone().json()) as { id?: number; method?: string };
+				const body = (await request.clone().json()) as {
+					id?: number;
+					method?: string;
+					params?: Record<string, unknown>;
+				};
 				if (body.method === 'tools/call') {
+					calls.push(body.params ?? {});
+					if (body.params?.inputResponses) {
+						return Response.json({
+							jsonrpc: '2.0',
+							id: body.id,
+							result: {
+								content: [
+									{
+										type: 'text',
+										text: `deployed with ${JSON.stringify(body.params.inputResponses)} and ${String(body.params.requestState)}`,
+									},
+								],
+							},
+						});
+					}
+					// The 2026 server SDK refuses to ask a client that declared no
+					// elicitation capability, as it should; this server ignores that rule.
 					return Response.json({
 						jsonrpc: '2.0',
 						id: body.id,
 						result: {
 							resultType: 'input_required',
+							requestState: 'opaque-state-1',
 							inputRequests: {
 								confirm: {
 									method: 'elicitation/create',
@@ -299,7 +328,16 @@ describe('stateless MCP (2026-07-28)', () => {
 			}
 			return server.fetch(request);
 		}) as typeof fetch;
-		const connection = await createMcpConnection({ name: 'ops', url: URL_MODERN, fetch: asking });
+		return { calls, fetch: fetchFn };
+	}
+
+	it('fails input_required with an error naming the requested inputs while questions are not wired', async () => {
+		const server = askingServer();
+		const connection = await createMcpConnection({
+			name: 'ops',
+			url: URL_MODERN,
+			fetch: server.fetch,
+		});
 		const failure = await run(connection.tools[0], { text: 'x' }).catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(McpInputRequiredError);
 		const message = (failure as Error).message;
@@ -307,36 +345,106 @@ describe('stateless MCP (2026-07-28)', () => {
 		expect(message).toContain('elicitation/create');
 		expect(message).toContain('Deploy to production?');
 		expect(message).toContain('approved');
+		expect(message).toContain('questions are not wired');
+		await connection.close();
+	});
+
+	it('puts input_required to the question seam and retries with the answers and the request state', async () => {
+		const server = askingServer();
+		const asked: FlueQuestion[] = [];
+		setQuestionHandler(async (question) => {
+			asked.push(question);
+			return { kind: 'mcp-input', inputResponses: { confirm: { action: 'accept', content: { approved: true } } } };
+		});
+		const connection = await createMcpConnection({
+			name: 'ops',
+			url: URL_MODERN,
+			fetch: server.fetch,
+		});
+		const text = textOf(await run(connection.tools[0], { text: 'x' }));
+		expect(text).toBe('deployed with {"confirm":{"action":"accept","content":{"approved":true}}} and opaque-state-1');
+		expect(asked).toHaveLength(1);
+		const question = asked[0];
+		expect(question?.kind).toBe('mcp-input');
+		if (question?.kind !== 'mcp-input') throw new Error('expected an mcp-input question');
+		expect(question.server).toBe('ops');
+		expect(question.method).toBe('tools/call');
+		expect(question.params).toMatchObject({ name: 'echo', arguments: { text: 'x' } });
+		expect(question.requestState).toBe('opaque-state-1');
+		expect(Object.keys(question.inputRequests)).toEqual(['confirm']);
+		expect(question.id).toMatch(/^mcp:ops:[0-9a-f]{16}$/);
+		// The retry carried the answers and echoed the state byte for byte.
+		expect(server.calls.at(-1)).toMatchObject({
+			name: 'echo',
+			requestState: 'opaque-state-1',
+			inputResponses: { confirm: { action: 'accept' } },
+		});
+		await connection.close();
+	});
+
+	it('ends the call with the parked error when the seam parks the question', async () => {
+		const server = askingServer();
+		setQuestionHandler(async (question) => {
+			throw new QuestionParkedError(question);
+		});
+		const connection = await createMcpConnection({
+			name: 'ops',
+			url: URL_MODERN,
+			fetch: server.fetch,
+		});
+		const failure = await run(connection.tools[0], { text: 'x' }).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(QuestionParkedError);
+		expect((failure as QuestionParkedError).question.id).toMatch(/^mcp:ops:/);
+		expect(server.calls).toHaveLength(1);
 		await connection.close();
 	});
 });
 
-describe('servers on earlier revisions (2025-11-25)', () => {
-	it('negotiates down to initialize and works over a session', async () => {
+describe('servers on earlier revisions are refused', () => {
+	it('refuses a 2025-only server with one error naming it and its server/discover answer', async () => {
 		const server = legacyServer([echo]);
-		const connection = await createMcpConnection({
+		const failure = await createMcpConnection({
 			name: 'old',
 			url: URL_LEGACY,
 			fetch: server.fetch,
-		});
-		expect(textOf(await run(connection.tools[0], { text: 'legacy' }))).toBe('echo: legacy');
-		await connection.close();
+		}).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(McpProtocolVersionError);
+		const message = (failure as Error).message;
+		expect(message).toContain('MCP server "old" (https://legacy.test/mcp)');
+		expect(message).toContain('does not speak MCP 2026-07-28');
+		expect(message).toContain('server/discover answer: HTTP 400, JSON-RPC error -32000');
+		expect(message).toContain('Server not initialized');
+		// No fallback: the 2025 handshake was never attempted, and no session exists.
 		const methods = server.seen.map((request) => request.method);
-		expect(methods).toContain('initialize');
-		expect(server.seen.some((request) => request.sessionId !== null)).toBe(true);
-		// The 2025 standalone GET stream never left the agent.
-		expect(server.seen.some((request) => request.httpMethod === 'GET')).toBe(false);
+		expect(methods).toEqual(['server/discover']);
+		expect(server.seen.every((request) => request.sessionId === null)).toBe(true);
 	});
 
-	it('recovers when the server forgets the session (HTTP 404) and retries once', async () => {
-		const server = legacyServer([echo]);
-		const cache = createMcpConnectionCache();
-		const connection = await cache.resolve({ name: 'old', url: URL_LEGACY, fetch: server.fetch });
-		expect(textOf(await run(connection.tools[0], { text: 'one' }))).toBe('echo: one');
-		server.forget();
-		expect(textOf(await run(connection.tools[0], { text: 'two' }))).toBe('echo: two');
-		expect(server.seen.filter((request) => request.method === 'initialize')).toHaveLength(2);
-		await cache.close();
+	it('names the versions a server offers when none is 2026-07-28', async () => {
+		const offering = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const request = new Request(input, init);
+			const body = (await request.clone().json()) as { id?: number };
+			return Response.json(
+				{
+					jsonrpc: '2.0',
+					id: body.id ?? null,
+					error: {
+						code: -32022,
+						message: 'Unsupported protocol version',
+						data: { supported: ['2025-06-18', '2025-11-25'], requested: '2026-07-28' },
+					},
+				},
+				{ status: 400 },
+			);
+		}) as typeof fetch;
+		const failure = await createMcpConnection({
+			name: 'older',
+			url: URL_LEGACY,
+			fetch: offering,
+		}).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(McpProtocolVersionError);
+		expect((failure as McpProtocolVersionError).offered).toEqual(['2025-06-18', '2025-11-25']);
+		expect((failure as Error).message).toContain('It offered: 2025-06-18, 2025-11-25.');
 	});
 });
 
@@ -428,12 +536,9 @@ describe('connection definitions', () => {
 		expect(tokens.every((token) => token === 'Bearer secret')).toBe(true);
 	});
 
-	it('refuses legacy SSE, and stdio where no stdio transport is installed', async () => {
+	it('refuses legacy SSE', async () => {
 		await expect(
 			createMcpConnection({ name: 'old', url: URL_LEGACY, transport: 'sse' }),
 		).rejects.toThrow(/legacy HTTP\+SSE transport/);
-		await expect(
-			createMcpConnection({ name: 'local', transport: 'stdio', command: 'mcp-server' }),
-		).rejects.toThrow(/cannot start processes/);
 	});
 });

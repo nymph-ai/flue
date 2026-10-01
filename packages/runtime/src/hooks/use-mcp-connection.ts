@@ -13,16 +13,9 @@ const DEFINITION_KEYS = new Set<string>([
 	'resetTimeoutOnProgress',
 	'tools',
 	'optional',
-	'command',
-	'args',
-	'env',
-	'cwd',
 ]);
 
-const STDIO_KEYS = new Set<string>(['command', 'args', 'env', 'cwd']);
-const HTTP_KEYS = new Set<string>(['url', 'auth', 'headers', 'requestInit', 'fetch']);
-
-const TRANSPORTS: readonly McpTransport[] = ['streamable-http', 'stdio', 'sse'];
+const TRANSPORTS: readonly McpTransport[] = ['streamable-http', 'sse'];
 
 /**
  * Validate an MCP connection definition. Shared between
@@ -42,6 +35,11 @@ function assertMcpConnectionDefinition(
 	if (typeof name !== 'string' || name.trim().length === 0) {
 		throw new Error(`[flue] ${source} name must be a non-empty string.`);
 	}
+	if ((candidate.transport as string | undefined) === 'stdio') {
+		throw new Error(
+			`[flue] ${source} "${name}" uses transport 'stdio', which Flue does not support on any target: an agent speaks only the stateless MCP 2026-07-28 protocol over Streamable HTTP. Serve the server over Streamable HTTP and set \`url\`.`,
+		);
+	}
 	for (const key of Object.keys(definition)) {
 		if (!DEFINITION_KEYS.has(key)) {
 			throw new Error(`[flue] ${source} "${name}" received unknown field "${key}".`);
@@ -52,11 +50,7 @@ function assertMcpConnectionDefinition(
 			`[flue] ${source} "${name}" transport must be one of ${TRANSPORTS.map((transport) => `'${transport}'`).join(', ')}.`,
 		);
 	}
-	if (candidate.transport === 'stdio') {
-		assertStdioFields(definition as Record<string, unknown>, source, name);
-	} else {
-		assertHttpFields(definition as Record<string, unknown>, source, name);
-	}
+	assertHttpFields(definition as Record<string, unknown>, source, name);
 	if (
 		candidate.timeoutMs !== undefined &&
 		(typeof candidate.timeoutMs !== 'number' ||
@@ -86,50 +80,7 @@ function assertMcpConnectionDefinition(
 	}
 }
 
-function assertStdioFields(
-	definition: Record<string, unknown>,
-	source: string,
-	name: string,
-): void {
-	for (const key of Object.keys(definition)) {
-		if (HTTP_KEYS.has(key)) {
-			throw new Error(
-				`[flue] ${source} "${name}" uses transport 'stdio', which takes no \`${key}\`.`,
-			);
-		}
-	}
-	if (typeof definition.command !== 'string' || definition.command.length === 0) {
-		throw new Error(
-			`[flue] ${source} "${name}" uses transport 'stdio' and requires \`command\`: the server executable.`,
-		);
-	}
-	if (
-		definition.args !== undefined &&
-		(!Array.isArray(definition.args) || definition.args.some((arg) => typeof arg !== 'string'))
-	) {
-		throw new Error(`[flue] ${source} "${name}" args must be an array of strings.`);
-	}
-	if (
-		definition.env !== undefined &&
-		(typeof definition.env !== 'object' ||
-			definition.env === null ||
-			Object.values(definition.env).some((value) => typeof value !== 'string'))
-	) {
-		throw new Error(`[flue] ${source} "${name}" env must be a record of strings.`);
-	}
-	if (definition.cwd !== undefined && typeof definition.cwd !== 'string') {
-		throw new Error(`[flue] ${source} "${name}" cwd must be a string.`);
-	}
-}
-
 function assertHttpFields(definition: Record<string, unknown>, source: string, name: string): void {
-	for (const key of Object.keys(definition)) {
-		if (STDIO_KEYS.has(key)) {
-			throw new Error(
-				`[flue] ${source} "${name}" received \`${key}\`, which only a transport 'stdio' definition takes.`,
-			);
-		}
-	}
 	const { url } = definition;
 	if (typeof url !== 'string' && !(url instanceof URL)) {
 		throw new Error(`[flue] ${source} "${name}" requires \`url\`: the MCP server endpoint.`);

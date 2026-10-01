@@ -5,12 +5,12 @@
 
 /**
  * MCP transport. `'streamable-http'` (the default) speaks the stateless
- * 2026-07-28 protocol and negotiates down to servers on earlier revisions.
- * `'stdio'` runs a local server process and exists only on the Node target.
- * `'sse'` (the legacy HTTP+SSE transport) is refused: it needs a standing
- * stream, which an agent that hibernates between wakes cannot hold.
+ * 2026-07-28 protocol, the only revision Flue supports: a server that cannot
+ * is refused at connect. `'sse'` (the legacy HTTP+SSE transport) is refused
+ * too: it needs a standing stream, which an agent that hibernates between
+ * wakes cannot hold. There is no stdio transport on any target.
  */
-export type McpTransport = 'streamable-http' | 'stdio' | 'sse';
+export type McpTransport = 'streamable-http' | 'sse';
 
 /**
  * Tool annotations from an MCP server's `tools/list` entry. The MCP adapter
@@ -78,10 +78,28 @@ export interface McpOAuth {
  */
 export type McpAuth = string | (() => string | Promise<string>) | McpOAuth;
 
-/** Fields every MCP connection definition shares. */
-interface McpConnectionDefinitionBase {
+/**
+ * One remote MCP server, over Streamable HTTP, as `defineMcpConnection(...)`,
+ * `useMcpConnection(...)`, and `createMcpConnection(...)` consume it.
+ */
+export interface McpConnectionDefinition {
 	/** Server name — the `mcp__<server>__` namespace of its adapted tools. */
 	name: string;
+	/** MCP server endpoint. */
+	url: string | URL;
+	/** Defaults to `'streamable-http'`. */
+	transport?: McpTransport;
+	/** Credential sent with every request; see {@link McpAuth}. */
+	auth?: McpAuth;
+	/**
+	 * Static headers merged into MCP transport requests (set-wins over
+	 * `requestInit` headers). For credentials, prefer `auth`.
+	 */
+	headers?: HeadersInit;
+	/** Additional MCP transport request configuration. */
+	requestInit?: RequestInit;
+	/** Custom fetch implementation used by the MCP transport. */
+	fetch?: typeof fetch;
 	/** Per-request timeout in milliseconds for MCP requests. Defaults to 60 seconds. */
 	timeoutMs?: number;
 	/** Reset the per-request timeout whenever the server sends a progress notification. Defaults to `false`. */
@@ -103,48 +121,6 @@ interface McpConnectionDefinitionBase {
 	optional?: boolean;
 }
 
-/** A remote MCP server, over Streamable HTTP. */
-export interface McpHttpConnectionDefinition extends McpConnectionDefinitionBase {
-	/** MCP server endpoint. */
-	url: string | URL;
-	/** Defaults to `'streamable-http'`. */
-	transport?: 'streamable-http' | 'sse';
-	/** Credential sent with every request; see {@link McpAuth}. */
-	auth?: McpAuth;
-	/**
-	 * Static headers merged into MCP transport requests (set-wins over
-	 * `requestInit` headers). For credentials, prefer `auth`.
-	 */
-	headers?: HeadersInit;
-	/** Additional MCP transport request configuration. */
-	requestInit?: RequestInit;
-	/** Custom fetch implementation used by the MCP transport. */
-	fetch?: typeof fetch;
-}
-
-/**
- * A local MCP server process spoken to over stdio. Node target only: a
- * Cloudflare Worker cannot start processes, and the stdio transport is never
- * bundled into a Worker.
- */
-export interface McpStdioConnectionDefinition extends McpConnectionDefinitionBase {
-	transport: 'stdio';
-	/** Executable to run. */
-	command: string;
-	/** Command-line arguments. */
-	args?: string[];
-	/** Environment for the process. Default: a minimal inherited environment. */
-	env?: Record<string, string>;
-	/** Working directory for the process. */
-	cwd?: string;
-}
-
-/**
- * One MCP server, as `defineMcpConnection(...)`, `useMcpConnection(...)`, and
- * `createMcpConnection(...)` consume it.
- */
-export type McpConnectionDefinition = McpHttpConnectionDefinition | McpStdioConnectionDefinition;
-
 /**
  * One optional MCP connection that failed to resolve at submission
  * initialization: the server contributed no tools, and the session announces
@@ -155,13 +131,6 @@ export interface McpUnavailableConnection {
 	name: string;
 	/** Failure description, from the connect or discovery error. */
 	reason: string;
-}
-
-/** Whether a definition runs a local process over stdio. */
-export function isStdioDefinition(
-	definition: McpConnectionDefinition,
-): definition is McpStdioConnectionDefinition {
-	return definition.transport === 'stdio';
 }
 
 /** Whether an `auth` value is an {@link McpOAuth} declaration. */

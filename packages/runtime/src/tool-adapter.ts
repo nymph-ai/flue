@@ -1,3 +1,4 @@
+import type { McpToolAnnotations } from './mcp-types.ts';
 import type { ToolDefinition } from './tool-types.ts';
 
 /** Model-facing tool result content: text, or a base64 image. */
@@ -57,6 +58,8 @@ export interface McpToolSource {
 		readonly description?: string;
 		readonly inputSchema: object;
 		readonly outputSchema?: object;
+		/** The server's tool annotations (untrusted hints), when it sent any. */
+		readonly annotations?: McpToolAnnotations;
 	};
 	/** Call the tool and resolve with the server's `CallToolResult`. */
 	call(args: Record<string, unknown>, signal?: AbortSignal): Promise<McpCallResult>;
