@@ -30,6 +30,7 @@ import {
 	assembleNodeAgentRuntime,
 	connectPersistenceAdapter,
 	createInstrumentationOwner,
+	handleMcpOAuthCallback,
 	installDevLifecycleLogger,
 	runWithInstrumentationOwner,
 } from '@flue/runtime/internal';
@@ -124,7 +125,10 @@ export async function loadFlueNodeApplication(
 
 			let disposing: Promise<void> | undefined;
 			return {
-				fetch: (request: Request, env?: unknown) => flueApp.fetch(request, env),
+				// MCP OAuth redirects (/__flue/mcp/oauth/callback) are served
+				// ahead of the application.
+				fetch: async (request: Request, env?: unknown) =>
+					(await handleMcpOAuthCallback(request)) ?? flueApp.fetch(request, env),
 				enterActivity() {
 					return activityGate.enter();
 				},

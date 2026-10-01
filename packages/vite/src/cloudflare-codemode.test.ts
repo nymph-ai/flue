@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	CODEMODE_LOADER_BINDING,
 	CROSS_SPAWN_STUB_SOURCE,
+	MCP_AUTH_BINDING,
+	MCP_AUTH_CLASS_NAME,
 	mergeCodeModeLoaderBinding,
+	scanCloudflareFeatures,
 	scanCodeModeUsage,
 } from './cloudflare-codemode.ts';
 import { flueWorkerConfig } from './cloudflare-worker-config.ts';
@@ -50,15 +53,26 @@ describe('Code Mode detection and the Worker Loader binding', () => {
 			'types.d.ts': 'declare function useCodeMode(options: unknown): void;\n',
 		});
 		expect(await scanCodeModeUsage(root)).toBe(false);
-		await writeFiles(root, { 'hooks/tools.ts': 'export const useTools = () => useCodeMode ( { executor } );\n' });
+		await writeFiles(root, {
+			'hooks/tools.ts': 'export const useTools = () => useCodeMode ( { executor } );\n',
+		});
 		expect(await scanCodeModeUsage(root)).toBe(true);
+		expect((await scanCloudflareFeatures(root)).mcpOAuth).toBe(false);
+		await writeFiles(root, {
+			'mcp.ts':
+				"export const auth = mcpOAuth({ principal: 'p', redirectUrl: 'https://a.test/cb' });\n",
+		});
+		expect(await scanCloudflareFeatures(root)).toEqual({ codeMode: true, mcpOAuth: true });
 	});
 
 	it('adds the LOADER binding once, keeping user worker loaders', () => {
 		const config: Record<string, unknown> = { worker_loaders: [{ binding: 'OTHER' }] };
 		mergeCodeModeLoaderBinding(config);
 		mergeCodeModeLoaderBinding(config);
-		expect(config.worker_loaders).toEqual([{ binding: 'OTHER' }, { binding: CODEMODE_LOADER_BINDING }]);
+		expect(config.worker_loaders).toEqual([
+			{ binding: 'OTHER' },
+			{ binding: CODEMODE_LOADER_BINDING },
+		]);
 	});
 
 	it('the cross-spawn stub fails with a clear error when called', async () => {
@@ -67,7 +81,9 @@ describe('Code Mode detection and the Worker Loader binding', () => {
 		const file = path.join(dir, 'cross-spawn.mjs');
 		await fs.promises.writeFile(file, CROSS_SPAWN_STUB_SOURCE);
 		const crossSpawn = await import(/* @vite-ignore */ pathToFileURL(file).href);
-		expect(() => crossSpawn.default('node')).toThrow(/cross-spawn is not available in a Cloudflare Worker/);
+		expect(() => crossSpawn.default('node')).toThrow(
+			/cross-spawn is not available in a Cloudflare Worker/,
+		);
 		expect(() => crossSpawn.sync('node')).toThrow(/Streamable HTTP/);
 	});
 });
@@ -77,17 +93,24 @@ describe('Code Mode detection and the Worker Loader binding', () => {
  * return the files it emits. The fixture lives inside this package so it
  * resolves @flue/runtime, hono and the Agents SDK through its node_modules.
  */
-async function buildCloudflareFixture(agentSource: string): Promise<Map<string, string>> {
+async function buildCloudflareFixture(
+	agentSource: string,
+	migrationClasses: readonly string[] = [],
+): Promise<Map<string, string>> {
 	const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 	const root = await fs.promises.mkdtemp(path.join(packageRoot, '.fixture-cloudflare-'));
 	temporary.push(root);
 	await writeFiles(root, {
-		'package.json': JSON.stringify({ name: 'flue-codemode-fixture', private: true, type: 'module' }),
+		'package.json': JSON.stringify({
+			name: 'flue-codemode-fixture',
+			private: true,
+			type: 'module',
+		}),
 		'wrangler.jsonc': JSON.stringify({
 			name: 'codemode-fixture',
 			compatibility_date: '2026-06-01',
 			compatibility_flags: ['nodejs_compat'],
-			migrations: [{ tag: 'v1', new_sqlite_classes: ['FlueResearcherAgent'] }],
+			migrations: [{ tag: 'v1', new_sqlite_classes: ['FlueResearcherAgent', ...migrationClasses] }],
 		}),
 		'src/app.ts': [
 			"import { createAgentRouter } from '@flue/runtime/routing';",
@@ -136,77 +159,106 @@ function findings(output: Map<string, string>, pattern: RegExp) {
 
 function deployConfigOf(output: Map<string, string>): Record<string, unknown> {
 	const entry = [...output].find(([file]) => path.basename(file) === 'wrangler.json');
-	if (!entry) throw new Error(`No wrangler.json in the build output: ${[...output.keys()].join(', ')}`);
+	if (!entry)
+		throw new Error(`No wrangler.json in the build output: ${[...output.keys()].join(', ')}`);
 	return JSON.parse(entry[1]);
 }
 
 describe('Cloudflare Worker bundle', () => {
-	it(
-		'keeps the pi-mcp stdio transport and cross-spawn out of the Worker and adds the Worker Loader binding',
-		async () => {
-			const output = await buildCloudflareFixture(
-				[
-					"'use agent';",
-					"import { useCodeMode, useMcpConnection, useModel } from '@flue/runtime';",
-					"import { DynamicWorkerCodemodeExecutor } from '@flue/runtime/cloudflare';",
-					"import { env } from 'cloudflare:workers';",
-					'',
-					'export function Researcher() {',
-					"\tuseModel('anthropic/claude-sonnet-4-6');",
-					"\tuseMcpConnection({ name: 'docs', url: 'https://mcp.example.com/mcp' });",
-					'\tuseCodeMode({ executor: new DynamicWorkerCodemodeExecutor({ loader: env.LOADER }) });',
-					"\treturn 'Answer from the docs.';",
-					'}',
-					'',
-				].join('\n'),
-			);
+	it('keeps the MCP stdio transport and cross-spawn out of the Worker and adds the Worker Loader binding', async () => {
+		const output = await buildCloudflareFixture(
+			[
+				"'use agent';",
+				"import { useCodeMode, useMcpConnection, useModel } from '@flue/runtime';",
+				"import { createCodemodeExecutor } from '@flue/runtime/cloudflare';",
+				"import { env } from 'cloudflare:workers';",
+				'',
+				'export function Researcher() {',
+				"\tuseModel('anthropic/claude-sonnet-4-6');",
+				"\tuseMcpConnection({ name: 'docs', url: 'https://mcp.example.com/mcp' });",
+				'\tuseCodeMode({ executor: createCodemodeExecutor({ loader: env.LOADER }) });',
+				"\treturn 'Answer from the docs.';",
+				'}',
+				'',
+			].join('\n'),
+		);
 
-			// The MCP client is in the Worker (the coordinator's connection cache)...
-			expect(findings(output, /Mcp-Session-Id/).length).toBeGreaterThan(0);
-			// ...and its stdio transport, with the process spawner, is not.
-			expect(findings(output, /cross-spawn/)).toEqual([]);
-			expect(findings(output, /MCP stdio transport already started/)).toEqual([]);
-			// `node:child_process` imports exist only in @anthropic-ai/sdk's Node-only
-			// entries (agent-toolset/node, internal/node), which pi-ai reaches through
-			// a dynamic import and workerd satisfies with its built-in stub. Nothing
-			// else — pi-mcp included — may import it.
-			const childProcess = findings(output, /["'`](?:node:)?child_process["'`]/);
-			expect(
-				childProcess.filter(
-					({ modules }) => !modules.every((module) => module.includes('/@anthropic-ai/sdk/')),
-				),
-			).toEqual([]);
+		// The MCP client is in the Worker (the coordinator's connection cache),
+		// speaking the 2026-07-28 protocol...
+		expect(findings(output, /server\/discover/).length).toBeGreaterThan(0);
+		// ...and so is Code Mode's Dynamic Worker executor.
+		expect(findings(output, /DynamicWorkerExecutor|globalOutbound/).length).toBeGreaterThan(0);
+		// The stdio transport, with the process spawner, is not.
+		expect(findings(output, /cross-spawn/)).toEqual([]);
+		expect(findings(output, /StdioClientTransport/)).toEqual([]);
+		expect(findings(output, /@modelcontextprotocol\/client\/stdio/)).toEqual([]);
+		// `node:child_process` imports exist only in @anthropic-ai/sdk's Node-only
+		// entries (agent-toolset/node, internal/node), which pi-ai reaches through
+		// a dynamic import and workerd satisfies with its built-in stub. Nothing
+		// else — the MCP client and Code Mode included — may import it.
+		const childProcess = findings(output, /["'`](?:node:)?child_process["'`]/);
+		expect(
+			childProcess.filter(
+				({ modules }) => !modules.every((module) => module.includes('/@anthropic-ai/sdk/')),
+			),
+		).toEqual([]);
+		// Nor the Node executor (a node:vm host) or its cloudflare:workers shim.
+		expect(findings(output, /NodeCodemodeExecutor|registerHooks/)).toEqual([]);
 
-			expect(deployConfigOf(output).worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
-		},
-		180_000,
-	);
+		const config = deployConfigOf(output);
+		expect(config.worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
+		// No mcpOAuth() call: no OAuth Durable Object binding.
+		const bindings =
+			(config.durable_objects as { bindings?: { name: string }[] } | undefined)?.bindings ?? [];
+		expect(bindings.map((binding) => binding.name)).not.toContain(MCP_AUTH_BINDING);
+	}, 180_000);
 
-	it(
-		'aliases a surviving cross-spawn import to the throwing stub',
-		async () => {
-			// cross-spawn is not installed where the fixture resolves from: only the
-			// alias lets this build succeed.
-			const output = await buildCloudflareFixture(
-				[
-					"'use agent';",
-					"import { useModel } from '@flue/runtime';",
-					"import spawn from 'cross-spawn';",
-					'',
-					'export function Researcher() {',
-					"\tuseModel('anthropic/claude-sonnet-4-6');",
-					"\tif (Math.random() > 2) spawn('node');",
-					"\treturn 'No processes here.';",
-					'}',
-					'',
-				].join('\n'),
-			);
-			expect(
-				findings(output, /cross-spawn is not available in a Cloudflare Worker/).length,
-			).toBeGreaterThan(0);
-			// No useCodeMode() in this app: no Worker Loader binding.
-			expect(deployConfigOf(output).worker_loaders ?? []).toEqual([]);
-		},
-		180_000,
-	);
+	it('binds the FlueMcpAuth Durable Object when an agent uses MCP OAuth', async () => {
+		const source = [
+			"'use agent';",
+			"import { mcpOAuth, useMcpConnection, useModel } from '@flue/runtime';",
+			'',
+			'export function Researcher() {',
+			"\tuseModel('anthropic/claude-sonnet-4-6');",
+			"\tuseMcpConnection({ name: 'docs', url: 'https://mcp.example.com/mcp', auth: mcpOAuth({ principal: 'user', redirectUrl: 'https://app.example.com/__flue/mcp/oauth/callback' }) });",
+			"\treturn 'Answer from the docs.';",
+			'}',
+			'',
+		].join('\n');
+		await expect(buildCloudflareFixture(source)).rejects.toThrow(
+			/new_sqlite_classes.*FlueMcpAuth/s,
+		);
+		const output = await buildCloudflareFixture(source, [MCP_AUTH_CLASS_NAME]);
+		const config = deployConfigOf(output);
+		const bindings =
+			(config.durable_objects as { bindings?: { name: string; class_name: string }[] }).bindings ??
+			[];
+		expect(bindings).toContainEqual({ name: MCP_AUTH_BINDING, class_name: MCP_AUTH_CLASS_NAME });
+		// The class is exported from the Worker, and the callback route is served.
+		expect(findings(output, /\/__flue\/mcp\/oauth\/callback/).length).toBeGreaterThan(0);
+	}, 180_000);
+
+	it('aliases a surviving cross-spawn import to the throwing stub', async () => {
+		// cross-spawn is not installed where the fixture resolves from: only the
+		// alias lets this build succeed.
+		const output = await buildCloudflareFixture(
+			[
+				"'use agent';",
+				"import { useModel } from '@flue/runtime';",
+				"import spawn from 'cross-spawn';",
+				'',
+				'export function Researcher() {',
+				"\tuseModel('anthropic/claude-sonnet-4-6');",
+				"\tif (Math.random() > 2) spawn('node');",
+				"\treturn 'No processes here.';",
+				'}',
+				'',
+			].join('\n'),
+		);
+		expect(
+			findings(output, /cross-spawn is not available in a Cloudflare Worker/).length,
+		).toBeGreaterThan(0);
+		// No useCodeMode() in this app: no Worker Loader binding.
+		expect(deployConfigOf(output).worker_loaders ?? []).toEqual([]);
+	}, 180_000);
 });

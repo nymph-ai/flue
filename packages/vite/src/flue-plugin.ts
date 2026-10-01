@@ -61,7 +61,7 @@ import {
 	CLOUDFLARE_STUB_ALIASES,
 	CROSS_SPAWN_STUB_SOURCE,
 	RESOLVED_CROSS_SPAWN_STUB,
-	scanCodeModeUsage,
+	scanCloudflareFeatures,
 	VIRTUAL_CROSS_SPAWN_STUB,
 } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
@@ -191,6 +191,8 @@ interface FluePluginState {
 	cloudflarePrepared: boolean;
 	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: adds the Worker Loader binding). */
 	codeMode: boolean;
+	/** Whether a module under the source root calls `mcpOAuth()` (Cloudflare: binds the FlueMcpAuth Durable Object). */
+	mcpOAuth: boolean;
 	/** Serializes and coalesces watcher-driven re-scans. */
 	watchQueue: WatchQueue;
 	resolved: FlueResolvedProjectInfo | undefined;
@@ -214,6 +216,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		isPreview: false,
 		cloudflarePrepared: false,
 		codeMode: false,
+		mcpOAuth: false,
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
@@ -239,6 +242,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		},
 		get codeMode() {
 			return state.codeMode;
+		},
+		get mcpOAuth() {
+			return state.mcpOAuth;
 		},
 		customizerInvoked: false,
 	};
@@ -363,7 +369,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					throw cloudflareOrderingError();
 				}
 				if (project.db) throw dbOnCloudflareError();
-				state.codeMode = await scanCodeModeUsage(project.sourceRoot);
+				const features = await scanCloudflareFeatures(project.sourceRoot);
+				state.codeMode = features.codeMode;
+				state.mcpOAuth = features.mcpOAuth;
 				state.cloudflarePrepared = true;
 				workerConfigSource.configReady = true;
 				// The dependency resolver stays inert (root unset): the Worker
@@ -375,7 +383,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				// CORS matches the Node target: workerd requests flow
 				// through Vite's middleware stack, and separate-origin local
 				// clients need the durable-stream coordination headers exposed.
-				// The alias stubs the process spawner pi-mcp's stdio transport
+				// The alias stubs the process spawner the MCP stdio transport
 				// would pull in (see cloudflare-codemode.ts).
 				return {
 					resolve: { dedupe: RUNTIME_DEDUPE, alias: CLOUDFLARE_STUB_ALIASES },
@@ -424,6 +432,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 							input: { server: bootstrap.entry, app: bootstrap.server },
 							external: [
 								...NODE_TARGET_EXTERNALS,
+								// @cloudflare/codemode imports it for base classes;
+								// @flue/runtime/node answers it with a shim at runtime.
+								'cloudflare:workers',
 								...getUserExternals(root),
 								...builtinModules,
 								...builtinModules.map((name) => `node:${name}`),

@@ -1,21 +1,25 @@
 /**
- * What the Cloudflare target needs for Pi-backed MCP and Code Mode
- * (PI_UPGRADE_PLAN.md §5, §6):
+ * What the Cloudflare target needs for MCP and Code Mode
+ * (docs/cloudflare-native.md rules 6 and 7):
  *
  * - `worker_loaders`: `useCodeMode()` runs scripts in Dynamic Workers, which
  *   need a Worker Loader binding. The customizer adds {@link CODEMODE_LOADER_BINDING}
  *   when a module under the source root calls the hook. Dynamic Workers need
  *   the Workers Paid plan, so apps that never call it get no binding.
- * - A stub for `cross-spawn`: `@flue/runtime` imports only `McpClient`,
- *   `StreamableHttpTransport` and `toLlmContent` from `@earendil-works/pi-mcp`,
- *   whose root also re-exports the stdio transport. `sideEffects: false` lets
- *   the bundler drop that transport; the alias is the backstop, so a stdio
- *   import that survives fails with a clear error instead of bundling a
- *   process spawner into the Worker. `node:child_process` needs no alias:
- *   with `nodejs_compat` and a compatibility date from 2026-03-17 (Flue's
- *   floor is later) workerd itself provides it as a non-functional stub
- *   (`enable_nodejs_child_process_module`), and @cloudflare/vite-plugin leaves
- *   it external for workerd to supply.
+ * - The `FlueMcpAuth` Durable Object: MCP OAuth keeps each principal's
+ *   credentials in one, per authorization server. The customizer binds it as
+ *   {@link MCP_AUTH_BINDING} when a module calls `mcpOAuth(`; its migration
+ *   (`new_sqlite_classes: ["FlueMcpAuth"]`) belongs to the user's wrangler
+ *   config like every other Durable Object class's.
+ * - A stub for `cross-spawn`: the MCP client's stdio transport lives on its
+ *   own entry (`@modelcontextprotocol/client/stdio`) that only
+ *   `@flue/runtime/node` imports, so no Worker bundle reaches it. The alias is
+ *   the backstop: a stdio import that survives fails with a clear error
+ *   instead of bundling a process spawner into the Worker. `node:child_process`
+ *   needs no alias: with `nodejs_compat` and a compatibility date from
+ *   2026-03-17 (Flue's floor is later) workerd itself provides it as a
+ *   non-functional stub (`enable_nodejs_child_process_module`), and
+ *   @cloudflare/vite-plugin leaves it external for workerd to supply.
  */
 import * as fs from 'node:fs/promises';
 import { glob } from 'tinyglobby';
@@ -24,20 +28,40 @@ import type { Alias } from 'vite';
 /** Matches `@flue/runtime`'s `CODEMODE_LOADER_BINDING`. */
 export const CODEMODE_LOADER_BINDING = 'LOADER';
 
-const CODE_MODE_CALL = /\buseCodeMode\s*\(/;
+/** Matches `@flue/runtime`'s `MCP_AUTH_BINDING` and `MCP_AUTH_CLASS_NAME`. */
+export const MCP_AUTH_BINDING = 'FLUE_MCP_AUTH';
+export const MCP_AUTH_CLASS_NAME = 'FlueMcpAuth';
 
-/** Whether any module under `sourceRoot` calls `useCodeMode(`. */
-export async function scanCodeModeUsage(sourceRoot: string): Promise<boolean> {
+const CODE_MODE_CALL = /\buseCodeMode\s*\(/;
+const MCP_OAUTH_CALL = /\bmcpOAuth\s*\(/;
+
+/** Which Cloudflare-specific features the modules under `sourceRoot` use. */
+export async function scanCloudflareFeatures(
+	sourceRoot: string,
+): Promise<{ codeMode: boolean; mcpOAuth: boolean }> {
 	const files = await glob(['**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'], {
 		cwd: sourceRoot,
 		absolute: true,
 		ignore: ['**/node_modules/**', '**/*.d.ts', '**/*.d.mts', '**/*.d.cts'],
 	});
+	const found = { codeMode: false, mcpOAuth: false };
 	for (const file of files) {
 		const code = await fs.readFile(file, 'utf8').catch(() => '');
-		if (CODE_MODE_CALL.test(code)) return true;
+		found.codeMode ||= CODE_MODE_CALL.test(code);
+		found.mcpOAuth ||= MCP_OAUTH_CALL.test(code);
+		if (found.codeMode && found.mcpOAuth) break;
 	}
-	return false;
+	return found;
+}
+
+/** Whether any module under `sourceRoot` calls `useCodeMode(`. */
+export async function scanCodeModeUsage(sourceRoot: string): Promise<boolean> {
+	return (await scanCloudflareFeatures(sourceRoot)).codeMode;
+}
+
+/** The `FlueMcpAuth` Durable Object binding, unless the config already declares it. */
+export function mcpAuthBinding(): { name: string; class_name: string } {
+	return { name: MCP_AUTH_BINDING, class_name: MCP_AUTH_CLASS_NAME };
 }
 
 /** Add the Worker Loader binding Code Mode uses, unless the config already declares it. */
