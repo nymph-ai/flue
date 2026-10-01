@@ -2,7 +2,7 @@
  * Which model the society runs, chosen by the deployment's `SOCIETY_MODEL`
  * var: `scripted` (the default — a deterministic provider over pi-ai's faux
  * model, for reproducible qualification runs) or `live` (the real model
- * `LIVE_MODEL`, Muse Spark 1.3 on Meta's Model API).
+ * `LIVE_MODEL`, Muse Spark 1.3 Contributor on Meta's Model API).
  */
 import { env } from 'cloudflare:workers';
 import { setProvider } from '@flue/runtime';
@@ -19,5 +19,5 @@ export function societyModel(): string {
 
 /** The real model, keyed by the `META_API_KEY` secret. */
 export function liveModel(): string {
-	return vars.LIVE_MODEL ?? 'meta/muse-spark-1.3';
+	return vars.LIVE_MODEL ?? 'meta/muse-spark-1.3-contributor';
 }
