@@ -205,7 +205,7 @@ describe('Cloudflare Worker bundle', () => {
 				findings(output, /cross-spawn is not available in a Cloudflare Worker/).length,
 			).toBeGreaterThan(0);
 			// No useCodeMode() in this app: no Worker Loader binding.
-			expect(deployConfigOf(output).worker_loaders).toBeUndefined();
+			expect(deployConfigOf(output).worker_loaders ?? []).toEqual([]);
 		},
 		180_000,
 	);
