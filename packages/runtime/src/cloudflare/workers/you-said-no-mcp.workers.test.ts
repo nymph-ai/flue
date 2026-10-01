@@ -28,6 +28,7 @@ describe('"You Said No MCP!" on Flue Code Mode (workerd)', () => {
 			const seen = toolResults.length;
 			await say('Measure the frustration in the tracker.');
 
+			console.log(`[you-said-no-mcp] ${toolResults[seen]?.split('\n').slice(0, 2).join(' / ')}`);
 			const result = returned(toolResults[seen]) as {
 				total: number;
 				counts: Record<string, number>;
@@ -55,7 +56,7 @@ describe('"You Said No MCP!" on Flue Code Mode (workerd)', () => {
 			// The store() write is a Pi document of the conversation: it survives an eviction.
 			await evictDurableObject(stub);
 			await say('Now recall it.');
-			expect(returned(toolResults[seen + 1])).toBe(40);
+			expect(returned(toolResults.at(-1))).toBe(40);
 		},
 	);
 });

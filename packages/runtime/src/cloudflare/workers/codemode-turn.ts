@@ -138,14 +138,14 @@ function respond(context: TranscriptContext): AssistantMessage {
 		return fauxAssistantMessage('Done.');
 	}
 	const text = lastUserText(context);
-	const code = text.includes('ten calls')
-		? TEN_CALLS_SCRIPT
-		: text.includes('store it')
-			? STORE_SCRIPT
-			: text.includes('frustration')
-				? FRUSTRATION_SCRIPT
-				: text.includes('recall')
-					? 'return load("frustration").length;'
+	const code = text.includes('recall')
+		? 'return load("frustration").length;'
+		: text.includes('ten calls')
+			? TEN_CALLS_SCRIPT
+			: text.includes('store it')
+				? STORE_SCRIPT
+				: text.includes('frustration')
+					? FRUSTRATION_SCRIPT
 					: undefined;
 	if (code) {
 		return fauxAssistantMessage([fauxToolCall('codemode', { code })], { stopReason: 'toolUse' });
