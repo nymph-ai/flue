@@ -99,14 +99,17 @@ const SCHEMA = [
 	)`,
 ];
 
-/** Whether a database holds Pi state (Pi's own metadata table exists). */
+/**
+ * Whether a database holds Pi state: Pi's own metadata row, which its first
+ * migration creates with the table. One row read, where a `sqlite_master`
+ * lookup reads every schema row — on each cold start and each scheduled wake
+ * of a Durable Object (nymph-ai/nymphai #3868).
+ */
 export function hasPiState(database: SqliteDatabase): boolean {
 	try {
 		return (
 			database
-				.prepare(
-					"SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'durable_metadata'",
-				)
+				.prepare('SELECT 1 AS found FROM durable_metadata WHERE singleton = 1')
 				.get<{ found: number }>() !== undefined
 		);
 	} catch {

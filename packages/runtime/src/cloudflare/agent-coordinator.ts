@@ -179,7 +179,7 @@ export function createCloudflareAgentRuntime(
 						'to SQLite in place.',
 				);
 			}
-			return { agentName, ...createSqlConversationStores(storage as never, className) };
+			return { agentName, ...createSqlConversationStores(storage as never) };
 		},
 		attach(instance, prepared) {
 			coordinators.set(instance, new CloudflareAgentCoordinator(instance, prepared, options));
@@ -199,7 +199,9 @@ function isWakeReason(value: unknown): value is FlueWakeReason {
 		typeof value === 'object' &&
 		value !== null &&
 		typeof (value as { kind?: unknown }).kind === 'string' &&
-		['live-tasks', 'schedule', 'pump', 'dispatch', 'questions'].includes((value as { kind: string }).kind)
+		['live-tasks', 'schedule', 'pump', 'dispatch', 'questions'].includes(
+			(value as { kind: string }).kind,
+		)
 	);
 }
 
