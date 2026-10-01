@@ -58,6 +58,10 @@
 			"types": "./dist/test-utils/define-conversation-stream-store-contract-tests.d.mts",
 			"import": "./dist/test-utils/define-conversation-stream-store-contract-tests.mjs"
 		},
+		"./test-utils/durable-stream-log": {
+			"types": "./dist/test-utils/define-durable-stream-log-contract-tests.d.mts",
+			"import": "./dist/test-utils/define-durable-stream-log-contract-tests.mjs"
+		},
 		"./test-utils/attachment-store": {
 			"types": "./dist/test-utils/define-attachment-store-contract-tests.d.mts",
 			"import": "./dist/test-utils/define-attachment-store-contract-tests.mjs"

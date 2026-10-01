@@ -24,10 +24,11 @@ import {
 import { loadReducedConversationPrefix } from '../conversation-reader.ts';
 import { reduceConversationRecords } from '../conversation-reducer.ts';
 import type {
+	ConversationStreamBatch,
 	ConversationStreamReadResult,
 	ConversationStreamStore,
 } from './conversation-stream-store.ts';
-import { parseOffset } from './stream-offsets.ts';
+import { legacyOffsetOrdinal } from './stream-offsets.ts';
 
 export const LONG_POLL_TIMEOUT_MS = 30_000;
 const DURABLE_POLL_INTERVAL_MS = 250;
@@ -62,7 +63,7 @@ export function projectConversationRead(
 			state,
 			previousState,
 			records: batch.records,
-			batchOrdinal: parseOffset(batch.offset),
+			batchOrdinal: batchOrdinal(batch),
 		});
 		items.push(
 			...(windowReset
@@ -76,6 +77,28 @@ export function projectConversationRead(
 		offset = batch.offset;
 	}
 	return { state, items, offset };
+}
+
+/**
+ * The batch's store-supplied ordinal — the SDK dedup key `position.batch`.
+ * Offsets are opaque, so the ordinal is never derived from one, except for
+ * adapters predating the field whose offsets are exactly the legacy
+ * `formatOffset` shape (see `legacyOffsetOrdinal`).
+ */
+function batchOrdinal(batch: ConversationStreamBatch): number {
+	if (batch.ordinal !== undefined) {
+		if (!Number.isSafeInteger(batch.ordinal) || batch.ordinal < 0) {
+			throw new Error(
+				`[flue] Conversation stream batch at offset "${batch.offset}" has an invalid ordinal: ${batch.ordinal}.`,
+			);
+		}
+		return batch.ordinal;
+	}
+	const legacy = legacyOffsetOrdinal(batch.offset);
+	if (legacy !== undefined) return legacy;
+	throw new Error(
+		`[flue] Conversation stream batch at offset "${batch.offset}" carries no ordinal. A ConversationStreamStore whose offsets are not the formatOffset() shape must set ConversationStreamBatch.ordinal.`,
+	);
 }
 
 /**
@@ -179,8 +202,10 @@ export async function observeSubmissionSettlement(
 	// receipt's offset before the attempt starts streaming); an older offset
 	// rebuilds its prefix by replay, as before.
 	const atHead = await getConversationFoldHost(store, path).getStateAtHead();
+	// Offsets are opaque (PROTOCOL §8): an exact resume point is the same
+	// token the store minted, so equality is string equality.
 	let state =
-		parseOffset(atHead.recordsThroughOffset) === parseOffset(options.offset)
+		atHead.recordsThroughOffset === options.offset
 			? atHead
 			: await loadReducedConversationPrefix({ store, path, offset: options.offset });
 	let offset = options.offset;

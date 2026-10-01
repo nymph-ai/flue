@@ -1,10 +1,14 @@
 /**
- * Durable-stream offset utilities and storage-path helpers.
+ * Offset encoding for stores that mint their own integer-backed offsets, and
+ * storage-path helpers.
  *
- * Offsets are formatted as `<readSeq>_<seq>` — two 16-digit zero-padded
- * integers separated by an underscore, matching the DS reference server's
- * offset format. The first component is always `0` (Flue has no file
- * segments); the second is the sequence number.
+ * `formatOffset`/`parseOffset` are a *store-private* encoding: the SQL, Redis
+ * and MongoDB conversation stores use `<readSeq>_<seq>` — two 16-digit
+ * zero-padded integers, matching the DS reference server's offset shape, the
+ * first component always `0` — to turn their integer sequence into an offset
+ * and back. Runtime code outside a store treats offsets as opaque
+ * (`streams/offset.ts`): it never parses them, and orders them only with
+ * `compareOffsets`.
  */
 
 // ─── Offset utilities ───────────────────────────────────────────────────────
@@ -37,6 +41,23 @@ export function parseOffset(offset: string): number {
 		throw new Error(`[flue] Invalid stream offset: "${offset}".`);
 	}
 	return parseInt(sequence, 10);
+}
+
+const LEGACY_OFFSET = /^0{16}_(\d{16})$/;
+
+/**
+ * The batch ordinal encoded in an offset of exactly the {@link formatOffset}
+ * shape, or `undefined` for any other token. Compatibility only: a
+ * `ConversationStreamStore` written before `ConversationStreamBatch.ordinal`
+ * existed mints `formatOffset` offsets and supplies no ordinal. First-party
+ * stores always supply the ordinal, and a store with any other offset format
+ * must.
+ */
+export function legacyOffsetOrdinal(offset: string): number | undefined {
+	const sequence = LEGACY_OFFSET.exec(offset)?.[1];
+	if (sequence === undefined) return undefined;
+	const ordinal = Number(sequence);
+	return Number.isSafeInteger(ordinal) ? ordinal : undefined;
 }
 
 /**
