@@ -1,19 +1,19 @@
 /**
  * An agent's Durable Object as a generated Cloudflare entry builds it, like
- * `first-wake.ts`, for an agent that uses Code Mode over an MCP server: the
- * in-isolate `linear` stand-in (`linear-server.ts`), with 40 open issues. The
- * model is pi-ai's faux provider, scripted by the inbox message's text:
+ * `first-wake.ts`, for an agent that uses Code Mode over an in-isolate MCP
+ * server (`notes-server.ts`, 40 notes). The model is pi-ai's faux provider,
+ * scripted by the inbox message's text:
  *
  * - `ten calls` — one `codemode` call whose script makes 10 MCP calls;
  * - `store it` — one `codemode` call whose script reads and writes `store`;
- * - `frustration` — the "You Said No MCP!" script (`you-said-no-mcp.ts`);
+ * - `classify` — {@link CLASSIFY_SCRIPT}: every note through a classifier
+ *   from four concurrent workers, the results stored;
  * - `recall` — a script returning how many results that one stored;
  * - anything else — a short answer.
  *
- * Every tool result the model sees is kept in {@link toolResults}. A faux Jev
- * is registered as `cloudflare-workers-ai/typesafe/jev`, the model the
- * post's script names: it answers the frustration question from the
- * comments' text, which `linear-server.ts` marks `[mild]` or `[high]`.
+ * Every tool result the model sees is kept in {@link toolResults}. A faux
+ * classifier is registered as `faux-jev/jev`: it answers a choice question
+ * from the state's text, which `notes-server.ts` marks `[mild]` or `[high]`.
  *
  * Its storage is traced (`sql-trace.ts`) from before the class constructor
  * runs. It shares `first-wake.ts`'s Durable Streams server: the streams
@@ -41,18 +41,44 @@ import type { Agent as FlueAgent } from '../../types.ts';
 import { createCloudflareAgentRuntime } from '../agent-coordinator.ts';
 import { runWithCloudflareContext } from '../context.ts';
 import { createFlueAgentClass } from '../flue-agent-class.ts';
-import { linearServer, linearTracker, type Tone } from './linear-server.ts';
+import { notes, notesServer, type Tone } from './notes-server.ts';
 import { installSqlTrace } from './sql-trace.ts';
-import { FRUSTRATION_SCRIPT } from './you-said-no-mcp.ts';
 
 /** Ten MCP calls in one script. */
 export const TEN_CALLS_SCRIPT =
-	'let n = 0; for (let i = 1; i <= 10; i++) { const r = await tools.mcp__linear__list_comments({ issueId: "PI-" + i }); n += r.structuredContent.comments.length; } return n;';
+	'let n = 0; for (let i = 1; i <= 10; i++) { const r = await tools.mcp__notes__get_note({ id: "N-" + i }); n += r.structuredContent.note ? 1 : 0; } return n;';
+
+/** Pi's classifier pattern: four workers over every note, `Promise.all`, results stored. */
+export const CLASSIFY_SCRIPT = `const { notes } = (await tools.mcp__notes__list_notes({})).structuredContent;
+const model = await models.getModelOfType("classifier", "faux-jev", "jev");
+const questions = {
+  frustration: {
+    type: "choice",
+    instructions: "Judge only the emotional tone.",
+    criteria: { none: "Neutral", mild: "Annoyed", high: "Angry" },
+  },
+};
+const results = [];
+let next = 0;
+async function worker() {
+  while (next < notes.length) {
+    const item = notes[next++];
+    const { note } = (await tools.mcp__notes__get_note({ id: item.id })).structuredContent;
+    const c = await models.classify(model, { state: note, questions });
+    results.push({ id: item.id, ...c.answers.frustration });
+  }
+}
+await Promise.all([worker(), worker(), worker(), worker()]);
+store("frustration", results);
+const counts = {};
+for (const r of results) counts[r.choice] = (counts[r.choice] ?? 0) + 1;
+return { total: results.length, counts };`;
 
 /** A read and a write of the conversation's store. */
 export const STORE_SCRIPT = "const n = load('k') ?? 0; store('k', n + 1); return n + 1;";
 
-export const linear = linearServer(linearTracker(40));
+export const NOTES = notes(40);
+export const notesMcp = notesServer(NOTES);
 
 /** The text of every tool result the model saw, in order. */
 export const toolResults: string[] = [];
@@ -66,16 +92,16 @@ const PROBABILITIES: Record<Tone, Record<Tone, number>> = {
 /** Jev's answer to a choice question, read off the `[mild]`/`[high]` marks in the state. */
 setProvider(
 	createProvider({
-		id: 'cloudflare-workers-ai',
-		name: 'Workers AI (faux Jev)',
+		id: 'faux-jev',
+		name: 'Faux Jev',
 		auth: { apiKey: { name: 'Faux', resolve: async () => ({ auth: {} }) } },
 		models: [
 			{
 				type: 'classifier' as const,
-				id: 'typesafe/jev',
+				id: 'jev',
 				name: 'Jev',
 				api: 'typesafe-system-one',
-				provider: 'cloudflare-workers-ai',
+				provider: 'faux-jev',
 				baseUrl: 'https://faux.invalid/',
 				input: ['text' as const],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -144,8 +170,8 @@ function respond(context: TranscriptContext): AssistantMessage {
 			? TEN_CALLS_SCRIPT
 			: text.includes('store it')
 				? STORE_SCRIPT
-				: text.includes('frustration')
-					? FRUSTRATION_SCRIPT
+				: text.includes('classify')
+					? CLASSIFY_SCRIPT
 					: undefined;
 	if (code) {
 		return fauxAssistantMessage([fauxToolCall('codemode', { code })], { stopReason: 'toolUse' });
@@ -163,7 +189,7 @@ setProvider(faux.provider);
 
 const Carol = (() => {
 	useModel('faux-codemode/m');
-	useMcpConnection({ name: 'linear', url: 'https://linear.test/mcp', fetch: linear.fetch });
+	useMcpConnection({ name: 'notes', url: 'https://notes.test/mcp', fetch: notesMcp.fetch });
 	useCodeMode();
 	return 'You are Carol. You run scripts.';
 }) as unknown as FlueAgent;

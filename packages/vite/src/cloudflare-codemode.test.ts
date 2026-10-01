@@ -154,7 +154,7 @@ describe('Cloudflare Worker bundle', () => {
 			].join('\n'),
 		);
 
-		// The MCP client is in the Worker, speaking 2026-07-28 only...
+		// The MCP client is in the Worker, probing for 2026-07-28...
 		expect(findings(output, /server\/discover/).length).toBeGreaterThan(0);
 		// ...and so is Pi's Code Mode: its prelude, run by QuickJS from a wasm
 		// module the build emits next to the Worker.

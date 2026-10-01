@@ -14,7 +14,7 @@
  */
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { linear } from './codemode-turn.ts';
+import { notesMcp } from './codemode-turn.ts';
 import { formatTrace, sqlTrace, type TraceSummary } from './sql-trace.ts';
 import { carol } from './turn-driver.ts';
 
@@ -49,10 +49,10 @@ describe('a Code Mode turn on Durable Object SQLite (workerd)', () => {
 		const { stub, say } = await carol('rows');
 		sqlTrace.reset();
 
-		const before = linear.calls.length;
+		const before = notesMcp.calls.length;
 		await say('Run ten calls.');
 		const tenCalls = take('turn: one script, 10 MCP calls');
-		expect(linear.calls.slice(before).filter((call) => call.name === 'list_comments')).toHaveLength(
+		expect(notesMcp.calls.slice(before).filter((call) => call.name === 'get_note')).toHaveLength(
 			10,
 		);
 

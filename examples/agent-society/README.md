@@ -18,6 +18,10 @@ and the instance's alarm admits what arrived.
   `input_required` (an elicitation): both become questions on the steward's
   `flue/v1/steward/<id>/questions` stream (`useQuestions()`), answered with
   `POST /agents/steward/<id>/questions/<questionId>/answer`.
+  With `LINEAR_API_KEY` it also connects to the real Linear MCP server
+  (read-only: `list_teams`, `list_issues`, `list_comments`) and, with
+  `TYPESAFE_API_KEY`, classifies with Jev from Code Mode:
+  `codemode frustration <team>` runs Earendil's "You Said No MCP!" script.
 - `sage` always answers with Workers AI (`SAGE_MODEL`) through the `AI` binding.
 
 ## Models

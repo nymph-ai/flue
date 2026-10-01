@@ -15,7 +15,8 @@
  *   schedule <delay-ms> <text>     schedule_wake for this agent
  *   codemode record <id>           a Code Mode script calling tools.mcp__ops__record({ id })
  *                                  (approval-gated on the steward)
- *   codemode frustration           the "You Said No MCP!" script (you-said-no-mcp.ts)
+ *   codemode teams                 a script returning Linear's list_teams
+ *   codemode frustration <team>    the "You Said No MCP!" script (you-said-no-mcp.ts)
  *   codemode recall                a script returning how many results it stored
  *   mcp <tool> <arg>               the ops MCP server's tool directly:
  *                                  `mcp deploy <service>`, `mcp echo <text>`
@@ -36,7 +37,7 @@ import {
 	type Message,
 	type Provider,
 } from '@earendil-works/pi-ai';
-import { FRUSTRATION_SCRIPT } from './you-said-no-mcp.ts';
+import { frustrationScript } from './you-said-no-mcp.ts';
 
 export const SCRIPTED_PROVIDER = 'scripted';
 export const SCRIPTED_MODEL = 'society-1';
@@ -125,8 +126,18 @@ function commandCalls(line: string): Call[] | undefined {
 			},
 		];
 	}
-	if (verb === 'codemode' && words[1] === 'frustration') {
-		return [{ name: 'codemode', args: { code: FRUSTRATION_SCRIPT } }];
+	if (verb === 'codemode' && words[1] === 'teams') {
+		return [
+			{
+				name: 'codemode',
+				args: {
+					code: 'return JSON.parse((await tools.mcp__linear__list_teams({})).content[0].text);',
+				},
+			},
+		];
+	}
+	if (verb === 'codemode' && words[1] === 'frustration' && words[2]) {
+		return [{ name: 'codemode', args: { code: frustrationScript(words.slice(2).join(' ')) } }];
 	}
 	if (verb === 'codemode' && words[1] === 'recall') {
 		return [{ name: 'codemode', args: { code: 'return load("frustration")?.length ?? null;' } }];

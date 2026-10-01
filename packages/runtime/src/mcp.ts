@@ -1,18 +1,26 @@
 /**
- * MCP client: `@modelcontextprotocol/client` over Streamable HTTP, speaking
- * the stateless 2026-07-28 protocol and nothing else
- * (docs/cloudflare-native.md rule 6).
+ * MCP client: `@modelcontextprotocol/client` over Streamable HTTP
+ * (docs/cloudflare-native.md rule 6), speaking the stateless 2026-07-28
+ * protocol where the server does and the 2025 revisions where it does not.
  *
- * - `connect()` probes with `server/discover`, pinned to 2026-07-28: there is
- *   no fallback to the 2025 `initialize` handshake, so there are no sessions.
- *   A server that does not offer 2026-07-28 is refused with
- *   {@link McpProtocolVersionError}, naming the versions it offered or its
- *   `server/discover` answer.
- * - Nothing standing is held open (rule 8): no `subscriptions/listen` and no
- *   `listChanged` handlers. Tool lists are refreshed when their cache hint
+ * - `connect()` negotiates the SDK's way (`versionNegotiation: 'auto'`): it
+ *   probes with `server/discover`, and a server that answers with anything
+ *   but definitive 2026-07-28 evidence — `-32601 Method not found`, a 2025
+ *   server's `Server not initialized` — gets the standard `initialize`
+ *   handshake (2025-11-25 / 2025-06-18) and its session. Most servers today
+ *   answer that way, Linear's among them.
+ * - What each server speaks is kept in memory per link, for the instance's
+ *   lifetime: a reconnect within it skips the probe (the SDK's `prior`
+ *   verdict), and the 2025 session id lives in the transport. Nothing is
+ *   written: a cold start negotiates again, one round trip.
+ * - A 2025 server that forgot its session answers 404; the call
+ *   re-initializes once and is sent again.
+ * - Nothing standing is held open (rule 8): no `subscriptions/listen`, no
+ *   `listChanged` handlers, and no 2025 GET stream (the transport's GET is
+ *   answered 405 locally). Tool lists are refreshed when their cache hint
  *   (`ttlMs`) expires, or on the next wake when the server gave none.
- * - A connection keeps no state the protocol needs: a fresh client after a
- *   Durable Object eviction works mid-conversation.
+ * - A connection keeps no state the protocol needs beyond that session: a
+ *   fresh client after a Durable Object eviction works mid-conversation.
  * - `input_required` (multi-round-trip requests): a leg carrying only
  *   `requestState` is sent again with it; a leg with input requests is put
  *   to the question seam (`questions.ts`, rule 9), and its answer is sent
@@ -22,6 +30,7 @@
 import {
 	type CallToolResult,
 	Client,
+	type PriorDiscovery,
 	type FetchLike,
 	isInputRequiredResult,
 	SdkError,
@@ -57,9 +66,8 @@ export type {
 	McpTransport,
 } from './mcp-types.ts';
 
-/** The one MCP protocol revision Flue speaks. */
+/** The stateless MCP protocol revision Flue probes for first. */
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
-
 
 /** The per-request timeout Flue documents for `timeoutMs`. */
 const DEFAULT_MCP_REQUEST_TIMEOUT_MS = 60_000;
@@ -92,7 +100,6 @@ export interface McpConnectionCache extends McpConnectionResolver {
 	close(): Promise<void>;
 }
 
-
 /**
  * A server answered a call with `input_required` (an elicitation, a sampling
  * request or the roots list) and the question seam could not get an answer;
@@ -115,9 +122,9 @@ export class McpInputRequiredError extends Error {
 }
 
 /**
- * A server does not speak MCP 2026-07-28, the only revision Flue supports.
- * `offered` lists the versions it named, when it named any; `answer`
- * describes its `server/discover` answer otherwise.
+ * A server speaks no MCP revision Flue does. `offered` lists the versions it
+ * named, when it named any; `answer` describes its `server/discover` answer
+ * otherwise.
  */
 export class McpProtocolVersionError extends Error {
 	override readonly name = 'McpProtocolVersionError';
@@ -128,7 +135,7 @@ export class McpProtocolVersionError extends Error {
 		readonly answer: string | undefined,
 	) {
 		super(
-			`[flue] MCP server "${server}" (${url}) does not speak MCP ${MCP_PROTOCOL_VERSION}, the only protocol revision Flue supports; servers on earlier revisions are not supported. ` +
+			`[flue] MCP server "${server}" (${url}) speaks no MCP protocol revision Flue supports (${MCP_PROTOCOL_VERSION}, 2025-11-25, 2025-06-18). ` +
 				(offered && offered.length > 0
 					? `It offered: ${offered.join(', ')}.`
 					: `Its server/discover answer: ${answer ?? 'none'}.`),
@@ -161,13 +168,12 @@ function describeInputRequests(
 	].join('\n');
 }
 
-
 const MAX_INPUT_ROUNDS = 10;
 const STATE_ONLY_PACING_MS = 250;
 
 /**
- * The SDK client pinned to 2026-07-28, with Flue's answer to
- * `input_required`: questions go to the seam instead of the SDK's
+ * The SDK client, negotiating 2026-07-28 or the 2025 handshake, with Flue's
+ * answer to `input_required`: questions go to the seam instead of the SDK's
  * auto-fulfilment through request handlers Flue never registers.
  */
 class FlueMcpClient extends Client {
@@ -175,8 +181,8 @@ class FlueMcpClient extends Client {
 		super(
 			{ name: 'flue', version: runtimeVersion },
 			{
-				// server/discover only: no fallback to the 2025 initialize handshake.
-				versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
+				// server/discover first; the 2025 initialize handshake otherwise.
+				versionNegotiation: { mode: 'auto' },
 				capabilities: {},
 			},
 		);
@@ -260,6 +266,8 @@ function mcpInputQuestion(
 /** One live server: a client that can be rebuilt at any time, and its tool listing. */
 class McpServerLink {
 	#client: Promise<FlueMcpClient> | undefined;
+	/** What the server speaks, once a connect learned it; in memory only. */
+	#prior: PriorDiscovery | undefined;
 	#listing: { tools: Tool[]; instructions?: string; expiresAt: number } | undefined;
 	#closed = false;
 
@@ -285,11 +293,19 @@ class McpServerLink {
 				const probe: DiscoverProbe = {};
 				const transport = createTransport(this.definition, probe);
 				try {
-					await client.connect(transport, { timeout: this.#requestOptions.timeout });
+					await client.connect(transport, {
+						timeout: this.#requestOptions.timeout,
+						...(this.#prior ? { prior: this.#prior } : {}),
+					});
 				} catch (error) {
 					await client.close().catch(() => undefined);
 					throw await refusedProtocol(this.definition, error, probe);
 				}
+				const discover = client.getDiscoverResult();
+				this.#prior =
+					client.getProtocolEra() === 'modern' && discover
+						? { kind: 'modern', discover }
+						: { kind: 'legacy' };
 				return client;
 			})();
 			this.#client = pending;
@@ -307,13 +323,13 @@ class McpServerLink {
 	 */
 	async listing(): Promise<{ tools: Tool[]; instructions?: string }> {
 		if (this.#listing && Date.now() < this.#listing.expiresAt) return this.#listing;
-		const client = await this.#connect();
-		const result = await client.listTools(undefined, {
-			...this.#requestOptions,
-			cacheMode: 'refresh',
+		let client: FlueMcpClient | undefined;
+		const result = await this.#inSession(async (connected) => {
+			client = connected;
+			return connected.listTools(undefined, { ...this.#requestOptions, cacheMode: 'refresh' });
 		});
 		const ttlMs = (result as { ttlMs?: unknown }).ttlMs;
-		const instructions = client.getInstructions();
+		const instructions = client?.getInstructions();
 		this.#listing = {
 			tools: result.tools,
 			...(instructions ? { instructions } : {}),
@@ -330,11 +346,32 @@ class McpServerLink {
 		args: Record<string, unknown>,
 		signal?: AbortSignal,
 	): Promise<CallToolResult> {
-		const client = await this.#connect();
-		return (await client.callTool(
-			{ name: tool.name, arguments: args },
-			{ ...this.#requestOptions, toolDefinition: tool, ...(signal ? { signal } : {}) },
+		return (await this.#inSession((client) =>
+			client.callTool(
+				{ name: tool.name, arguments: args },
+				{ ...this.#requestOptions, toolDefinition: tool, ...(signal ? { signal } : {}) },
+			),
 		)) as CallToolResult;
+	}
+
+	/**
+	 * Run `request` on the connected client. A 2025 server that answers 404
+	 * has forgotten the session: connect again (a new `initialize`, no probe)
+	 * and send the request once more.
+	 */
+	async #inSession<T>(request: (client: FlueMcpClient) => Promise<T>): Promise<T> {
+		const client = await this.#connect();
+		try {
+			return await request(client);
+		} catch (error) {
+			if (this.#prior?.kind !== 'legacy' || !isSessionLost(error)) throw error;
+			if (this.#client) {
+				const stale = this.#client;
+				this.#client = undefined;
+				await stale.then((old) => old.close()).catch(() => undefined);
+			}
+			return request(await this.#connect());
+		}
 	}
 
 	/**
@@ -344,7 +381,11 @@ class McpServerLink {
 	 * the server's `requestState`, byte for byte. A further `input_required`
 	 * is asked like any other.
 	 */
-	async resume(tool: Tool, question: McpInputQuestion, signal?: AbortSignal): Promise<CallToolResult> {
+	async resume(
+		tool: Tool,
+		question: McpInputQuestion,
+		signal?: AbortSignal,
+	): Promise<CallToolResult> {
 		let answer: FlueAnswer;
 		try {
 			answer = await askQuestion(question, signal);
@@ -357,17 +398,18 @@ class McpServerLink {
 				error instanceof Error ? error.message : String(error),
 			);
 		}
-		const client = await this.#connect();
 		const params = {
 			...(question.params as Record<string, unknown>),
 			...(answer.kind === 'mcp-input' ? { inputResponses: answer.inputResponses } : {}),
 			...(question.requestState !== undefined ? { requestState: question.requestState } : {}),
 		};
-		return (await client.callTool(params as never, {
-			...this.#requestOptions,
-			toolDefinition: tool,
-			...(signal ? { signal } : {}),
-		})) as CallToolResult;
+		return (await this.#inSession((client) =>
+			client.callTool(params as never, {
+				...this.#requestOptions,
+				toolDefinition: tool,
+				...(signal ? { signal } : {}),
+			}),
+		)) as CallToolResult;
 	}
 
 	async close(): Promise<void> {
@@ -378,13 +420,20 @@ class McpServerLink {
 	}
 }
 
+/** A 2025 server's answer to a request on a session it no longer has: HTTP 404. */
+function isSessionLost(error: unknown): boolean {
+	return (
+		SdkError.isInstance(error) && (error as { data?: { status?: unknown } }).data?.status === 404
+	);
+}
+
 /** The `server/discover` answer a connect saw, kept for the refusal message. */
 interface DiscoverProbe {
 	answer?: Promise<string>;
 }
 
 /**
- * A connect that failed because the server does not offer 2026-07-28
+ * A connect that failed because the server offers no revision Flue speaks
  * becomes one {@link McpProtocolVersionError}; any other failure (network,
  * authorization, timeout) passes through unchanged.
  */
@@ -482,7 +531,6 @@ export async function createMcpConnection(
 	}
 }
 
-
 function createTransport(
 	definition: McpConnectionDefinition,
 	probe: DiscoverProbe,
@@ -496,7 +544,7 @@ function createTransport(
 	const url = definition.url instanceof URL ? definition.url : new URL(definition.url);
 	return new StreamableHTTPClientTransport(url, {
 		requestInit: mergeRequestInit(definition.requestInit, definition.headers),
-		fetch: recordingDiscover(definition.fetch, probe),
+		fetch: noStandingStream(recordingDiscover(definition.fetch, probe)),
 		...(definition.auth === undefined
 			? {}
 			: {
@@ -513,8 +561,23 @@ function createTransport(
 }
 
 /**
+ * The 2025 transport opens a GET stream for server-initiated messages after
+ * `initialize`. An agent holds nothing open (rule 8) and asks for nothing
+ * the server could push, so that GET is answered here as a server without
+ * one would: 405.
+ */
+function noStandingStream(base: FetchLike): FetchLike {
+	return async (input, init) => {
+		const method = (init?.method ?? 'GET').toUpperCase();
+		if (method === 'GET')
+			return new Response(null, { status: 405, statusText: 'Method Not Allowed' });
+		return base(input, init);
+	};
+}
+
+/**
  * Keep a description of the answer to `server/discover`, so a server that
- * does not speak 2026-07-28 is refused with what it actually said.
+ * speaks no revision Flue does is refused with what it actually said.
  */
 function recordingDiscover(base: typeof fetch | undefined, probe: DiscoverProbe): FetchLike {
 	return async (input, init) => {

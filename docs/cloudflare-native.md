@@ -12,7 +12,7 @@ Internet / clients ──► Gateway Worker ── auth, routing, wake doorbell,
                    ├─ Pi Durable Harness  (cognition, tasks, compaction, recovery)
                    ├─ Pi SqliteStorage    (on ctx.storage.sql via Flue's adapter)
                    ├─ Flue tables         (stream cursors, wake high-water, conversation cache)
-                   ├─ MCP client          (@modelcontextprotocol/client, stateless 2026-07-28)
+                   ├─ MCP client          (@modelcontextprotocol/client, 2026-07-28 or 2025)
                    └─ Code Mode           (@earendil-works/pi-codemode: QuickJS in-process,
                               │                    tools.* and models.* only)
                               ▼
@@ -58,11 +58,15 @@ is uninteresting by design.
    tool replay re-sends the same id; receivers deduplicate on it — an inbox
    event becomes the Pi submission keyed by it, an observed published event
    the Pi write keyed by it. There is no outbox around Pi's commit.
-6. **MCP is stateless and remote, only.** Streamable HTTP with the
-   2026-07-28 protocol (no sessions, no initialize handshake,
-   `server/discover`). Servers on earlier revisions and stdio servers are not
-   supported, on any target. OAuth tokens live in a Durable Object keyed by
-   principal and authorization server; redirects land on the Gateway.
+6. **MCP is remote, and holds nothing open.** Streamable HTTP, probing
+   with `server/discover` for the stateless 2026-07-28 protocol and falling
+   back to the standard 2025 `initialize` handshake for servers that do not
+   speak it (most do not yet, Linear's among them). The negotiated revision
+   and a 2025 session id live in memory only — a cold start negotiates again
+   and writes no rows — and no server-to-client stream is opened. stdio
+   servers are not supported, on any target. OAuth tokens live in a Durable
+   Object keyed by principal and authorization server; redirects land on the
+   Gateway.
 7. **Code Mode runs in the AgentDO.** Pi's Code Mode
    (`@earendil-works/pi-codemode`), registered with Pi Durable as one tool,
    runs each script in a fresh QuickJS VM inside the AgentDO's own isolate,
@@ -97,5 +101,5 @@ is uninteresting by design.
 ## Not part of the design
 
 Containers, Queues, Workflows, PGlite, Node runtimes on Cloudflare, Electric as a
-replica of Pi's log, stdio MCP, pre-2026-07-28 MCP servers, and Dynamic Workers
+replica of Pi's log, stdio MCP, standing MCP streams, and Dynamic Workers
 or Durable Object Facets for Code Mode (rule 7).
