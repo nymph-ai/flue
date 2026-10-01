@@ -41,7 +41,11 @@ export {
 	StreamStorage,
 	wirePath,
 };
-export { configuredStreams, configuredStreamsLog } from '../runtime/streams-config.ts';
+export {
+	configuredStreams,
+	configuredStreamsLog,
+	streamsSubscriptions,
+} from '../runtime/streams-config.ts';
 
 export const qualificationContext: Context = BACKGROUND_CONTEXT;
 

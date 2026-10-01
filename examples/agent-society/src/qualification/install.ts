@@ -15,6 +15,7 @@ import {
 	configuredStreams,
 	configuredStreamsLog,
 	diffDigests,
+	streamsSubscriptions,
 	type EntityAddress,
 } from '@flue/runtime/qualification';
 import { getAgentByName } from 'agents';
@@ -217,6 +218,15 @@ export function installQualification(app: Hono): void {
 		const log = configuredStreamsLog(c.env as Vars);
 		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
 		return c.json({ path, head: await log.head(path) });
+	});
+
+	// Ensure the shared inbox subscription now and report the outcome (the
+	// Worker also does this on its first request, but only logs a failure).
+	app.post('/qual/ensure-inbox', async (c) => {
+		const streams = configuredStreams(c.env as Vars);
+		const url = streams?.webhook?.url;
+		if (!streams || !url) return c.json({ error: 'streams and FLUE_STREAMS_WEBHOOK_URL required' }, 400);
+		return c.json(await settled(() => streamsSubscriptions(streams, url).ensureInbox()));
 	});
 
 	// Read-only: a subscription as the agents-server reports it.
