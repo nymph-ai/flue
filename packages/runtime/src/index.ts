@@ -60,6 +60,7 @@ export type {
 } from './execution-interceptor.ts';
 export { useAgentFinish } from './hooks/use-agent-finish.ts';
 export { useAgentStart } from './hooks/use-agent-start.ts';
+export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
 export { useDataWriter } from './hooks/use-data-writer.ts';
 export { useDelivery } from './hooks/use-delivery.ts';
 export { useDispatchMessage } from './hooks/use-dispatch-message.ts';
@@ -76,6 +77,18 @@ export { defineSubagent, GeneralSubagent, useSubagent } from './hooks/use-subage
 export { useTool } from './hooks/use-tool.ts';
 export { type FlueInstrumentation, instrument } from './instrumentation.ts';
 export type { JsonValue } from './json-snapshot.ts';
+export type {
+	CodemodeCall,
+	CodemodeError,
+	CodemodeErrorKind,
+	CodemodeExecutor,
+	CodemodeExecutorOptions,
+	CodemodeOutputItem,
+	CodemodeResult,
+	CodemodeStoreWrites,
+	CodemodeTool,
+	CodemodeToolContext,
+} from './pi/codemode/executor.ts';
 export type {
 	McpAuth,
 	McpConnection,
