@@ -8,8 +8,12 @@ overrides:
   '@earendil-works/chord': 0.99.2
   '@earendil-works/pi-agent-core': 0.99.2
   '@earendil-works/pi-ai': 0.99.2
+  '@earendil-works/pi-codemode': 0.99.2
   '@earendil-works/pi-durable': 0.99.2
   '@earendil-works/pi-telemetry': 0.99.2
+
+patchedDependencies:
+  '@earendil-works/pi-codemode@0.99.2': caf5e02795f1f95410092a13d6a4aaecd421dcc366e3ab5dbb383618d4269b77
 
 importers:
 
@@ -1634,9 +1638,6 @@ importers:
 
   packages/runtime:
     dependencies:
-      '@cloudflare/codemode':
-        specifier: 0.5.2
-        version: 0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
       '@earendil-works/chord':
         specifier: 0.99.2
         version: 0.99.2
@@ -1646,6 +1647,9 @@ importers:
       '@earendil-works/pi-ai':
         specifier: 0.99.2
         version: 0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-codemode':
+        specifier: 0.99.2
+        version: 0.99.2(patch_hash=caf5e02795f1f95410092a13d6a4aaecd421dcc366e3ab5dbb383618d4269b77)
       '@earendil-works/pi-durable':
         specifier: 0.99.2
         version: 0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.1)(zod@4.4.3)
@@ -1664,6 +1668,9 @@ importers:
       js-yaml:
         specifier: ^5.2.1
         version: 5.2.2
+      quickjs-wasi:
+        specifier: 3.6.2
+        version: 3.6.2
       ulidx:
         specifier: ^2.4.1
         version: 2.4.1
@@ -1682,7 +1689,7 @@ importers:
         version: 2.2.0
       agents:
         specifier: 0.24.0
-        version: 0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.2.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3)
+        version: 0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.2.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3)
       just-bash:
         specifier: ^3.0.1
         version: 3.2.0
@@ -1903,7 +1910,7 @@ importers:
         version: 2.0.12(hono@4.12.32)
       agents:
         specifier: 0.24.0
-        version: 0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3)
+        version: 0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3)
       magic-string:
         specifier: ^1.0.0
         version: 1.1.0
@@ -2629,23 +2636,6 @@ packages:
     resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
     engines: {node: '>= 20.12.0'}
 
-  '@cloudflare/codemode@0.5.2':
-    resolution: {integrity: sha512-9IuxVRUpjkuyvO0uuZJVXlD5XyewCxVuTTACybEwMsJaM0D2E3p5DynkPmLHcEKpzNzrLGEG/iR039UFYiUPoQ==}
-    peerDependencies:
-      '@modelcontextprotocol/sdk': ^1.25.0
-      '@tanstack/ai': '>=0.8.0 <1.0.0'
-      ai: ^6.0.0 || ^7.0.0
-      zod: ^4.0.0
-    peerDependenciesMeta:
-      '@modelcontextprotocol/sdk':
-        optional: true
-      '@tanstack/ai':
-        optional: true
-      ai:
-        optional: true
-      zod:
-        optional: true
-
   '@cloudflare/computer@0.1.1':
     resolution: {integrity: sha512-4xWx5yX+y5MyNhtIK9N6LcyBsbzGdaxGbhfZdh51zRWRfdkI8OhL2ftBCReqaR6HD7we+Yg0rEihwBETrmkbmg==}
     peerDependencies:
@@ -2786,6 +2776,10 @@ packages:
     resolution: {integrity: sha512-9RFOEdY+ZTJ1AI+UuAFs4RM0tF2Tje/R/CEv9gWTJHt0iTu8XHZs64U/EIZxNSllFmec/4HfwsOxYj1qQek9bg==}
     engines: {node: '>=22.19.0'}
     hasBin: true
+
+  '@earendil-works/pi-codemode@0.99.2':
+    resolution: {integrity: sha512-PVxNGu4l7LI92MvwUbaY3trjznU1Mlp2OMGwHwCWzLsjG7/lDa8xf6ei+Gws7VCt+Ri1tO+nFVl9KV2EeX7HWg==}
+    engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-durable@0.99.2':
     resolution: {integrity: sha512-ZBHK0JDoUoaNMB3V/UK15v4tRnAg8+ODqTK8d6ZoHlflpicgfDNvNbJIcq6RxeUl0l60Qgx8McN4MDFZJICWRQ==}
@@ -5884,9 +5878,6 @@ packages:
   '@types/jsesc@2.5.1':
     resolution: {integrity: sha512-9VN+6yxLOPLOav+7PwjZbxiID2bVaeq0ED4qSQmdQTdjnXJSaCVKTR58t15oqH1H5t8Ng2ZX1SabJVoN9Q34bw==}
 
-  '@types/json-schema@7.0.15':
-    resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
-
   '@types/mdast@4.0.4':
     resolution: {integrity: sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==}
 
@@ -8632,6 +8623,9 @@ packages:
     resolution: {integrity: sha512-So0Sqw869y/S2oE3Nuc0uT3Dhqgvsj8FSrwBdsuTosVsG8ME5/OcudU1GxsrIFdFABgy17GHnTVO9TYV/bLQcA==}
     engines: {node: '>=16.0.0'}
 
+  quickjs-wasi@3.6.2:
+    resolution: {integrity: sha512-FCqGtGOrMgzUiIrMNMA2YnsOxCNwo31dzqXvclXUC6xeT35NJLKXQJsvbeCTjvoFAwZgEAPg8U6+KAPDGXn8Mg==}
+
   radix-ui@1.6.7:
     resolution: {integrity: sha512-QBdhh1arIEUvPC0dQ5+nwWAxt7+N+oP/9jPwjJkGFoSk/sqxg32gJtSXGtFh8frAIcS6oC9cx2Q+7KYCQLOAeA==}
     peerDependencies:
@@ -10676,14 +10670,6 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
-  '@cloudflare/codemode@0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)':
-    dependencies:
-      '@types/json-schema': 7.0.15
-      acorn: 8.18.0
-    optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
-      zod: 4.4.3
-
   '@cloudflare/computer@0.1.1(@platformatic/vfs@0.4.0)(zod@4.4.3)':
     dependencies:
       acorn: 8.18.0
@@ -10893,6 +10879,10 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@earendil-works/pi-codemode@0.99.2(patch_hash=caf5e02795f1f95410092a13d6a4aaecd421dcc366e3ab5dbb383618d4269b77)':
+    dependencies:
+      quickjs-wasi: 3.6.2
 
   '@earendil-works/pi-durable@0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
@@ -13711,8 +13701,6 @@ snapshots:
 
   '@types/jsesc@2.5.1': {}
 
-  '@types/json-schema@7.0.15': {}
-
   '@types/mdast@4.0.4':
     dependencies:
       '@types/unist': 3.0.3
@@ -14001,7 +13989,7 @@ snapshots:
 
   agent-base@9.0.0: {}
 
-  agents@0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3):
+  agents@0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3):
     dependencies:
       '@babel/plugin-proposal-decorators': 8.0.2(@babel/core@8.0.1)
       '@cfworker/json-schema': 4.1.1
@@ -14019,7 +14007,6 @@ snapshots:
       yaml: 2.9.0
       zod: 4.4.3
     optionalDependencies:
-      '@cloudflare/codemode': 0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
       chat: 4.35.0(zod@4.4.3)
       just-bash: 3.2.0
       react: 19.2.8
@@ -14030,7 +14017,7 @@ snapshots:
       - '@babel/runtime'
       - rolldown
 
-  agents@0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.2.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3):
+  agents@0.24.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(@modelcontextprotocol/server@2.2.0)(chat@4.35.0(zod@4.4.3))(just-bash@3.2.0)(react@19.2.8)(rolldown@1.2.1)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))(zod@4.4.3):
     dependencies:
       '@babel/plugin-proposal-decorators': 8.0.2(@babel/core@8.0.1)
       '@cfworker/json-schema': 4.1.1
@@ -14048,7 +14035,6 @@ snapshots:
       yaml: 2.9.0
       zod: 4.4.3
     optionalDependencies:
-      '@cloudflare/codemode': 0.5.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
       chat: 4.35.0(zod@4.4.3)
       just-bash: 3.2.0
       react: 19.2.8
@@ -16842,6 +16828,8 @@ snapshots:
       '@jitl/quickjs-wasmfile-release-asyncify': 0.32.0
       '@jitl/quickjs-wasmfile-release-sync': 0.32.0
       quickjs-emscripten-core: 0.32.0
+
+  quickjs-wasi@3.6.2: {}
 
   radix-ui@1.6.7(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:

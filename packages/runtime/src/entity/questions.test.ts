@@ -30,16 +30,17 @@ describe('question events', () => {
 				answer: { kind: 'mcp-input', inputResponses: { a: 1 } },
 			}),
 		).toMatchObject({ questionId: 'q', answer: { kind: 'mcp-input' } });
-		expect(parseInputAnswered({ type: 'flue.input-answered', eventId: 'e1', questionId: 'q' })).toBeUndefined();
+		expect(
+			parseInputAnswered({ type: 'flue.input-answered', eventId: 'e1', questionId: 'q' }),
+		).toBeUndefined();
 	});
 
 	it('summarizes a question for the person (or agent) answering it', () => {
 		expect(
 			summarizeQuestion({
 				kind: 'codemode-approval',
-				id: 'codemode:flue:e:0',
-				runtime: 'flue',
-				executionId: 'e',
+				id: 'codemode:0:c:0123456789ab',
+				executionId: '0:c',
 				pending: [{ seq: 0, connector: 'tools', method: 'send_email', args: { to: 'ops' } }],
 				conversationId: '0',
 				callId: 'c',

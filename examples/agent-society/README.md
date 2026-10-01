@@ -14,7 +14,7 @@ and the instance's alarm admits what arrived.
 - `steward` runs operations on the `ops` MCP server (`society-ops`, a
   stateless 2026-07-28 server reached through the `OPS` service binding with
   the `OPS_MCP_TOKEN` bearer secret), directly and from Code Mode scripts.
-  `ops.record` needs a person's approval, and `ops.deploy` answers
+  A script's `tools.mcp__ops__record` needs a person's approval, and `deploy` answers
   `input_required` (an elicitation): both become questions on the steward's
   `flue/v1/steward/<id>/questions` stream (`useQuestions()`), answered with
   `POST /agents/steward/<id>/questions/<questionId>/answer`.

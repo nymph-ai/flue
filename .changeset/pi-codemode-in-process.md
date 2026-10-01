@@ -1,0 +1,15 @@
+---
+'@flue/runtime': minor
+'@flue/vite': patch
+---
+
+Code Mode is Pi's again: `@earendil-works/pi-codemode` 0.99.2, running each script in a QuickJS VM inside the agent itself — in its Durable Object on Cloudflare — instead of `@cloudflare/codemode`'s Dynamic Workers and runtime facet (docs/cloudflare-native.md rule 7).
+
+- **Breaking:** scripts see Pi's surface, exactly: the body of an async function (top-level `await` and `return`), `tools.<name>(args)` for the agent's own tools and `tools.mcp__<server>__<tool>(args)` for MCP tools, `ALL_TOOLS`, `searchTools()`, `describeTool()`, `describeNamespace()`, `text()`, `image()`, `exit()`, `console.*`, `store(key, value)` / `load(key)` (synchronous) and `models.getModelsOfType()` / `getAvailableOfType()` / `getModelOfType()` / `classify()` over the runtime's pi-ai models. A script written for Pi runs unchanged; `Promise.all` over tool and classifier calls is allowed. `codemode.search`/`describe`/`step`/`run`/`store`/`load`, `<server>.<method>()` namespaces and snippets are gone. The tool's description is Pi's.
+- An MCP tool resolves to its whole `CallToolResult` without `_meta`, as in Pi; the agent's own tools to their output.
+- **Breaking:** `useCodeMode()` options are `{ requiresApproval?, maxOutputTokens?, timeoutMs?, memoryLimitBytes? }`. `requiresApproval` names tools as scripts call them (`'mcp__github__create_issue'`, `'mcp__github__*'`) or is a predicate over `{ name, server?, tool?, annotations? }`. `executor`, `createCodemodeExecutor()`, `codemodeRuntime()` and the `CodemodeExecutor`/`CodemodeProvider`/`CodemodeExecuteResult` types are removed.
+- An approval waits inside the call; a rejection rejects that call in the script. A script that asks (an approval, or an MCP `input_required`) journals its nested calls' results from that moment, so after an eviction Pi's rerun answers them from the journal and runs the waiting call once. Scripts that never ask write nothing. `CodemodeApprovalQuestion` loses `runtime`; its id is `codemode:<conversation>:<call id>:<hash of the call>`.
+- Scripts are bounded by a 32 MiB heap (`memoryLimitBytes`), an interrupt-poll CPU budget inside a Durable Object's 30 s CPU limit, and an optional wall-clock deadline (`timeoutMs`, or the script's `// @options: {"timeout_ms": …}`).
+- Code Mode now runs on Node too.
+- `@flue/vite`: an app whose agents call `useCodeMode(` gets `import '@flue/runtime/cloudflare/codemode'` in its Worker entry, which imports `quickjs-wasi/quickjs.wasm?module`. No `LOADER` binding, no `CodemodeRuntime` export, and no wrangler checks. A Node build of such an app no longer fails.
+- `@earendil-works/pi-codemode` is patched (`patches/@earendil-works__pi-codemode@0.99.2.patch`, upstream-shaped): an injectable `spawn` for the VM, the VM half exported as `@earendil-works/pi-codemode/vm`, and `node:worker_threads` / `node:fs` imported only on first use.

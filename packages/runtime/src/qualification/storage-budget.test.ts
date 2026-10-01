@@ -16,8 +16,7 @@
  * same size — must stay within a fixed allowance and be the same at both
  * sizes. `[storage-budget]` lines report every measurement.
  *
- * Code Mode (on the Node fake of its runtime facet; the facet's own SQLite is
- * not the AgentDO's and is out of scope): a cold `codemode.store()` turn after
+ * Code Mode (Pi's QuickJS sandbox, in-process as on workerd): a cold `store()` turn after
  * `size` earlier writes of the store (nymph-ai/nymphai #3862: without a
  * checkpoint predicate, its cold read replayed every write), and a question
  * parked on an approval (rule 9) — park, answer through the inbox, resume —
@@ -40,8 +39,7 @@ import {
 	type ToolRegistration,
 } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { installFakeCodemodeHost } from '../codemode/fake-host-test-support.ts';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { FlueCodemodeStore } from '../codemode/store.ts';
 import { useCodeMode } from '../hooks/use-code-mode.ts';
 import { context, removeTempFiles, tempFile, textOf } from '../entity/a2a-test-support.ts';
@@ -81,9 +79,8 @@ const BUDGET: Record<string, Rows> = {
 	'3 idle wakes while a question is parked': { rowsRead: 15, rowsWritten: 0 },
 };
 
-const STORE_CODE =
-	"async () => { const n = (await codemode.load('k')) ?? 0; await codemode.store('k', n + 1); return n + 1; }";
-const APPROVAL_CODE = "async () => { await tools.send({}); return 'sent'; }";
+const STORE_CODE = "const n = load('k') ?? 0; store('k', n + 1); return n + 1;";
+const APPROVAL_CODE = "await tools.send({}); return 'sent';";
 
 function respond(messages: readonly Message[]): AssistantMessage {
 	const userIndex = messages.findLastIndex((message) => message.role === 'user');
@@ -215,7 +212,7 @@ const BudgetAgent = (() => {
 	useModel(control.model);
 	useTool({ name: 'probe', description: 'Probe.', run: () => 'ok' });
 	useTool({ name: 'send', description: 'Send.', run: () => 'sent' });
-	useCodeMode({ requiresApproval: ['tools.send'] });
+	useCodeMode({ requiresApproval: ['send'] });
 	return 'You are a budget probe.';
 }) as unknown as Agent;
 
@@ -291,10 +288,6 @@ afterEach(async () => {
 	for (const instance of instances) await instance.close().catch(() => {});
 	instances.length = 0;
 	control.model = 'fast/m';
-});
-
-beforeAll(() => {
-	installFakeCodemodeHost();
 });
 
 afterAll(async () => {
@@ -461,11 +454,9 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 					await carolCold.ask('store it');
 				},
 			);
-			const stored = await (await carolCold.instance.host()).harness.snapshot(
-				FlueCodemodeStore,
-				ROOT_CONVERSATION_ID,
-				context,
-			);
+			const stored = await (
+				await carolCold.instance.host()
+			).harness.snapshot(FlueCodemodeStore, ROOT_CONVERSATION_ID, context);
 			expect(stored?.values.k).toBe(size + 1);
 
 			for (const scenario of Object.keys(BUDGET)) {

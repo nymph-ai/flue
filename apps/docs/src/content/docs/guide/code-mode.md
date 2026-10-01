@@ -1,12 +1,12 @@
 ---
 title: Code Mode
-description: Let the model write code against your tools and MCP servers, with durable approvals.
+description: Let the model write code against your tools, MCP servers and classifier models, with durable approvals.
 lastReviewedAt: 2026-10-01
 ---
 
-Code Mode gives the model one tool, `codemode`, that runs JavaScript it writes. Inside the script, the agent's own tools and every connected [MCP server](/docs/guide/mcp/) are typed globals, so the model can loop, filter and combine their results in one step, and only what the script returns reaches the conversation. Discovery happens inside the sandbox too: a server with hundreds of tools costs the prompt nothing.
+Code Mode gives the model one tool, `codemode`, that runs JavaScript it writes. Inside the script, the agent's own tools and every connected [MCP server](/docs/guide/mcp/)'s tools are functions on `tools`, so the model can loop, filter, run calls concurrently and combine their results in one step, and only what the script outputs reaches the conversation.
 
-Code Mode is [`@cloudflare/codemode`](https://developers.cloudflare.com/agents/tools/codemode/), and it runs on the [Cloudflare target](/docs/guide/cloudflare-target/) only.
+Code Mode is [Pi](https://pi.dev)'s, `@earendil-works/pi-codemode`: scripts see exactly what they see in Pi's coding agent, so a script written for Pi runs here unchanged. Each script runs in a fresh [QuickJS](https://github.com/quickjs-ng/quickjs) VM inside the agent itself — in its Durable Object on the [Cloudflare target](/docs/guide/cloudflare-target/), in its process on Node.
 
 ## Turn it on
 
@@ -18,70 +18,82 @@ import { github } from '../connections/github.ts';
 export function Triage() {
   useModel('anthropic/claude-sonnet-4-6');
   useMcpConnection(github);
-  useCodeMode({ requiresApproval: ['github.create_issue', 'github.merge_pull_request'] });
+  useCodeMode({
+    requiresApproval: ['mcp__github__create_issue', 'mcp__github__merge_pull_request'],
+  });
   return 'Triage new issues and pull requests.';
 }
 ```
 
-`@flue/vite` does the wiring when an agent module calls `useCodeMode(`: it adds the `LOADER` Worker Loader binding (Dynamic Workers, which need the Workers Paid plan) and exports the runtime's facet class, `CodemodeRuntime`, from the generated Worker entry. Your wrangler config needs nothing new, but the build fails, saying what to change, if it sets the `disable_ctx_exports` compatibility flag or declares an agent class under `new_classes` instead of `new_sqlite_classes`.
-
-A Node build of an app that calls `useCodeMode()` fails: Node has neither Durable Object Facets nor Dynamic Workers.
+On Cloudflare, `@flue/vite` does the wiring when an agent module calls `useCodeMode(`: the generated Worker entry imports `@flue/runtime/cloudflare/codemode`, which brings QuickJS's WebAssembly module, compiled at build time (workerd compiles no WebAssembly at run time). Your wrangler config needs nothing new. A custom `main` that does not re-export `virtual:flue/worker` imports that module itself.
 
 ## What the model writes
 
-The model writes an async arrow function. Its globals:
+The script is the body of an async function: top-level `await` and `return` work. Its globals:
 
-| Global | Purpose |
-| --- | --- |
-| `codemode.search(query)` | Ranked search over every method and saved snippet |
-| `codemode.describe(path)` | TypeScript declarations for a method (`"github.create_issue"`), a namespace (`"github"`) or a snippet |
-| `codemode.step(name, fn)` | Run nondeterministic or side-effectful work once; its result is replayed when the script resumes |
-| `codemode.run(name, input)` | Run a saved [snippet](#snippets) |
-| `codemode.store(key, value)` / `codemode.load(key)` | JSON values kept across `codemode` calls in this conversation; writes are kept only when the script completes |
-| `tools.<name>(input)` | The agent's own tools |
-| `<server>.<method>(input)` | An MCP server's tools, returning the server's structured result when it declares one |
+| Global                                                                             | Purpose                                                                                                          |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `tools.<name>(args)`                                                               | The agent's own tools, and each MCP server's as `tools.mcp__<server>__<tool>`                                    |
+| `ALL_TOOLS`, `searchTools(query)`, `describeTool(name)`, `describeNamespace(name)` | Find tools and read their TypeScript declarations                                                                |
+| `text(value)`, `image(item)`, `console.log(…)`, `return value`                     | What reaches the conversation                                                                                    |
+| `exit()`                                                                           | End the script successfully right away                                                                           |
+| `store(key, value)` / `load(key)`                                                  | JSON values kept across `codemode` calls in this conversation; writes are kept only when the script succeeds     |
+| `models.getModelOfType(…)`, `models.classify(model, context)`                      | The model catalog, and classifier models such as TypeSafe's Jev; at most four classifications at once per script |
 
-```ts
-async () => {
-  const found = await codemode.search('open pull requests');
-  const docs = await codemode.describe(found.results[0].path);
-  const prs = await github.list_pull_requests({ owner: 'acme', repo: 'api', state: 'open' });
-  return prs.filter((pr) => pr.draft === false).map((pr) => pr.number);
+```js
+const { issues } = await tools.mcp__linear__list_issues({ team: 'Pi', state: 'open', limit: 250 });
+const jev = await models.getModelOfType('classifier', 'typesafe', 'jev-latest');
+const questions = {
+  frustration: {
+    type: 'choice',
+    instructions: 'Judge only the emotional tone of the people writing.',
+    criteria: { none: 'Neutral or friendly', mild: 'Annoyed', high: 'Angry or fed up' },
+  },
 };
+const results = await Promise.all(
+  issues.map(async (issue) => {
+    const { comments } = await tools.mcp__linear__list_comments({ issueId: issue.identifier });
+    const c = await models.classify(jev, { state: { ...issue, comments }, questions });
+    return { id: issue.identifier, ...c.answers.frustration };
+  }),
+);
+store('frustration', results);
+return results.filter((r) => r.choice !== 'none').map((r) => r.id);
 ```
 
-Scripts have no network (`fetch` and `connect` are blocked) and no filesystem: everything goes through the namespaces. Names are turned into JavaScript identifiers (`get-user` becomes `get_user`); two names that would collide both get a short hash suffix, which `codemode.search` shows.
+An MCP tool resolves to its whole `CallToolResult` (`content`, `structuredContent`, `isError`, without `_meta`), as in Pi; the agent's own tools resolve to their output. A call that fails rejects with the tool's error text. The tool's description lists the tools' TypeScript declarations within a budget of about 3 000 tokens; scripts find the rest with `searchTools()`. A script may start with an options line, `// @options: {"max_output_tokens": 2000, "timeout_ms": 60000}`.
+
+Scripts have no network, no timers, no filesystem and no host APIs: everything goes through `tools` and `models`.
 
 ## Where it runs and what it keeps
 
-Each agent has one Code Mode runtime, a [Durable Object Facet](https://developers.cloudflare.com/dynamic-workers/usage/durable-object-facets/) of the agent's Durable Object with its own SQLite database. It records every method call and step of every execution, the actions waiting for approval, and saved snippets, so an execution paused for approval survives the agent hibernating or being evicted. Each script runs in a fresh Dynamic Worker, with a 30-second CPU limit, at most 1 000 calls back to the host, and at most four scripts at once per agent. Change those with your own executor:
+Each script gets a fresh QuickJS VM in the agent's own isolate, gone when the script ends. Nothing is billed per script: on Cloudflare, its CPU runs while the agent's Durable Object is already awake, waiting on the model and the tools. Because the VM shares the agent's thread, it is bounded:
 
-```ts
-import { env } from 'cloudflare:workers';
-import { createCodemodeExecutor } from '@flue/runtime/cloudflare/codemode';
+- memory: 32 MiB by default (`useCodeMode({ memoryLimitBytes })`); an allocation beyond it throws `InternalError: out of memory` inside the script;
+- CPU: QuickJS checks for interruption as it runs, and a script that keeps computing is stopped well within a Durable Object's 30-second CPU limit;
+- time: none by default, as in Pi — a script may wait on an approval — unless the script's `timeout_ms` or `useCodeMode({ timeoutMs })` sets one.
 
-useCodeMode({ executor: createCodemodeExecutor({ loader: env.LOADER, cpuMs: 60_000 }) });
-```
-
-`codemode.store` values live in the conversation, not in the runtime: they follow the conversation's history like the rest of the agent's state.
+`store()` values live in the conversation: they follow the conversation's history like the rest of the agent's state. Nothing else is kept, except for a script waiting on a question (below).
 
 ## Approvals
 
-`requiresApproval` marks the methods that need a person: sandbox paths, a whole namespace (`'github.*'`), or a predicate over each method. The predicate sees the MCP server's [annotations](/docs/guide/mcp/#advanced-making-a-direct-mcp-server-connection):
+`requiresApproval` marks the tools that need a person: tool names as scripts call them, `*` patterns (`'mcp__github__*'`), or a predicate over each tool. The predicate sees the MCP server's [annotations](/docs/guide/mcp/#advanced-making-a-direct-mcp-server-connection):
 
 ```ts
 useCodeMode({
-  requiresApproval: (method) => method.annotations?.destructiveHint === true,
+  requiresApproval: (tool) => tool.annotations?.destructiveHint === true,
 });
 ```
 
-When a script reaches such a call, the runtime logs it as pending and stops the script. Once the question is answered, the same script runs again: every call already made is served from the log instead of being repeated, the approved call runs for real, and the script carries on. A rejection ends the execution; calls made before it are not undone. Because the script is replayed, everything outside method calls must be deterministic: wrap random values and timestamps in `codemode.step()`, and await method calls one at a time.
+When a script calls such a tool, the call waits while a person is asked; an approval runs it and the script carries on, and a rejection rejects that call inside the script with an Error saying so. Calls made before are not undone. An MCP server that answers `input_required` (an elicitation) inside a script is asked the same way.
+
+A waiting script lives only in memory, so its earlier calls' results are written down the moment it first asks. If the agent is evicted while it waits, the script runs again once the answer arrives: the calls it already made are answered from that record instead of being repeated, and the call that waited runs once, with the answer. Scripts that never ask write nothing.
 
 ### Answering approvals
 
 An approval is a question, and questions to people are entity events: they need the agent's entity streams (Electric). While it waits, the `codemode` call stays open inside the agent's turn — the model is not called again — and nothing runs; the agent can hibernate or be evicted, and the call continues where it stopped once the answer arrives.
 
-The question is published as one `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream, which a UI (or another agent) can watch. It carries the question (`kind: 'codemode-approval'`, the pending calls and their arguments), a one-line summary, and where to answer. Answer it with the SDK, or over HTTP on the agent's router:
+The question is published as one `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream, which a UI (or another agent) can watch. It carries the question (`kind: 'codemode-approval'`, the waiting call and its arguments), a one-line summary, and where to answer. Answer it with the SDK, or over HTTP on the agent's router:
 
 ```ts
 import { createFlueClient } from '@flue/sdk';
@@ -113,21 +125,6 @@ useQuestions({
 ```
 
 A question that expires fails the call like a rejection. The agent's own durability limit still applies to the whole turn, the wait included (one hour by default): set `durability.timeoutMs` on the agent when approvals may take longer.
-
-## Snippets
-
-A snippet is a script that already worked, saved so the model can find it with `codemode.search` and re-run it with `codemode.run(name, input)`. You decide what is worth keeping: each `codemode` result carries its `executionId` in the tool result's details, and `codemodeRuntime()` saves it, from anywhere inside the agent (a tool, a lifecycle hook):
-
-```ts
-import { codemodeRuntime } from '@flue/runtime/cloudflare/codemode';
-
-await codemodeRuntime().saveSnippet('open-prs', {
-  executionId,
-  description: 'List open, non-draft pull requests for a repository.',
-});
-```
-
-`codemodeRuntime()` also lists `executions()`, `pending()` approvals and `snippets()`, and deletes snippets with `deleteSnippet(name)`. A snippet records the namespaces it used and refuses to run when one is no longer connected.
 
 ## Next steps
 

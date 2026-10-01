@@ -13,7 +13,7 @@
  *   observe <stream> [<key> [<from>]]  observe the stream from an offset (default: its
  *                                  start), waking on new items
  *   schedule <delay-ms> <text>     schedule_wake for this agent
- *   codemode record <id>           a Code Mode script calling ops.record({ id })
+ *   codemode record <id>           a Code Mode script calling tools.mcp__ops__record({ id })
  *                                  (approval-gated on the steward)
  *   mcp <tool> <arg>               the ops MCP server's tool directly:
  *                                  `mcp deploy <service>`, `mcp echo <text>`
@@ -118,7 +118,7 @@ function commandCalls(line: string): Call[] | undefined {
 		return [
 			{
 				name: 'codemode',
-				args: { code: `async () => await ops.record({ id: ${JSON.stringify(words[2])} })` },
+				args: { code: `return await tools.mcp__ops__record({ id: ${JSON.stringify(words[2])} });` },
 			},
 		];
 	}

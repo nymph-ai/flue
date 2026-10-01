@@ -28,5 +28,7 @@ export default defineConfig({
 	// marking the specifier external keeps any import in the emitted
 	// bundle so workerd can resolve it at runtime (rather than having
 	// rolldown fail to find a package on disk at build time).
-	deps: { neverBundle: ['cloudflare:workers', 'vitest'] },
+	// `quickjs-wasi/quickjs.wasm?module` (`src/cloudflare/codemode.ts`) is a
+	// compiled wasm module the app's Worker build imports.
+	deps: { neverBundle: ['cloudflare:workers', 'vitest', 'quickjs-wasi/quickjs.wasm?module'] },
 });

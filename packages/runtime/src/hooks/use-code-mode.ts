@@ -1,34 +1,35 @@
-import type { CodemodeExecutor } from '../codemode/executor.ts';
-import type { CodemodeMethod } from '../codemode/host.ts';
+import type { CodemodeMethod } from '../codemode/tool.ts';
 import { type RenderFrame, requireRenderFrame } from './frame.ts';
 
 /** Options of {@link useCodeMode}. */
 export interface UseCodeModeOptions {
 	/**
-	 * Which methods pause the script until a person approves them. Sandbox
-	 * paths (`"github.create_issue"`, `"tools.send_email"`), a whole namespace
-	 * (`"github.*"`), or a predicate over each method — it sees the MCP
-	 * server's annotations, so `(m) => m.annotations?.destructiveHint === true`
-	 * gates every destructive MCP tool. Enforced by `@cloudflare/codemode`'s
-	 * runtime: the call is logged as pending and the execution pauses durably
-	 * until the question is answered (see the Code Mode guide). Default: none.
+	 * Which tools wait for a person's approval before they run. Tool names as
+	 * scripts call them (`"send_email"`, `"mcp__github__create_issue"`), `*`
+	 * patterns (`"mcp__github__*"`), or a predicate over each tool — it sees
+	 * the MCP server's annotations, so
+	 * `(m) => m.annotations?.destructiveHint === true` gates every destructive
+	 * MCP tool. The call waits on a question (see the Code Mode guide); a
+	 * rejection rejects it inside the script. Default: none.
 	 */
 	requiresApproval?: readonly string[] | ((method: CodemodeMethod) => boolean);
-	/**
-	 * Where scripts run. Default: `createCodemodeExecutor({ loader: env.LOADER })`
-	 * from `@flue/runtime/cloudflare/codemode` — a fresh Dynamic Worker per
-	 * script with no network (`@flue/vite` adds the `LOADER` binding). Pass
-	 * one to change its limits.
-	 */
-	executor?: CodemodeExecutor;
-	/** Output budget for a script's result and console output, in tokens. Default 10 000. */
+	/** Output budget for a script's output and result, in tokens. Default 10 000. */
 	maxOutputTokens?: number;
+	/** Wall-clock deadline of one script, unless it sets `timeout_ms`. Default: none. */
+	timeoutMs?: number;
+	/** The script VM's heap limit, in bytes. Default 32 MiB. */
+	memoryLimitBytes?: number;
 }
 
 /** One render's Code Mode declaration, as the Pi registry bridge reads it. */
 export type CodeModeDeclaration = Readonly<UseCodeModeOptions>;
 
-const OPTION_KEYS = new Set<string>(['executor', 'maxOutputTokens', 'requiresApproval']);
+const OPTION_KEYS = new Set<string>([
+	'maxOutputTokens',
+	'memoryLimitBytes',
+	'requiresApproval',
+	'timeoutMs',
+]);
 
 /**
  * Declarations live beside the frame rather than on it: the frame's shape is
@@ -37,66 +38,59 @@ const OPTION_KEYS = new Set<string>(['executor', 'maxOutputTokens', 'requiresApp
  */
 const declarations = new WeakMap<RenderFrame, CodeModeDeclaration>();
 
+const positive = (value: unknown) =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0;
+
 /**
- * Give the model the `codemode` tool, `@cloudflare/codemode`'s runtime: it
- * writes JavaScript that finds methods with `codemode.search()` and
- * `codemode.describe()`, calls the agent's own tools as `tools.<name>(input)`
- * and every MCP server as `<server>.<method>(input)`, wraps nondeterministic
- * work in `codemode.step()`, re-runs saved snippets with `codemode.run()`,
- * and only the script's result reaches the context. Executions, approvals and
- * snippets live in the runtime's Durable Object Facet under the agent.
+ * Give the model the `codemode` tool, Pi's Code Mode: it writes JavaScript
+ * that calls the agent's own tools and every MCP server's as
+ * `tools.<name>(args)` (`tools.mcp__github__list_issues(…)`), runs them
+ * concurrently with `Promise.all`, keeps values with `store()`/`load()`,
+ * classifies with `models.classify()`, and only the script's output reaches
+ * the context. Scripts run in a QuickJS VM inside the agent itself, so a
+ * script written for Pi runs here unchanged.
  *
  * ```ts
  * export function Researcher() {
  *   useModel('anthropic/claude-sonnet-4-6');
  *   useMcpConnection(github);
- *   useCodeMode({ requiresApproval: ['github.create_issue'] });
+ *   useCodeMode({ requiresApproval: ['mcp__github__create_issue'] });
  *   return 'Triage the issues.';
  * }
  * ```
  *
- * Cloudflare target only. Declared at most once per render, and read per
- * render like the other tool hooks.
+ * Declared at most once per render, and read per render like the other
+ * tool hooks.
  */
 export function useCodeMode(options: UseCodeModeOptions = {}): void {
 	const frame = requireRenderFrame('useCodeMode');
 	if (!options || typeof options !== 'object' || Array.isArray(options)) {
-		throw new Error('[flue] useCodeMode() takes an options object: { requiresApproval?, executor?, maxOutputTokens? }.');
+		throw new Error(
+			'[flue] useCodeMode() takes an options object: { requiresApproval?, maxOutputTokens?, timeoutMs?, memoryLimitBytes? }.',
+		);
 	}
 	for (const key of Object.keys(options)) {
 		if (!OPTION_KEYS.has(key)) {
 			throw new Error(`[flue] useCodeMode() received unknown option "${key}".`);
 		}
 	}
-	const { executor, requiresApproval } = options;
-	if (
-		executor !== undefined &&
-		(!executor || typeof executor !== 'object' || typeof executor.execute !== 'function')
-	) {
-		throw new Error(
-			'[flue] useCodeMode() `executor` must be an @cloudflare/codemode Executor, such as createCodemodeExecutor() from @flue/runtime/cloudflare/codemode.',
-		);
-	}
+	const { requiresApproval } = options;
 	if (
 		requiresApproval !== undefined &&
 		typeof requiresApproval !== 'function' &&
 		!(
 			Array.isArray(requiresApproval) &&
-			requiresApproval.every((path) => typeof path === 'string' && /^[^.]+\.[^.]+$/.test(path))
+			requiresApproval.every((name) => typeof name === 'string' && name.length > 0)
 		)
 	) {
 		throw new Error(
-			'[flue] useCodeMode() `requiresApproval` must be a list of sandbox paths ("github.create_issue", "github.*") or a predicate.',
+			'[flue] useCodeMode() `requiresApproval` must be a list of tool names ("send_email", "mcp__github__*") or a predicate.',
 		);
 	}
-	const { maxOutputTokens } = options;
-	if (
-		maxOutputTokens !== undefined &&
-		(typeof maxOutputTokens !== 'number' ||
-			!Number.isFinite(maxOutputTokens) ||
-			maxOutputTokens <= 0)
-	) {
-		throw new Error('[flue] useCodeMode() maxOutputTokens must be a positive number.');
+	for (const key of ['maxOutputTokens', 'timeoutMs', 'memoryLimitBytes'] as const) {
+		if (options[key] !== undefined && !positive(options[key])) {
+			throw new Error(`[flue] useCodeMode() ${key} must be a positive number.`);
+		}
 	}
 	if (declarations.has(frame)) {
 		throw new Error(

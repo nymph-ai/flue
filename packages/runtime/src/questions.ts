@@ -4,9 +4,10 @@
  *
  * Two things ask:
  *
- * - Code Mode, when a script calls a method that `requiresApproval`. The
- *   `@cloudflare/codemode` runtime facet has already logged the call as
- *   pending and paused the execution durably in its own SQLite.
+ * - Code Mode, when a script calls a tool that `requiresApproval`. The
+ *   script waits on that call; the nested calls it made before are
+ *   journaled (`codemode/journal.ts`), so a rerun after an eviction reaches
+ *   the same call without repeating them.
  * - The MCP client, when a server answers a request with `input_required`
  *   carrying input requests (an elicitation, a sampling request, the roots
  *   list) and, usually, an opaque `requestState`.
@@ -24,14 +25,12 @@
  *
  * 1. **Resolves with a {@link FlueAnswer}** of the question's `kind`. The
  *    caller continues the call in place:
- *    - `codemode-approval`, `decision: 'approve'`: the execution is resumed
- *      through the runtime facet (`approve`), which replays the logged calls
- *      and runs the approved one. If the resumed run pauses again, the caller
- *      asks again with a new question (a new `seq` in `pending`).
- *    - `codemode-approval`, `decision: 'reject'`: every pending action of the
- *      execution is rejected through the facet, which ends the execution
- *      (`rejected`); actions applied earlier in the run are not undone. The
- *      model is told the action was rejected, with `reason` when given.
+ *    - `codemode-approval`, `decision: 'approve'`: the waiting call runs and
+ *      the script continues. A later call that needs approval asks again with
+ *      a new question.
+ *    - `codemode-approval`, `decision: 'reject'`: the waiting call rejects
+ *      inside the script with an Error saying so, with `reason` when given;
+ *      the script may catch it. Calls made earlier are not undone.
  *    - `mcp-input`: the original request is sent again on a fresh request id
  *      with `params.inputResponses` set to the answer's `inputResponses` and
  *      `params.requestState` set to the question's `requestState`, echoed
@@ -41,25 +40,24 @@
  * 2. **Rejects with {@link QuestionParkedError}** for this question. The
  *    handler has durably parked it — recorded it, published it, and holds
  *    everything needed to continue (`id`, and for MCP the `requestState` and
- *    original `params`; for Code Mode the facet keeps the paused execution
- *    itself). The caller ends the call now without failing it:
- *    - Code Mode returns a non-error tool result saying the execution is
- *      paused for approval, naming the question id and the pending
- *      actions. The paused execution stays in the facet; the handler's lane
- *      resumes it later with {@link import('./codemode/tool.ts').resumeCodemodeQuestion},
- *      which takes the same {@link FlueAnswer} and returns the tool result
- *      of the continued run.
+ *    original `params`; for Code Mode the journal holds the script and its
+ *    calls' results). The caller ends the call now without failing it:
+ *    - Code Mode ends the script and returns a non-error tool result saying
+ *      it is paused, naming the question id. The handler's lane continues it
+ *      later with {@link import('./codemode/tool.ts').resumeCodemodeQuestion},
+ *      which runs the script again over its journal with the same
+ *      {@link FlueAnswer} and returns the tool result of the continued run.
  *    - The MCP client fails the request with the parked error (its message
  *      names the question id); the handler's lane retries the `tools/call`
  *      itself, as in (1), once the answer arrives.
  *
  * 3. **Rejects with anything else.** The question cannot be answered. The
- *    caller fails the call with that error's message: Code Mode rejects the
- *    paused execution (so nothing stays paused) and returns an error result;
- *    the MCP client fails the request with {@link import('./mcp.ts').McpInputRequiredError}.
+ *    caller fails the call with that error's message: in Code Mode the
+ *    waiting call rejects inside the script; the MCP client fails the request
+ *    with {@link import('./mcp.ts').McpInputRequiredError}.
  *
  * A handler must be idempotent on `question.id`: the id is derived from the
- * question's content (Code Mode: runtime, execution and the pending `seq`s;
+ * question's content (Code Mode: the execution, the tool and its arguments;
  * MCP: server, method, original params and `requestState`), so a call that
  * is retried after an eviction asks with the same id. Asking again for a
  * parked id must not publish it twice; asking for an id whose answer has
@@ -87,11 +85,11 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 
 /** One action a Code Mode execution is paused on. */
 export interface CodemodePendingAction {
-	/** Position of the call in the execution's log. */
+	/** Position of the call among the script's nested calls. */
 	readonly seq: number;
-	/** Sandbox namespace: an MCP server's connector, or `tools`. */
+	/** The sandbox namespace: `tools`. */
 	readonly connector: string;
-	/** Method name inside the namespace. */
+	/** The tool, as the script names it (`tools.<method>`). */
 	readonly method: string;
 	/** The arguments the script passed. */
 	readonly args: unknown;
@@ -100,11 +98,9 @@ export interface CodemodePendingAction {
 /** Code Mode wants approval for the pending actions of one execution. */
 export interface CodemodeApprovalQuestion {
 	readonly kind: 'codemode-approval';
-	/** `codemode:<runtime>:<executionId>:<seq>[,<seq>…]` — stable across retries. */
+	/** `codemode:<executionId>:<hash of the call>` — stable across retries. */
 	readonly id: string;
-	/** Name of the `@cloudflare/codemode` runtime facet (one per agent). */
-	readonly runtime: string;
-	/** The paused execution, as the facet names it. */
+	/** The waiting execution: `<conversation>:<call id>` of its `codemode` call. */
 	readonly executionId: string;
 	/** The actions awaiting a decision (usually one). */
 	readonly pending: readonly CodemodePendingAction[];
@@ -210,7 +206,8 @@ function describeQuestion(question: FlueQuestion): string {
 	return `MCP server "${question.server}"'s input request on ${question.method}`;
 }
 
-const notWired: QuestionHandler = (question) => Promise.reject(new QuestionsNotWiredError(question));
+const notWired: QuestionHandler = (question) =>
+	Promise.reject(new QuestionsNotWiredError(question));
 
 let handler: QuestionHandler = notWired;
 
@@ -253,10 +250,15 @@ export function currentQuestionCall(): QuestionCall | undefined {
  * the process-wide one. Resolves only with an answer of the question's kind;
  * a mismatched answer is a handler bug and rejects.
  */
-export async function askQuestion(question: FlueQuestion, signal?: AbortSignal): Promise<FlueAnswer> {
+export async function askQuestion(
+	question: FlueQuestion,
+	signal?: AbortSignal,
+): Promise<FlueAnswer> {
 	const call = callScope.getStore();
 	const scoped = call?.context.value(QUESTION_HANDLER);
-	const answer = scoped ? await scoped(question, signal, call) : await handler(question, signal, call);
+	const answer = scoped
+		? await scoped(question, signal, call)
+		: await handler(question, signal, call);
 	if (!answer || answer.kind !== question.kind) {
 		throw new Error(
 			`[flue] The question handler answered ${question.id} with a "${String(answer?.kind)}" answer; expected "${question.kind}".`,

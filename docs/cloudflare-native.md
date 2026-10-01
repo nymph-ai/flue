@@ -13,23 +13,23 @@ Internet / clients ──► Gateway Worker ── auth, routing, wake doorbell,
                    ├─ Pi SqliteStorage    (on ctx.storage.sql via Flue's adapter)
                    ├─ Flue tables         (stream cursors, wake high-water, conversation cache)
                    ├─ MCP client          (@modelcontextprotocol/client, stateless 2026-07-28)
-                   └─ Code Mode           (@cloudflare/codemode) ──load()──► Dynamic Worker
-                              │                                    globalOutbound: null
-                              ▼                                    HOST RPC only
+                   └─ Code Mode           (@earendil-works/pi-codemode: QuickJS in-process,
+                              │                    tools.* and models.* only)
+                              ▼
                    Electric Durable Streams: entity inboxes, events, world streams
 ```
 
 ## Roles
 
-| Piece | Owns | Does not own |
-| --- | --- | --- |
-| Gateway Worker | routing, auth, webhook verification, OAuth redirects | state |
-| AgentDO | identity, serialization, local durable state, supervision | a permanently running process |
-| Pi Durable | cognition: sessions, tasks, tool recovery, compaction | transport, Electric, Cloudflare |
-| DO SQLite | Pi's state and Flue's cursors; the agent's record | the public coordination history |
-| Electric | entity events: inbox messages, published events, world observations | Pi's internal commits |
-| Dynamic Worker | one Code Mode execution, no ambient network | anything persistent |
-| Fabric (later, #3754) | semantic admission of governed effects | agent cognition |
+| Piece                       | Owns                                                                | Does not own                    |
+| --------------------------- | ------------------------------------------------------------------- | ------------------------------- |
+| Gateway Worker              | routing, auth, webhook verification, OAuth redirects                | state                           |
+| AgentDO                     | identity, serialization, local durable state, supervision           | a permanently running process   |
+| Pi Durable                  | cognition: sessions, tasks, tool recovery, compaction               | transport, Electric, Cloudflare |
+| DO SQLite                   | Pi's state and Flue's cursors; the agent's record                   | the public coordination history |
+| Electric                    | entity events: inbox messages, published events, world observations | Pi's internal commits           |
+| QuickJS VM (in the AgentDO) | one Code Mode execution, no ambient network                         | anything persistent             |
+| Fabric (later, #3754)       | semantic admission of governed effects                              | agent cognition                 |
 
 An entity's identity is its Durable Object id, its Electric stream addresses and
 its Pi state. Objects in memory are a projection rebuilt on every wake; eviction
@@ -63,12 +63,23 @@ is uninteresting by design.
    `server/discover`). Servers on earlier revisions and stdio servers are not
    supported, on any target. OAuth tokens live in a Durable Object keyed by
    principal and authorization server; redirects land on the Gateway.
-7. **Code Mode runs in Dynamic Workers.** `@cloudflare/codemode` in the
-   AgentDO, registered with Pi Durable as one tool, with its own runtime as a
-   Cloudflare Durable Object Facet of the AgentDO (search, describe, snippets,
-   steps, approvals). Generated code reaches the world only through the tools
-   and connectors the AgentDO hands it.
-9. **Questions to people are entity events.** MCP `input_required` results
+7. **Code Mode runs in the AgentDO.** Pi's Code Mode
+   (`@earendil-works/pi-codemode`), registered with Pi Durable as one tool,
+   runs each script in a fresh QuickJS VM inside the AgentDO's own isolate,
+   with the QuickJS module imported at build time (workerd compiles no wasm at
+   run time). Scripts see Pi's surface exactly — `tools.*` (the agent's tools,
+   MCP tools as `mcp__<server>__<tool>`), `models.*` (catalog and
+   classifiers), `text`/`image`/`exit`, `store`/`load` — and reach the world
+   only through it. The VM is bounded by a heap limit and an interrupt-poll
+   CPU budget inside the object's 30 s CPU limit. Nothing is persisted per
+   script: `store()` writes go to a conversation document, and only a script
+   that asks a question (rule 9) journals its nested calls' results, so a
+   rerun after an eviction answers them from the journal and runs the parked
+   call once. The cost model is the reason: a Dynamic Worker is billed per
+   unique (id, code) pair a day and model-written code is unique every time,
+   while QuickJS's CPU runs while the object is already awake on the model
+   and its tools.
+8. **Questions to people are entity events.** MCP `input_required` results
    (elicitation) and Code Mode approvals publish an `input-requested` event on
    Electric and park the call durably; the answer arrives in the agent's inbox,
    rings the doorbell, and the call is retried with the answers and the
@@ -79,13 +90,12 @@ is uninteresting by design.
    (`packages/runtime/src/pi/questions.ts`). The `input-requested` event goes
    to `flue/v1/{type}/{id}/questions` (and to a configured responder's
    inbox); the answer is an `input-answered` inbox event.
-8. **No always-on connections from an AgentDO.** Nothing that defeats
+9. **No always-on connections from an AgentDO.** Nothing that defeats
    hibernation: no outbound WebSockets, no long-lived MCP listen streams.
    Freshness comes from wakes and cacheable list results.
 
 ## Not part of the design
 
 Containers, Queues, Workflows, PGlite, Node runtimes on Cloudflare, Electric as a
-replica of Pi's log, stdio MCP, and pre-2026-07-28 MCP servers. (Cloudflare's
-"Durable Object Facets" are used only as Code Mode's runtime; the name is
-unrelated to Chord facets.)
+replica of Pi's log, stdio MCP, pre-2026-07-28 MCP servers, and Dynamic Workers
+or Durable Object Facets for Code Mode (rule 7).

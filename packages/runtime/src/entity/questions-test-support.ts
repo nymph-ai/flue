@@ -4,9 +4,9 @@
  * log: `questions.test.ts` runs them over the in-memory log, and
  * `questions.electric.test.ts` against a real Durable Streams server.
  *
- * Code Mode runs on the fake host (`codemode/fake-host-test-support.ts`):
- * its executions outlive an instance's eviction the way the facet's SQLite
- * does. MCP runs against an in-process stateless 2026-07-28 server that
+ * Code Mode runs Pi's QuickJS sandbox in-process, as on workerd: a script
+ * waiting on an approval is lost with its instance and rerun over its
+ * journal (`codemode/journal.ts`) on the next one. MCP runs against an in-process stateless 2026-07-28 server that
  * answers `tools/call` with an elicitation `input_required`.
  *
  * Wakes are driven by hand: the alarm is `instance.wake({ kind: 'pump' })`
@@ -21,8 +21,7 @@ import {
 	fauxToolCall,
 	type Message,
 } from '@earendil-works/pi-ai';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { installFakeCodemodeHost } from '../codemode/fake-host-test-support.ts';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { useCodeMode } from '../hooks/use-code-mode.ts';
 import { defineMcpConnection, useMcpConnection } from '../hooks/use-mcp-connection.ts';
 import { useModel } from '../hooks/use-model.ts';
@@ -39,12 +38,19 @@ import { InMemoryAttachmentStore } from '../runtime/attachment-store.ts';
 import { resetModelsForTests, setProvider } from '../runtime/providers.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import type { Agent } from '../types.ts';
-import { context, eventually, readAll, removeTempFiles, tempFile, textOf } from './a2a-test-support.ts';
+import {
+	context,
+	eventually,
+	readAll,
+	removeTempFiles,
+	tempFile,
+	textOf,
+} from './a2a-test-support.ts';
 import { inboxPath, questionsPath } from './paths.ts';
 import { appendAnswer, type InputRequestedEvent } from './questions.ts';
 import type { EntityRef } from './services.ts';
 
-const SEND_EMAIL_CODE = "async () => { await tools.send_email({ to: 'ops' }); return 'sent'; }";
+const SEND_EMAIL_CODE = "await tools.send_email({ to: 'ops' }); return 'sent';";
 
 type Respond = (messages: readonly Message[]) => AssistantMessage;
 
@@ -177,10 +183,6 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 	let counter = 0;
 	const responders: { current: Respond } = { current: () => fauxAssistantMessage('ok') };
 
-	beforeAll(() => {
-		installFakeCodemodeHost();
-	});
-
 	afterEach(async () => {
 		for (const instance of instances) await instance.close().catch(() => {});
 		instances.length = 0;
@@ -247,10 +249,13 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 				});
 			},
 			async parked(instance) {
-				const [pending] = await eventually(async () => {
-					const questions = await instance.pendingQuestions();
-					return questions.length > 0 ? questions : undefined;
-				}, { what: 'a parked question' });
+				const [pending] = await eventually(
+					async () => {
+						const questions = await instance.pendingQuestions();
+						return questions.length > 0 ? questions : undefined;
+					},
+					{ what: 'a parked question' },
+				);
 				return (pending as { id: string }).id;
 			},
 		};
@@ -269,7 +274,7 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 					return 'queued';
 				},
 			});
-			useCodeMode({ requiresApproval: ['tools.send_email'] });
+			useCodeMode({ requiresApproval: ['send_email'] });
 			if (questions) useQuestions(questions);
 			return 'You send email when asked.';
 		}) as unknown as Agent;
@@ -278,7 +283,8 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 	const mailerResponds: Respond = (messages) => {
 		const last = messages.findLast((message) => message.role !== 'system');
 		if (last?.role === 'toolResult') return fauxAssistantMessage('done');
-		if (userText(messages).includes('email')) return toolCallMessage('codemode', { code: SEND_EMAIL_CODE });
+		if (userText(messages).includes('email'))
+			return toolCallMessage('codemode', { code: SEND_EMAIL_CODE });
 		return fauxAssistantMessage('ok');
 	};
 
@@ -300,7 +306,7 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			const first = await state.open(agent, ref, file);
 			await state.ask(first, 'please email ops');
 			const questionId = await state.parked(first);
-			expect(questionId).toMatch(/^codemode:flue:exec_\d+:0$/);
+			expect(questionId).toMatch(/^codemode:\d+:.+:[0-9a-f]{12}$/);
 			await first.waitForIdle();
 			expect(state.effects.emails).toBe(0);
 			// The model ran once: the turn waits inside the tool call, not on a new request.
@@ -316,7 +322,10 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 				eventId: `input-requested:${ref.type}/alice/${questionId}`,
 				from: ref,
 				questionId,
-				question: { kind: 'codemode-approval', pending: [{ connector: 'tools', method: 'send_email' }] },
+				question: {
+					kind: 'codemode-approval',
+					pending: [{ connector: 'tools', method: 'send_email' }],
+				},
 				answerTo: { entity: ref, inbox: inboxPath(ref) },
 			});
 
@@ -337,7 +346,9 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			await first.close();
 			let second = await state.open(agent, ref, file);
 			for (let eviction = 0; eviction < 11; eviction++) {
-				expect((await second.pendingQuestions()).map((question) => question.id)).toEqual([questionId]);
+				expect((await second.pendingQuestions()).map((question) => question.id)).toEqual([
+					questionId,
+				]);
 				await second.close();
 				second = await state.open(agent, ref, file);
 			}
@@ -415,9 +426,17 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			// Answering a settled question is refused before anything is appended.
 			const inbox = await readAll(state.log, inboxPath(ref));
 			expect(
-				await instance.answerQuestion(questionId, { kind: 'codemode-approval', decision: 'approve' }),
+				await instance.answerQuestion(questionId, {
+					kind: 'codemode-approval',
+					decision: 'approve',
+				}),
 			).toEqual({ status: 'settled', questionStatus: 'answered' });
-			expect(await instance.answerQuestion('codemode:flue:none:0', { kind: 'codemode-approval', decision: 'approve' })).toEqual({ status: 'unknown' });
+			expect(
+				await instance.answerQuestion('codemode:flue:none:0', {
+					kind: 'codemode-approval',
+					decision: 'approve',
+				}),
+			).toEqual({ status: 'unknown' });
 			expect(await readAll(state.log, inboxPath(ref))).toHaveLength(inbox.length);
 		}, 60_000);
 
@@ -436,7 +455,9 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			const [pending] = await instance.pendingQuestions();
 			expect(pending?.timeoutAt).toBe(askedAt + 60_000);
 			await eventually(() =>
-				state.wakes.some((wake) => wake.reason.kind === 'questions' && wake.atMs === askedAt + 60_000),
+				state.wakes.some(
+					(wake) => wake.reason.kind === 'questions' && wake.atMs === askedAt + 60_000,
+				),
 			);
 			// Early: nothing expires.
 			state.clock.now = askedAt + 30_000;
@@ -452,7 +473,10 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			expect(state.toolResults[0]).toContain('expired');
 			// A late answer is ignored.
 			expect(
-				await instance.answerQuestion(questionId, { kind: 'codemode-approval', decision: 'approve' }),
+				await instance.answerQuestion(questionId, {
+					kind: 'codemode-approval',
+					decision: 'approve',
+				}),
 			).toEqual({ status: 'settled', questionStatus: 'expired' });
 		}, 60_000);
 
@@ -514,7 +538,75 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			]);
 		}, 60_000);
 
-		it('A2A: the question is on the stream and in the responder agent\'s inbox; that agent answers it', async () => {
+		it('MCP input_required inside a Code Mode script: parks, survives eviction, retries once; earlier calls are not repeated', async () => {
+			const state = await harness();
+			const ref: EntityRef = { type: `scripter${++counter}`, id: 'alice' };
+			const server = elicitingServer();
+			const ops: McpConnectionDefinition = defineMcpConnection({
+				name: 'ops',
+				url: 'https://ops.test/mcp',
+				fetch: server.fetch,
+			});
+			const agent = (() => {
+				useModel('qa/m');
+				useTool({
+					name: 'note',
+					description: 'Take a note.',
+					run: () => {
+						state.effects.emails++;
+						return 'noted';
+					},
+				});
+				useMcpConnection(ops);
+				useCodeMode();
+				return 'You deploy from scripts.';
+			}) as unknown as Agent;
+			state.respond = (messages) => {
+				const last = messages.findLast((message) => message.role !== 'system');
+				if (last?.role === 'toolResult') return fauxAssistantMessage('done');
+				if (userText(messages).includes('deploy'))
+					return toolCallMessage('codemode', {
+						code: "const noted = await tools.note({}); const r = await tools.mcp__ops__deploy({ service: 'api' }); return [noted, r.content[0].text];",
+					});
+				return fauxAssistantMessage('ok');
+			};
+			const file = await tempFile(`${ref.type}.sqlite`);
+			const first = await state.open(agent, ref, file);
+			await state.ask(first, 'deploy the api');
+			const questionId = await state.parked(first);
+			expect(questionId).toMatch(/^mcp:ops:[0-9a-f]{16}$/);
+			expect(server.calls).toHaveLength(1);
+			expect(state.effects.emails).toBe(1);
+
+			// Evicted while it waits: the script is gone from memory.
+			await first.close();
+			const second = await state.open(agent, ref, file, createMcpConnectionCache());
+			const answer: FlueAnswer = {
+				kind: 'mcp-input',
+				inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+			};
+			expect((await second.answerQuestion(questionId, answer)).status).toBe('accepted');
+			await second.wake({ kind: 'pump' });
+			await second.waitForIdle();
+			// The rerun answered note() from the journal, and retried the parked
+			// request once, with the answers and the byte-exact requestState.
+			expect(state.effects.emails).toBe(1);
+			expect(server.calls).toHaveLength(2);
+			expect(server.calls[1]).toMatchObject({
+				name: 'deploy',
+				arguments: { service: 'api' },
+				requestState: 'opaque-state-1',
+				inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+			});
+			expect(state.toolResults).toHaveLength(1);
+			expect(state.toolResults[0]).toContain('Script completed');
+			expect(state.toolResults[0]).toContain(
+				'"deployed api with {\\"confirm\\":{\\"action\\":\\"accept\\",\\"content\\":{\\"approved\\":true}}} and opaque-state-1"',
+			);
+			expect(await second.pendingQuestions()).toEqual([]);
+		}, 60_000);
+
+		it("A2A: the question is on the stream and in the responder agent's inbox; that agent answers it", async () => {
 			const state = await harness();
 			const type = `team${++counter}`;
 			const ALICE: EntityRef = { type, id: 'alice' };

@@ -6,11 +6,8 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import { createBuilder } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-	assertCodeModeWorkerConfig,
-	CODEMODE_LOADER_BINDING,
 	MCP_AUTH_BINDING,
 	MCP_AUTH_CLASS_NAME,
-	mergeCodeModeLoaderBinding,
 	scanCloudflareFeatures,
 } from './cloudflare-codemode.ts';
 import { flueWorkerConfig } from './cloudflare-worker-config.ts';
@@ -42,7 +39,7 @@ async function readTree(dir: string): Promise<Map<string, string>> {
 	return files;
 }
 
-describe('Code Mode detection and the Worker config', () => {
+describe('Code Mode detection', () => {
 	it('detects useCodeMode() and mcpOAuth() calls under the source root', async () => {
 		const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'flue-codemode-scan-'));
 		temporary.push(root);
@@ -55,43 +52,12 @@ describe('Code Mode detection and the Worker config', () => {
 		await writeFiles(root, {
 			'hooks/tools.ts': 'export const useTools = () => useCodeMode ( { maxOutputTokens: 1 } );\n',
 		});
-		expect(await scanCloudflareFeatures(root)).toEqual({
-			codeMode: true,
-			mcpOAuth: false,
-			codeModeFile: path.join(root, 'hooks/tools.ts'),
-		});
+		expect(await scanCloudflareFeatures(root)).toEqual({ codeMode: true, mcpOAuth: false });
 		await writeFiles(root, {
 			'mcp.ts':
 				"export const auth = mcpOAuth({ principal: 'p', redirectUrl: 'https://a.test/cb' });\n",
 		});
 		expect(await scanCloudflareFeatures(root)).toMatchObject({ codeMode: true, mcpOAuth: true });
-	});
-
-	it('adds the LOADER binding once, keeping user worker loaders', () => {
-		const config: Record<string, unknown> = { worker_loaders: [{ binding: 'OTHER' }] };
-		mergeCodeModeLoaderBinding(config);
-		mergeCodeModeLoaderBinding(config);
-		expect(config.worker_loaders).toEqual([
-			{ binding: 'OTHER' },
-			{ binding: CODEMODE_LOADER_BINDING },
-		]);
-	});
-
-	it("refuses configs the runtime facet cannot live in, saying what to change", () => {
-		expect(() =>
-			assertCodeModeWorkerConfig({ compatibility_flags: ['nodejs_compat'] }, ['FlueAgent']),
-		).not.toThrow();
-		expect(() =>
-			assertCodeModeWorkerConfig(
-				{ compatibility_flags: ['nodejs_compat', 'disable_ctx_exports'] },
-				['FlueAgent'],
-			),
-		).toThrow(/Remove it from "compatibility_flags"/);
-		expect(() =>
-			assertCodeModeWorkerConfig({ migrations: [{ tag: 'v1', new_classes: ['FlueAgent'] }] }, [
-				'FlueAgent',
-			]),
-		).toThrow(/"FlueAgent" under "new_classes".*"new_sqlite_classes"/s);
 	});
 });
 
@@ -148,12 +114,12 @@ async function buildNodeFixture(agentSource: string): Promise<void> {
 	const root = await fs.promises.mkdtemp(path.join(packageRoot, '.fixture-node-'));
 	temporary.push(root);
 	await writeFiles(root, {
-		'package.json': JSON.stringify({ name: 'flue-codemode-node-fixture', private: true, type: 'module' }),
-		'src/app.ts': [
-			"import { Hono } from 'hono';",
-			'export default new Hono();',
-			'',
-		].join('\n'),
+		'package.json': JSON.stringify({
+			name: 'flue-codemode-node-fixture',
+			private: true,
+			type: 'module',
+		}),
+		'src/app.ts': ["import { Hono } from 'hono';", 'export default new Hono();', ''].join('\n'),
 		'src/agents/researcher.ts': agentSource,
 	});
 	const builder = await createBuilder({
@@ -195,7 +161,7 @@ function deployConfigOf(output: Map<string, string>): Record<string, unknown> {
 }
 
 describe('Cloudflare Worker bundle', () => {
-	it("exports Code Mode's runtime facet class, binds LOADER, and leaves stdio out of the Worker", async () => {
+	it('bundles QuickJS as a compiled module for Code Mode, and leaves stdio out of the Worker', async () => {
 		const output = await buildCloudflareFixture(
 			[
 				"'use agent';",
@@ -204,7 +170,7 @@ describe('Cloudflare Worker bundle', () => {
 				'export function Researcher() {',
 				"\tuseModel('anthropic/claude-sonnet-4-6');",
 				"\tuseMcpConnection({ name: 'docs', url: 'https://mcp.example.com/mcp' });",
-				"\tuseCodeMode({ requiresApproval: ['docs.*'] });",
+				"\tuseCodeMode({ requiresApproval: ['mcp__docs__*'] });",
 				"\treturn 'Answer from the docs.';",
 				'}',
 				'',
@@ -213,15 +179,18 @@ describe('Cloudflare Worker bundle', () => {
 
 		// The MCP client is in the Worker, speaking 2026-07-28 only...
 		expect(findings(output, /server\/discover/).length).toBeGreaterThan(0);
-		// ...and so is @cloudflare/codemode: its Dynamic Worker executor and
-		// its runtime facet, whose SQLite tables live in the facet.
-		expect(findings(output, /DynamicWorkerExecutor|globalOutbound/).length).toBeGreaterThan(0);
-		expect(findings(output, /cm_executions/).length).toBeGreaterThan(0);
-		// The Worker entry exports the facet class, so ctx.exports carries it.
-		const entry = [...output].find(
-			([file, code]) => /\.m?js$/.test(file) && /export\s*\{[^}]*\bCodemodeRuntime\b[^}]*\}/.test(code),
-		);
-		expect(entry).toBeDefined();
+		// ...and so is Pi's Code Mode: its prelude, run by QuickJS from a wasm
+		// module the build emits next to the Worker.
+		expect(findings(output, /codemode-prelude\.js/).length).toBeGreaterThan(0);
+		expect([...output.keys()].filter((file) => file.endsWith('.wasm'))).toHaveLength(1);
+		// No Dynamic Workers: no executor, no runtime facet, no Worker Loader.
+		expect(findings(output, /DynamicWorkerExecutor|cm_executions/)).toEqual([]);
+		expect(
+			[...output].some(
+				([file, code]) =>
+					/\.m?js$/.test(file) && /export\s*\{[^}]*\bCodemodeRuntime\b[^}]*\}/.test(code),
+			),
+		).toBe(false);
 		// No stdio transport and no process spawner, anywhere.
 		expect(findings(output, /cross-spawn/)).toEqual([]);
 		expect(findings(output, /client\/dist\/stdio\.mjs/)).toEqual([]);
@@ -237,12 +206,11 @@ describe('Cloudflare Worker bundle', () => {
 		).toEqual([]);
 
 		const config = deployConfigOf(output);
-		expect(config.worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
+		expect(config.worker_loaders ?? []).toEqual([]);
 		const bindings =
 			(config.durable_objects as { bindings?: { name: string; class_name: string }[] } | undefined)
 				?.bindings ?? [];
-		// The facet class takes no binding; no mcpOAuth() call, no OAuth binding.
-		expect(bindings.map((binding) => binding.class_name)).not.toContain('CodemodeRuntime');
+		// No mcpOAuth() call, no OAuth binding.
 		expect(bindings.map((binding) => binding.name)).not.toContain(MCP_AUTH_BINDING);
 	}, 180_000);
 
@@ -258,16 +226,11 @@ describe('Cloudflare Worker bundle', () => {
 				'',
 			].join('\n'),
 		);
-		expect(
-			[...output].some(
-				([file, code]) =>
-					/\.m?js$/.test(file) && /export\s*\{[^}]*\bCodemodeRuntime\b[^}]*\}/.test(code),
-			),
-		).toBe(false);
-		expect(deployConfigOf(output).worker_loaders ?? []).toEqual([]);
+		// The sandbox's JavaScript is part of the runtime; the 640 KB QuickJS module is not.
+		expect([...output.keys()].filter((file) => file.endsWith('.wasm'))).toEqual([]);
 	}, 180_000);
 
-	it('fails a Node build of an app that calls useCodeMode()', async () => {
+	it('builds a Node app that calls useCodeMode()', async () => {
 		await expect(
 			buildNodeFixture(
 				[
@@ -281,7 +244,7 @@ describe('Cloudflare Worker bundle', () => {
 					'',
 				].join('\n'),
 			),
-		).rejects.toThrow(/src\/agents\/researcher\.ts calls useCodeMode\(\), which runs only on the Cloudflare target/);
+		).resolves.toBeUndefined();
 	}, 180_000);
 
 	it('binds the FlueMcpAuth Durable Object when an agent uses MCP OAuth', async () => {

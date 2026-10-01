@@ -60,12 +60,7 @@ export type {
 } from './execution-interceptor.ts';
 export { useAgentFinish } from './hooks/use-agent-finish.ts';
 export { useAgentStart } from './hooks/use-agent-start.ts';
-export type {
-	CodemodeExecuteResult,
-	CodemodeExecutor,
-	CodemodeProvider,
-} from './codemode/executor.ts';
-export type { CodemodeMethod } from './codemode/host.ts';
+export type { CodemodeMethod } from './codemode/tool.ts';
 export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
 export {
 	type QuestionResponder,
