@@ -150,6 +150,13 @@ export class Incarnation {
 		this.#fault = fault;
 	}
 
+	/** Arm a fault on this (live) incarnation; appends count from now. */
+	arm(fault: Fault): void {
+		this.#fault = fault;
+		this.#seen = 0;
+		this.#acked = 0;
+	}
+
 	alive(): void {
 		if (this.dead) throw new CrashError('the process is dead');
 	}
@@ -299,7 +306,7 @@ export interface QualWorld {
 	readonly incarnations: Map<string, Incarnation>;
 	readonly signer: WebhookSigner;
 	readonly callbacks: { url: string; body: unknown }[];
-	/** Arm a fault for the entity's next incarnation. */
+	/** Arm a fault on the entity's open incarnation, else on its next one. */
 	arm(entity: TestEntity, fault: Fault): void;
 	incarnation(entity: TestEntity): Incarnation;
 	/** POST a signed wake body to the Worker's wake route. */
@@ -344,7 +351,9 @@ export async function qualWorld(backend: Backend): Promise<QualWorld> {
 		signer,
 		callbacks,
 		arm(entity, fault) {
-			armed.set(entityKey(entity.ref), fault);
+			const current = entity.isOpen ? incarnations.get(entityKey(entity.ref)) : undefined;
+			if (current) current.arm(fault);
+			else armed.set(entityKey(entity.ref), fault);
 		},
 		incarnation(entity) {
 			const incarnation = incarnations.get(entityKey(entity.ref));
