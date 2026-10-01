@@ -15,6 +15,7 @@ import {
 	configuredStreams,
 	configuredStreamsLog,
 	diffDigests,
+	inboxPath,
 	streamsSubscriptions,
 	type EntityAddress,
 } from '@flue/runtime/qualification';
@@ -27,6 +28,7 @@ type Result = Record<string, unknown>;
 
 /** The RPC hooks `agent-hooks.ts` adds to every agent's Durable Object. */
 interface AgentStub {
+	__flueWake(request: unknown): Promise<Result>;
 	__qualInspect(): Promise<Result>;
 	__qualSnapshot(): Promise<Result>;
 	__qualArmFault(plan: unknown): Promise<Result>;
@@ -218,6 +220,42 @@ export function installQualification(app: Hono): void {
 		const log = configuredStreamsLog(c.env as Vars);
 		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
 		return c.json({ path, head: await log.head(path) });
+	});
+
+	// Deliver an entity wake by hand: the same `__flueWake` RPC the wake route
+	// makes for a verified Electric webhook, for the given streams (default:
+	// the entity's inbox) at their current tails. Only the webhook hop is
+	// replaced; the instance reconstructs, admits and runs Pi exactly as it
+	// would for a real wake. Used only when the server cannot deliver webhooks.
+	app.post('/qual/wake/:agent/:id', async (c) => {
+		const source = c.env as Vars;
+		const agent = c.req.param('agent');
+		const id = c.req.param('id');
+		const log = configuredStreamsLog(source);
+		if (!log) return c.json({ error: 'streams required' }, 400);
+		const body = (await c.req.json().catch(() => ({}))) as { streams?: string[]; subscription?: string };
+		const paths = body.streams ?? [inboxPath({ type: agent, id })];
+		const streams = await Promise.all(
+			paths.map(async (path) => ({ path, tailOffset: (await log.head(path))?.nextOffset ?? '-1' })),
+		);
+		const stub = await agentStub(source, agent, id);
+		const request = { subscriptionId: body.subscription ?? 'qual-manual', generation: Date.now(), streams };
+		return c.json({ request, result: await stub.__flueWake(request) });
+	});
+
+	// Read-only: GET/HEAD a URL through the FLUE_STREAMS binding (what host a
+	// VPC service binding routes, whatever the URL names).
+	app.get('/qual/vpc-probe', async (c) => {
+		const streams = configuredStreams(c.env as Vars);
+		const url = c.req.query('url');
+		if (!streams?.fetch || !url) return c.json({ error: 'streams and url required' }, 400);
+		const response = await settled(() => (streams.fetch as NonNullable<typeof streams.fetch>)(url, { method: 'HEAD' }));
+		if ('error' in response) return c.json(response);
+		return c.json({
+			url,
+			status: response.status,
+			nextOffset: response.headers.get('stream-next-offset'),
+		});
 	});
 
 	// Ensure the shared inbox subscription now and report the outcome (the
