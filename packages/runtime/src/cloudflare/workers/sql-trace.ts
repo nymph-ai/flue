@@ -18,10 +18,12 @@ export interface StatementCost {
 }
 
 /** Whose statement: by the tables it names. */
-export type StatementOwner = 'agents-sdk' | 'flue' | 'pi';
+export type StatementOwner = 'agents-sdk' | 'codemode' | 'flue' | 'pi';
 
 export function statementOwner(sql: string): StatementOwner {
 	if (/\bcf_agents?_/.test(sql)) return 'agents-sdk';
+	// `@cloudflare/codemode`'s runtime facet (execution log, snippets).
+	if (/\bcm_/.test(sql)) return 'codemode';
 	if (/\bflue_/.test(sql)) return 'flue';
 	return 'pi';
 }
@@ -79,6 +81,7 @@ class SqlTrace {
 		let rowsWritten = 0;
 		const byOwner: Record<StatementOwner, { rowsRead: number; rowsWritten: number }> = {
 			'agents-sdk': { rowsRead: 0, rowsWritten: 0 },
+			codemode: { rowsRead: 0, rowsWritten: 0 },
 			flue: { rowsRead: 0, rowsWritten: 0 },
 			pi: { rowsRead: 0, rowsWritten: 0 },
 		};

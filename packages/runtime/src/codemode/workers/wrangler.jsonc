@@ -18,10 +18,19 @@
 			{ "name": "AGENT", "class_name": "CodemodeTestAgent" },
 			{ "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" },
 			{ "name": "SQLITE_PROBE", "class_name": "SqliteProbe" },
-			{ "name": "FIRST_WAKE", "class_name": "FirstWakeAgent" }
+			{ "name": "FIRST_WAKE", "class_name": "FirstWakeAgent" },
+			{ "name": "CODEMODE_TURN", "class_name": "CodemodeTurnAgent" }
 		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["CodemodeTestAgent", "SqliteProbe", "FirstWakeAgent"] }
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"CodemodeTestAgent",
+				"SqliteProbe",
+				"FirstWakeAgent",
+				"CodemodeTurnAgent"
+			]
+		}
 	]
 }
