@@ -40,6 +40,7 @@ import {
 import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
+import { entityStreamRoot } from '../pi/a2a-entries.ts';
 import { FlueInstance, FlueState } from '../pi/docs.ts';
 import { executionEnvFromSandbox } from '../pi/execution-env.ts';
 import type { FlueAttachmentPort } from '../pi/hooks.ts';
@@ -76,9 +77,14 @@ import { ATTACHMENT_CONVERSATION_SCOPE } from './handle-conversation-routes.ts';
 import { getRuntimeModels, resolveModel } from './providers.ts';
 import { agentStreamPath } from './stream-offsets.ts';
 
-/** The log path of an instance's canonical Pi log (`flue/v1/{agent}/{id}/pi`). */
+/**
+ * The log path of an instance's canonical Pi log: `flue/v1/{agent}/{id}/pi`,
+ * each segment encoded like every other entity stream (`entityStreamRoot`),
+ * so an id holding `/` (every spawned child, `{parent}/{key}`) stays one
+ * segment and the log is where readers, rebuilds and the relay look for it.
+ */
 function piLogPath(agentName: string, instanceId: string): string {
-	return `flue/v1/${agentName}/${instanceId}/pi`;
+	return `${entityStreamRoot({ type: agentName, id: instanceId })}/pi`;
 }
 
 export interface FlueAgentInstanceOptions {

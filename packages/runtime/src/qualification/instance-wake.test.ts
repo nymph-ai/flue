@@ -3,9 +3,11 @@
  * than a hand-assembled host: an entity that has never been opened is woken
  * by a message from another entity, renders its agent function, and answers.
  *
- * Regression: the entity runtime admitted inbox messages without rendering
+ * Regressions: the entity runtime admitted inbox messages without rendering
  * first, so an entity woken for the first time ran its turn with no model
- * ("No model is configured", found live on the society deployment).
+ * ("No model is configured", found live on the society deployment); and an instance whose id holds `/` (every
+ * spawned child) kept its Pi log at an unencoded path, not at
+ * `flue/v1/{agent}/{encoded id}/pi` where every reader looks.
  */
 import { fauxProvider, type Message } from '@earendil-works/pi-ai';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
@@ -64,13 +66,13 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 		worlds.push(world);
 		const alice = world.entity({ type: 'alice', id: 'a1' });
 		const runtime = await alice.open();
-		const sent = await runtime.messaging.send({ type: 'bob', id: 'b1' }, { text: 'ping' }, { messageId: 'm1' }, context);
+		const sent = await runtime.messaging.send({ type: 'bob', id: 'p/b1' }, { text: 'ping' }, { messageId: 'm1' }, context);
 		await alice.flush();
 
 		const file = await tempFile('bob.sqlite');
 		const bob = new FlueAgentInstance({
 			agentName: 'bob',
-			instanceId: 'b1',
+			instanceId: 'p/b1',
 			agent: Bob,
 			database: () => openNodeSqliteDatabase(file),
 			log,
@@ -82,20 +84,23 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 			entities: {},
 		});
 		instances.push(bob);
-		const inbox = inboxPath({ type: 'bob', id: 'b1' });
+		const inbox = inboxPath({ type: 'bob', id: 'p/b1' });
 		const wake = await bob.wakeEntity({
 			subscriptionId: 'flue-inbox',
 			generation: 1,
 			streams: [{ path: inbox, tailOffset: (await log.head(inbox))?.nextOffset ?? '-1' }],
 		});
-		const submissionId = await deriveKeyedSubmissionId('bob', 'b1', 'm1');
+		const submissionId = await deriveKeyedSubmissionId('bob', 'p/b1', 'm1');
 		expect(sent.submissionId).toBe(submissionId);
 		expect(wake.admitted).toEqual([submissionId]);
 		const settlement = await (await bob.host()).waitForSettlement(submissionId, context);
 		expect(settlement).toMatchObject({ outcome: 'completed' });
 		await bob.waitForIdle();
+		expect(bob.logPath).toBe('flue/v1/bob/p%2Fb1/pi');
+		expect(await log.head('flue/v1/bob/p%2Fb1/pi')).not.toBeNull();
+		expect(await log.head('flue/v1/bob/p/b1/pi')).toBeNull();
 		expect(await readAll(log, inboxPath({ type: 'alice', id: 'a1' }))).toEqual([
-			expect.objectContaining({ type: 'flue.a2a.message', from: { type: 'bob', id: 'b1' }, message: { text: 'pong' } }),
+			expect.objectContaining({ type: 'flue.a2a.message', from: { type: 'bob', id: 'p/b1' }, message: { text: 'pong' } }),
 		]);
 	});
 });
