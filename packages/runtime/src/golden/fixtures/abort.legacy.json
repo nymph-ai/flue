@@ -1,0 +1,257 @@
+{
+	"scenario": "abort",
+	"replies": [
+		{
+			"ok": false,
+			"name": "AgentRunError",
+			"outcome": "aborted"
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"offset": "0000000000000000_0000000000000012",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMDk1NVBQTVExWFlOTU5GVlc1",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+					"timestamp": "2026-10-01T00:06:04.559Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Block please.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+					"turnId": "turn_01M3TCGN0JVCXVKZ4ES9X3J42A",
+					"timestamp": "2026-10-01T00:06:04.563Z",
+					"parts": [
+						{
+							"type": "dynamic-tool",
+							"toolName": "block",
+							"toolCallId": "call_block",
+							"state": "output-error",
+							"input": {},
+							"errorText": "This operation was aborted",
+							"durationMs": 2
+						}
+					]
+				},
+				{
+					"id": "entry_submission_aborted_sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+					"role": "system",
+					"purpose": "advisory",
+					"display": "diagnostic",
+					"signal": {
+						"attributes": {
+							"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+							"kind": "dispatch",
+							"reason": "aborted"
+						}
+					},
+					"settlement": {
+						"outcome": "aborted"
+					},
+					"timestamp": "2026-10-01T00:06:04.574Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Submission was aborted.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+					"outcome": "aborted",
+					"error": {
+						"name": "FlueError",
+						"message": "Submission was aborted.",
+						"type": "submission_aborted",
+						"details": "The operation was stopped before it produced a completed response."
+					},
+					"answeredBySubmissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+					"timestamp": "2026-10-01T00:06:04.575Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGN0AFG6BRH4WJHNNXH41"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGN0AFG6BRH4WJHNNXH41"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMDk1NVBQTVExWFlOTU5GVlc1",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+				"timestamp": "2026-10-01T00:06:04.559Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Block please.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"messageId": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+			"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+			"turnId": "turn_01M3TCGN0JVCXVKZ4ES9X3J42A",
+			"timestamp": "2026-10-01T00:06:04.563Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"messageId": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+			"toolCallId": "call_block",
+			"toolName": "block",
+			"input": {},
+			"timestamp": "2026-10-01T00:06:04.564Z",
+			"position": {
+				"batch": 5,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"messageId": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+			"timestamp": "2026-10-01T00:06:04.564Z",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output-error",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"toolCallId": "call_block",
+			"errorText": "This operation was aborted",
+			"durationMs": 2,
+			"timestamp": "2026-10-01T00:06:04.566Z",
+			"position": {
+				"batch": 8,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"messageId": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+			"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+			"turnId": "turn_01M3TCGN0STJRDZSRMNDVE3YV3",
+			"timestamp": "2026-10-01T00:06:04.570Z",
+			"position": {
+				"batch": 9,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"messageId": "entry_01M3TCGN0KE8SJGPTKX9H5CZ57",
+			"timestamp": "2026-10-01T00:06:04.570Z",
+			"position": {
+				"batch": 10,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"message": {
+				"id": "entry_submission_aborted_sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+				"role": "system",
+				"purpose": "advisory",
+				"display": "diagnostic",
+				"signal": {
+					"attributes": {
+						"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+						"kind": "dispatch",
+						"reason": "aborted"
+					}
+				},
+				"settlement": {
+					"outcome": "aborted"
+				},
+				"timestamp": "2026-10-01T00:06:04.574Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Submission was aborted.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 11,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGN0BQ6PYG3TDVDCMGVYQ",
+			"submissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+			"outcome": "aborted",
+			"error": {
+				"name": "FlueError",
+				"message": "Submission was aborted.",
+				"type": "submission_aborted",
+				"details": "The operation was stopped before it produced a completed response."
+			},
+			"answeredBySubmissionId": "sub_01M3TCGN0955PPMQ1XYNMNFVW5",
+			"timestamp": "2026-10-01T00:06:04.575Z",
+			"position": {
+				"batch": 12,
+				"index": 0
+			}
+		}
+	]
+}

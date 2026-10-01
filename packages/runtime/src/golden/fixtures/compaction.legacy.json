@@ -1,0 +1,3288 @@
+{
+	"scenario": "compaction",
+	"replies": [
+		{
+			"ok": true,
+			"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+			"data": {},
+			"metadata": null
+		},
+		{
+			"ok": true,
+			"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+			"data": {},
+			"metadata": null
+		},
+		{
+			"ok": true,
+			"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"offset": "0000000000000000_0000000000000029",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNV1pCVzlKUDc4Vk5IRUNBRVZB",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+					"timestamp": "2026-10-01T00:06:04.450Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "First question?",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+					"turnId": "turn_01M3TCGMX4XPTTHKRJ3PVW99H2",
+					"timestamp": "2026-10-01T00:06:04.452Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWFlRQUdaRlBXNTFZNFZEUUZK",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+					"timestamp": "2026-10-01T00:06:04.485Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Second question?",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+					"turnId": "turn_01M3TCGMY71F67JAX25YKENJDY",
+					"timestamp": "2026-10-01T00:06:04.487Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWVFKWFJHSEE3RzlQRVNaRkZL",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+					"timestamp": "2026-10-01T00:06:04.515Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Third question?",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+					"turnId": "turn_01M3TCGMZ5ND0F904T787HKW77",
+					"timestamp": "2026-10-01T00:06:04.518Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+					"timestamp": "2026-10-01T00:06:04.477Z"
+				},
+				{
+					"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+					"timestamp": "2026-10-01T00:06:04.502Z"
+				},
+				{
+					"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+					"timestamp": "2026-10-01T00:06:04.537Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMWZRA65BR0QYA303B0S"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMWZRA65BR0QYA303B0S"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNV1pCVzlKUDc4Vk5IRUNBRVZB",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+				"timestamp": "2026-10-01T00:06:04.450Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "First question?",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+			"turnId": "turn_01M3TCGMX4XPTTHKRJ3PVW99H2",
+			"timestamp": "2026-10-01T00:06:04.452Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "This is a delibe",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "rately long answ",
+			"position": {
+				"batch": 7,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "er that fills the co",
+			"position": {
+				"batch": 7,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ntext window. This i",
+			"position": {
+				"batch": 7,
+				"index": 2
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "s a delibera",
+			"position": {
+				"batch": 7,
+				"index": 3
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "tely long an",
+			"position": {
+				"batch": 7,
+				"index": 4
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "swer that fi",
+			"position": {
+				"batch": 7,
+				"index": 5
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "lls the context ",
+			"position": {
+				"batch": 7,
+				"index": 6
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "window. This is ",
+			"position": {
+				"batch": 7,
+				"index": 7
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "a deliberately long ",
+			"position": {
+				"batch": 7,
+				"index": 8
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "answer that fills th",
+			"position": {
+				"batch": 7,
+				"index": 9
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "e context window",
+			"position": {
+				"batch": 7,
+				"index": 10
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": ". This is a delibera",
+			"position": {
+				"batch": 7,
+				"index": 11
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "tely long answer",
+			"position": {
+				"batch": 7,
+				"index": 12
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " that fills the cont",
+			"position": {
+				"batch": 7,
+				"index": 13
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ext window. This is ",
+			"position": {
+				"batch": 7,
+				"index": 14
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "a deliberately long ",
+			"position": {
+				"batch": 7,
+				"index": 15
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "answer that ",
+			"position": {
+				"batch": 7,
+				"index": 16
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "fills the co",
+			"position": {
+				"batch": 7,
+				"index": 17
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ntext window. This i",
+			"position": {
+				"batch": 7,
+				"index": 18
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "s a delibera",
+			"position": {
+				"batch": 7,
+				"index": 19
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "tely long an",
+			"position": {
+				"batch": 7,
+				"index": 20
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "swer that fi",
+			"position": {
+				"batch": 7,
+				"index": 21
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "lls the context wind",
+			"position": {
+				"batch": 7,
+				"index": 22
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ow. This is a delibe",
+			"position": {
+				"batch": 7,
+				"index": 23
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "rately long ",
+			"position": {
+				"batch": 7,
+				"index": 24
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "answer that ",
+			"position": {
+				"batch": 7,
+				"index": 25
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "fills the contex",
+			"position": {
+				"batch": 7,
+				"index": 26
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t window. This is a ",
+			"position": {
+				"batch": 7,
+				"index": 27
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "deliberately long an",
+			"position": {
+				"batch": 7,
+				"index": 28
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "swer that fi",
+			"position": {
+				"batch": 7,
+				"index": 29
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "lls the context ",
+			"position": {
+				"batch": 7,
+				"index": 30
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "window. This",
+			"position": {
+				"batch": 7,
+				"index": 31
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " is a deliberate",
+			"position": {
+				"batch": 7,
+				"index": 32
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ly long answer t",
+			"position": {
+				"batch": 7,
+				"index": 33
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "hat fills th",
+			"position": {
+				"batch": 7,
+				"index": 34
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "e context wi",
+			"position": {
+				"batch": 7,
+				"index": 35
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ndow. This i",
+			"position": {
+				"batch": 7,
+				"index": 36
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "s a deliberately",
+			"position": {
+				"batch": 7,
+				"index": 37
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " long answer tha",
+			"position": {
+				"batch": 7,
+				"index": 38
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t fills the cont",
+			"position": {
+				"batch": 7,
+				"index": 39
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ext window. This",
+			"position": {
+				"batch": 7,
+				"index": 40
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " is a deliberate",
+			"position": {
+				"batch": 7,
+				"index": 41
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 7,
+				"index": 42
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "fills the co",
+			"position": {
+				"batch": 7,
+				"index": 43
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ntext window. This i",
+			"position": {
+				"batch": 7,
+				"index": 44
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "s a deliberately",
+			"position": {
+				"batch": 7,
+				"index": 45
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " long answer tha",
+			"position": {
+				"batch": 7,
+				"index": 46
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t fills the ",
+			"position": {
+				"batch": 7,
+				"index": 47
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "context window. This",
+			"position": {
+				"batch": 7,
+				"index": 48
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " is a deliberately l",
+			"position": {
+				"batch": 7,
+				"index": 49
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 7,
+				"index": 50
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "s the context window",
+			"position": {
+				"batch": 7,
+				"index": 51
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": ". This is a ",
+			"position": {
+				"batch": 7,
+				"index": 52
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "deliberately long an",
+			"position": {
+				"batch": 7,
+				"index": 53
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "swer that fi",
+			"position": {
+				"batch": 7,
+				"index": 54
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "lls the cont",
+			"position": {
+				"batch": 7,
+				"index": 55
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ext window. ",
+			"position": {
+				"batch": 7,
+				"index": 56
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "This is a deliberate",
+			"position": {
+				"batch": 7,
+				"index": 57
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 7,
+				"index": 58
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "fills the contex",
+			"position": {
+				"batch": 7,
+				"index": 59
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t window. Th",
+			"position": {
+				"batch": 7,
+				"index": 60
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "is is a deliberately",
+			"position": {
+				"batch": 7,
+				"index": 61
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " long answer tha",
+			"position": {
+				"batch": 7,
+				"index": 62
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t fills the cont",
+			"position": {
+				"batch": 7,
+				"index": 63
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ext window. This is ",
+			"position": {
+				"batch": 7,
+				"index": 64
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "a deliberately long ",
+			"position": {
+				"batch": 7,
+				"index": 65
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "answer that ",
+			"position": {
+				"batch": 7,
+				"index": 66
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "fills the contex",
+			"position": {
+				"batch": 7,
+				"index": 67
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "t window. This is a ",
+			"position": {
+				"batch": 7,
+				"index": 68
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "deliberately",
+			"position": {
+				"batch": 7,
+				"index": 69
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": " long answer that fi",
+			"position": {
+				"batch": 7,
+				"index": 70
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "lls the context wind",
+			"position": {
+				"batch": 7,
+				"index": 71
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ow. This is ",
+			"position": {
+				"batch": 7,
+				"index": 72
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "a deliberately l",
+			"position": {
+				"batch": 7,
+				"index": 73
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "ong answer t",
+			"position": {
+				"batch": 7,
+				"index": 74
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "hat fills th",
+			"position": {
+				"batch": 7,
+				"index": 75
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "e context window",
+			"position": {
+				"batch": 7,
+				"index": 76
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": ". This is a deli",
+			"position": {
+				"batch": 7,
+				"index": 77
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "berately long an",
+			"position": {
+				"batch": 7,
+				"index": 78
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "swer that fills ",
+			"position": {
+				"batch": 7,
+				"index": 79
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"kind": "text",
+			"delta": "the context window. ",
+			"position": {
+				"batch": 7,
+				"index": 80
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+			"timestamp": "2026-10-01T00:06:04.472Z",
+			"position": {
+				"batch": 9,
+				"index": 0
+			}
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+				"offset": "0000000000000000_0000000000000010",
+				"messages": [
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNV1pCVzlKUDc4Vk5IRUNBRVZB",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"timestamp": "2026-10-01T00:06:04.450Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "First question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"turnId": "turn_01M3TCGMX4XPTTHKRJ3PVW99H2",
+						"timestamp": "2026-10-01T00:06:04.452Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					}
+				],
+				"settlements": []
+			},
+			"position": {
+				"batch": 10,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+			"timestamp": "2026-10-01T00:06:04.477Z",
+			"position": {
+				"batch": 11,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWFlRQUdaRlBXNTFZNFZEUUZK",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+				"timestamp": "2026-10-01T00:06:04.485Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Second question?",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 12,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+			"turnId": "turn_01M3TCGMY71F67JAX25YKENJDY",
+			"timestamp": "2026-10-01T00:06:04.487Z",
+			"position": {
+				"batch": 14,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "This is a de",
+			"position": {
+				"batch": 16,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "liberately long ",
+			"position": {
+				"batch": 16,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "answer that fills th",
+			"position": {
+				"batch": 16,
+				"index": 2
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "e context window",
+			"position": {
+				"batch": 16,
+				"index": 3
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": ". This is a ",
+			"position": {
+				"batch": 16,
+				"index": 4
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "deliberately long an",
+			"position": {
+				"batch": 16,
+				"index": 5
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "swer that fills the ",
+			"position": {
+				"batch": 16,
+				"index": 6
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "context window. This",
+			"position": {
+				"batch": 16,
+				"index": 7
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " is a deliberate",
+			"position": {
+				"batch": 16,
+				"index": 8
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ly long answ",
+			"position": {
+				"batch": 16,
+				"index": 9
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "er that fills the co",
+			"position": {
+				"batch": 16,
+				"index": 10
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ntext window. Th",
+			"position": {
+				"batch": 16,
+				"index": 11
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "is is a deli",
+			"position": {
+				"batch": 16,
+				"index": 12
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "berately lon",
+			"position": {
+				"batch": 16,
+				"index": 13
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "g answer that fi",
+			"position": {
+				"batch": 16,
+				"index": 14
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "lls the context ",
+			"position": {
+				"batch": 16,
+				"index": 15
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "window. This is a de",
+			"position": {
+				"batch": 16,
+				"index": 16
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "liberately l",
+			"position": {
+				"batch": 16,
+				"index": 17
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 16,
+				"index": 18
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "s the contex",
+			"position": {
+				"batch": 16,
+				"index": 19
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t window. This is a ",
+			"position": {
+				"batch": 16,
+				"index": 20
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "deliberately lon",
+			"position": {
+				"batch": 16,
+				"index": 21
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "g answer tha",
+			"position": {
+				"batch": 16,
+				"index": 22
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the cont",
+			"position": {
+				"batch": 16,
+				"index": 23
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ext window. This",
+			"position": {
+				"batch": 16,
+				"index": 24
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " is a delibe",
+			"position": {
+				"batch": 16,
+				"index": 25
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "rately long ",
+			"position": {
+				"batch": 16,
+				"index": 26
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "answer that fills th",
+			"position": {
+				"batch": 16,
+				"index": 27
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "e context window. Th",
+			"position": {
+				"batch": 16,
+				"index": 28
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "is is a deliberately",
+			"position": {
+				"batch": 16,
+				"index": 29
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " long answer tha",
+			"position": {
+				"batch": 16,
+				"index": 30
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the context ",
+			"position": {
+				"batch": 16,
+				"index": 31
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "window. This",
+			"position": {
+				"batch": 16,
+				"index": 32
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " is a delibe",
+			"position": {
+				"batch": 16,
+				"index": 33
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "rately long answ",
+			"position": {
+				"batch": 16,
+				"index": 34
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "er that fills the co",
+			"position": {
+				"batch": 16,
+				"index": 35
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ntext window",
+			"position": {
+				"batch": 16,
+				"index": 36
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": ". This is a delibera",
+			"position": {
+				"batch": 16,
+				"index": 37
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "tely long answer tha",
+			"position": {
+				"batch": 16,
+				"index": 38
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the ",
+			"position": {
+				"batch": 16,
+				"index": 39
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "context window. ",
+			"position": {
+				"batch": 16,
+				"index": 40
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "This is a delibe",
+			"position": {
+				"batch": 16,
+				"index": 41
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "rately long answ",
+			"position": {
+				"batch": 16,
+				"index": 42
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "er that fills the co",
+			"position": {
+				"batch": 16,
+				"index": 43
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ntext window. Th",
+			"position": {
+				"batch": 16,
+				"index": 44
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "is is a delibera",
+			"position": {
+				"batch": 16,
+				"index": 45
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "tely long answer",
+			"position": {
+				"batch": 16,
+				"index": 46
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " that fills the ",
+			"position": {
+				"batch": 16,
+				"index": 47
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "context window. ",
+			"position": {
+				"batch": 16,
+				"index": 48
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "This is a delibe",
+			"position": {
+				"batch": 16,
+				"index": 49
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "rately long answer t",
+			"position": {
+				"batch": 16,
+				"index": 50
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "hat fills the contex",
+			"position": {
+				"batch": 16,
+				"index": 51
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t window. This i",
+			"position": {
+				"batch": 16,
+				"index": 52
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "s a delibera",
+			"position": {
+				"batch": 16,
+				"index": 53
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "tely long answer tha",
+			"position": {
+				"batch": 16,
+				"index": 54
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the context ",
+			"position": {
+				"batch": 16,
+				"index": 55
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "window. This is a de",
+			"position": {
+				"batch": 16,
+				"index": 56
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "liberately l",
+			"position": {
+				"batch": 16,
+				"index": 57
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 16,
+				"index": 58
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "s the context wi",
+			"position": {
+				"batch": 16,
+				"index": 59
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ndow. This is a ",
+			"position": {
+				"batch": 16,
+				"index": 60
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "deliberately lon",
+			"position": {
+				"batch": 16,
+				"index": 61
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "g answer that fills ",
+			"position": {
+				"batch": 16,
+				"index": 62
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "the context window. ",
+			"position": {
+				"batch": 16,
+				"index": 63
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "This is a de",
+			"position": {
+				"batch": 16,
+				"index": 64
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "liberately long answ",
+			"position": {
+				"batch": 16,
+				"index": 65
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "er that fill",
+			"position": {
+				"batch": 16,
+				"index": 66
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "s the context wi",
+			"position": {
+				"batch": 16,
+				"index": 67
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ndow. This is a ",
+			"position": {
+				"batch": 16,
+				"index": 68
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "deliberately lon",
+			"position": {
+				"batch": 16,
+				"index": 69
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "g answer tha",
+			"position": {
+				"batch": 16,
+				"index": 70
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the cont",
+			"position": {
+				"batch": 16,
+				"index": 71
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ext window. ",
+			"position": {
+				"batch": 16,
+				"index": 72
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "This is a deliberate",
+			"position": {
+				"batch": 16,
+				"index": 73
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 16,
+				"index": 74
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "fills the contex",
+			"position": {
+				"batch": 16,
+				"index": 75
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t window. This i",
+			"position": {
+				"batch": 16,
+				"index": 76
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "s a deliberately",
+			"position": {
+				"batch": 16,
+				"index": 77
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": " long answer tha",
+			"position": {
+				"batch": 16,
+				"index": 78
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "t fills the ",
+			"position": {
+				"batch": 16,
+				"index": 79
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"kind": "text",
+			"delta": "context window. ",
+			"position": {
+				"batch": 16,
+				"index": 80
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+			"timestamp": "2026-10-01T00:06:04.498Z",
+			"position": {
+				"batch": 18,
+				"index": 0
+			}
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+				"offset": "0000000000000000_0000000000000019",
+				"messages": [
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNV1pCVzlKUDc4Vk5IRUNBRVZB",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"timestamp": "2026-10-01T00:06:04.450Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "First question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"turnId": "turn_01M3TCGMX4XPTTHKRJ3PVW99H2",
+						"timestamp": "2026-10-01T00:06:04.452Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWFlRQUdaRlBXNTFZNFZEUUZK",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"timestamp": "2026-10-01T00:06:04.485Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "Second question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"turnId": "turn_01M3TCGMY71F67JAX25YKENJDY",
+						"timestamp": "2026-10-01T00:06:04.487Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					}
+				],
+				"settlements": [
+					{
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"outcome": "completed",
+						"answeredBySubmissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"timestamp": "2026-10-01T00:06:04.477Z"
+					}
+				]
+			},
+			"position": {
+				"batch": 19,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+			"timestamp": "2026-10-01T00:06:04.502Z",
+			"position": {
+				"batch": 20,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWVFKWFJHSEE3RzlQRVNaRkZL",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+				"timestamp": "2026-10-01T00:06:04.515Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Third question?",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 21,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+			"turnId": "turn_01M3TCGMZ5ND0F904T787HKW77",
+			"timestamp": "2026-10-01T00:06:04.518Z",
+			"position": {
+				"batch": 23,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "This is a delibe",
+			"position": {
+				"batch": 25,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "rately long answer t",
+			"position": {
+				"batch": 25,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "hat fills th",
+			"position": {
+				"batch": 25,
+				"index": 2
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "e context window. Th",
+			"position": {
+				"batch": 25,
+				"index": 3
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "is is a deli",
+			"position": {
+				"batch": 25,
+				"index": 4
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "berately lon",
+			"position": {
+				"batch": 25,
+				"index": 5
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "g answer that fi",
+			"position": {
+				"batch": 25,
+				"index": 6
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "lls the cont",
+			"position": {
+				"batch": 25,
+				"index": 7
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ext window. ",
+			"position": {
+				"batch": 25,
+				"index": 8
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "This is a deliberate",
+			"position": {
+				"batch": 25,
+				"index": 9
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 25,
+				"index": 10
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "fills the co",
+			"position": {
+				"batch": 25,
+				"index": 11
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ntext window",
+			"position": {
+				"batch": 25,
+				"index": 12
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": ". This is a deli",
+			"position": {
+				"batch": 25,
+				"index": 13
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "berately long an",
+			"position": {
+				"batch": 25,
+				"index": 14
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "swer that fills the ",
+			"position": {
+				"batch": 25,
+				"index": 15
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "context window. ",
+			"position": {
+				"batch": 25,
+				"index": 16
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "This is a de",
+			"position": {
+				"batch": 25,
+				"index": 17
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "liberately l",
+			"position": {
+				"batch": 25,
+				"index": 18
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 25,
+				"index": 19
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s the context window",
+			"position": {
+				"batch": 25,
+				"index": 20
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": ". This is a deli",
+			"position": {
+				"batch": 25,
+				"index": 21
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "berately lon",
+			"position": {
+				"batch": 25,
+				"index": 22
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "g answer that fills ",
+			"position": {
+				"batch": 25,
+				"index": 23
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "the context ",
+			"position": {
+				"batch": 25,
+				"index": 24
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "window. This is ",
+			"position": {
+				"batch": 25,
+				"index": 25
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "a deliberate",
+			"position": {
+				"batch": 25,
+				"index": 26
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 25,
+				"index": 27
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "fills the contex",
+			"position": {
+				"batch": 25,
+				"index": 28
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "t window. This is a ",
+			"position": {
+				"batch": 25,
+				"index": 29
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "deliberately long an",
+			"position": {
+				"batch": 25,
+				"index": 30
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "swer that fills ",
+			"position": {
+				"batch": 25,
+				"index": 31
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "the context wind",
+			"position": {
+				"batch": 25,
+				"index": 32
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ow. This is ",
+			"position": {
+				"batch": 25,
+				"index": 33
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "a deliberately long ",
+			"position": {
+				"batch": 25,
+				"index": 34
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "answer that fills th",
+			"position": {
+				"batch": 25,
+				"index": 35
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "e context window",
+			"position": {
+				"batch": 25,
+				"index": 36
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": ". This is a deli",
+			"position": {
+				"batch": 25,
+				"index": 37
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "berately lon",
+			"position": {
+				"batch": 25,
+				"index": 38
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "g answer that fills ",
+			"position": {
+				"batch": 25,
+				"index": 39
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "the context window. ",
+			"position": {
+				"batch": 25,
+				"index": 40
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "This is a deliberate",
+			"position": {
+				"batch": 25,
+				"index": 41
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ly long answ",
+			"position": {
+				"batch": 25,
+				"index": 42
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "er that fills the co",
+			"position": {
+				"batch": 25,
+				"index": 43
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ntext window. This i",
+			"position": {
+				"batch": 25,
+				"index": 44
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s a delibera",
+			"position": {
+				"batch": 25,
+				"index": 45
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "tely long an",
+			"position": {
+				"batch": 25,
+				"index": 46
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "swer that fills ",
+			"position": {
+				"batch": 25,
+				"index": 47
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "the context wind",
+			"position": {
+				"batch": 25,
+				"index": 48
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ow. This is a delibe",
+			"position": {
+				"batch": 25,
+				"index": 49
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "rately long answer t",
+			"position": {
+				"batch": 25,
+				"index": 50
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "hat fills the contex",
+			"position": {
+				"batch": 25,
+				"index": 51
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "t window. This i",
+			"position": {
+				"batch": 25,
+				"index": 52
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s a deliberately lon",
+			"position": {
+				"batch": 25,
+				"index": 53
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "g answer that fi",
+			"position": {
+				"batch": 25,
+				"index": 54
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "lls the context ",
+			"position": {
+				"batch": 25,
+				"index": 55
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "window. This",
+			"position": {
+				"batch": 25,
+				"index": 56
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": " is a deliberately l",
+			"position": {
+				"batch": 25,
+				"index": 57
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 25,
+				"index": 58
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s the contex",
+			"position": {
+				"batch": 25,
+				"index": 59
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "t window. This i",
+			"position": {
+				"batch": 25,
+				"index": 60
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s a deliberately lon",
+			"position": {
+				"batch": 25,
+				"index": 61
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "g answer that fills ",
+			"position": {
+				"batch": 25,
+				"index": 62
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "the context wind",
+			"position": {
+				"batch": 25,
+				"index": 63
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ow. This is ",
+			"position": {
+				"batch": 25,
+				"index": 64
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "a deliberately l",
+			"position": {
+				"batch": 25,
+				"index": 65
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ong answer that fill",
+			"position": {
+				"batch": 25,
+				"index": 66
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "s the contex",
+			"position": {
+				"batch": 25,
+				"index": 67
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "t window. This is a ",
+			"position": {
+				"batch": 25,
+				"index": 68
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "deliberately",
+			"position": {
+				"batch": 25,
+				"index": 69
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": " long answer that fi",
+			"position": {
+				"batch": 25,
+				"index": 70
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "lls the cont",
+			"position": {
+				"batch": 25,
+				"index": 71
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ext window. This",
+			"position": {
+				"batch": 25,
+				"index": 72
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": " is a deliberate",
+			"position": {
+				"batch": 25,
+				"index": 73
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ly long answer that ",
+			"position": {
+				"batch": 25,
+				"index": 74
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "fills the co",
+			"position": {
+				"batch": 25,
+				"index": 75
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "ntext window",
+			"position": {
+				"batch": 25,
+				"index": 76
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": ". This is a ",
+			"position": {
+				"batch": 25,
+				"index": 77
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "deliberately",
+			"position": {
+				"batch": 25,
+				"index": 78
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": " long answer",
+			"position": {
+				"batch": 25,
+				"index": 79
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": " that fills the ",
+			"position": {
+				"batch": 25,
+				"index": 80
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"kind": "text",
+			"delta": "context window. ",
+			"position": {
+				"batch": 25,
+				"index": 81
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"messageId": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+			"timestamp": "2026-10-01T00:06:04.533Z",
+			"position": {
+				"batch": 27,
+				"index": 0
+			}
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+				"offset": "0000000000000000_0000000000000028",
+				"messages": [
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNV1pCVzlKUDc4Vk5IRUNBRVZB",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"timestamp": "2026-10-01T00:06:04.450Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "First question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMX47E52Y30FV3GT3T9S",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"turnId": "turn_01M3TCGMX4XPTTHKRJ3PVW99H2",
+						"timestamp": "2026-10-01T00:06:04.452Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWFlRQUdaRlBXNTFZNFZEUUZK",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"timestamp": "2026-10-01T00:06:04.485Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "Second question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMY7ZK9G5ZGFF0HX7F86",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"turnId": "turn_01M3TCGMY71F67JAX25YKENJDY",
+						"timestamp": "2026-10-01T00:06:04.487Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_dispatch_c3ViXzAxTTNUQ0dNWVFKWFJHSEE3RzlQRVNaRkZL",
+						"role": "user",
+						"purpose": "user",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+						"timestamp": "2026-10-01T00:06:04.515Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "Third question?",
+								"state": "done"
+							}
+						]
+					},
+					{
+						"id": "entry_01M3TCGMZ6Z8RGT7QRBE3PH26E",
+						"role": "assistant",
+						"purpose": "assistant",
+						"display": "visible",
+						"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+						"turnId": "turn_01M3TCGMZ5ND0F904T787HKW77",
+						"timestamp": "2026-10-01T00:06:04.518Z",
+						"parts": [
+							{
+								"type": "text",
+								"text": "This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. This is a deliberately long answer that fills the context window. ",
+								"state": "done"
+							}
+						]
+					}
+				],
+				"settlements": [
+					{
+						"submissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"outcome": "completed",
+						"answeredBySubmissionId": "sub_01M3TCGMWZBW9JP78VNHECAEVA",
+						"timestamp": "2026-10-01T00:06:04.477Z"
+					},
+					{
+						"submissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"outcome": "completed",
+						"answeredBySubmissionId": "sub_01M3TCGMXYQAGZFPW51Y4VDQFJ",
+						"timestamp": "2026-10-01T00:06:04.502Z"
+					}
+				]
+			},
+			"position": {
+				"batch": 28,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMWZBFTWGXC56261WGG0",
+			"submissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMYQJXRGHA7G9PESZFFK",
+			"timestamp": "2026-10-01T00:06:04.537Z",
+			"position": {
+				"batch": 29,
+				"index": 0
+			}
+		}
+	]
+}

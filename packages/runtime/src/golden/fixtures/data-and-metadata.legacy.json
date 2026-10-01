@@ -1,0 +1,266 @@
+{
+	"scenario": "data-and-metadata",
+	"replies": [
+		{
+			"ok": true,
+			"text": "All work done.",
+			"data": {
+				"progress": [
+					{
+						"step": 2
+					}
+				]
+			},
+			"metadata": {
+				"channel": "golden",
+				"toolCalls": 1
+			}
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"offset": "0000000000000000_0000000000000017",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNVzlHMDFQNTVLUE1EODQ3RzBD",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+					"timestamp": "2026-10-01T00:06:04.428Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Do the work.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+					"turnId": "turn_01M3TCGMWE8QKXDDKYBJWFAX7P",
+					"timestamp": "2026-10-01T00:06:04.431Z",
+					"parts": [
+						{
+							"type": "dynamic-tool",
+							"toolName": "work",
+							"toolCallId": "call_work",
+							"state": "output-available",
+							"input": {},
+							"output": "worked",
+							"durationMs": 2
+						},
+						{
+							"type": "data-progress",
+							"data": {
+								"step": 2
+							}
+						},
+						{
+							"type": "text",
+							"text": "All work done.",
+							"state": "done"
+						}
+					],
+					"metadata": {
+						"channel": "golden",
+						"toolCalls": 1
+					}
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+					"timestamp": "2026-10-01T00:06:04.441Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMW959VQFFZBF3ETBS8T"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMW959VQFFZBF3ETBS8T"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNVzlHMDFQNTVLUE1EODQ3RzBD",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+				"timestamp": "2026-10-01T00:06:04.428Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Do the work.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+			"turnId": "turn_01M3TCGMWE8QKXDDKYBJWFAX7P",
+			"metadata": {
+				"channel": "golden"
+			},
+			"timestamp": "2026-10-01T00:06:04.431Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"toolCallId": "call_work",
+			"toolName": "work",
+			"input": {},
+			"timestamp": "2026-10-01T00:06:04.432Z",
+			"position": {
+				"batch": 5,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"timestamp": "2026-10-01T00:06:04.432Z",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "data-part",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"name": "progress",
+			"data": {
+				"step": 1
+			},
+			"position": {
+				"batch": 7,
+				"index": 0
+			}
+		},
+		{
+			"type": "data-part",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"name": "progress",
+			"data": {
+				"step": 2
+			},
+			"position": {
+				"batch": 8,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"toolCallId": "call_work",
+			"output": "worked",
+			"durationMs": 2,
+			"timestamp": "2026-10-01T00:06:04.435Z",
+			"position": {
+				"batch": 10,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+			"turnId": "turn_01M3TCGMWMV0TXVW6TV547VHEE",
+			"timestamp": "2026-10-01T00:06:04.437Z",
+			"position": {
+				"batch": 11,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"kind": "text",
+			"delta": "All work done.",
+			"position": {
+				"batch": 13,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"timestamp": "2026-10-01T00:06:04.439Z",
+			"position": {
+				"batch": 15,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-metadata",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"messageId": "entry_01M3TCGMWF7KWVWM074XKTH17B",
+			"metadata": {
+				"toolCalls": 1
+			},
+			"position": {
+				"batch": 16,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMW9CJPYNVKT1G2GZT0F",
+			"submissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMW9G01P55KPMD847G0C",
+			"timestamp": "2026-10-01T00:06:04.441Z",
+			"position": {
+				"batch": 17,
+				"index": 0
+			}
+		}
+	]
+}

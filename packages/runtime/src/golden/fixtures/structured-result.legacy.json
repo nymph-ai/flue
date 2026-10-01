@@ -1,0 +1,221 @@
+{
+	"scenario": "structured-result",
+	"replies": [
+		{
+			"ok": true,
+			"text": "Classified as spam.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"offset": "0000000000000000_0000000000000022",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNVjY0WUY2UzU3SFdSRjVFR1pC",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+					"timestamp": "2026-10-01T00:06:04.394Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Buy cheap watches now!!!",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+					"turnId": "turn_01M3TCGMVCET89SHZ6AEGA83WM",
+					"timestamp": "2026-10-01T00:06:04.396Z",
+					"parts": [
+						{
+							"type": "dynamic-tool",
+							"toolName": "classify",
+							"toolCallId": "call_classify",
+							"state": "output-available",
+							"input": {},
+							"output": {
+								"label": "spam"
+							},
+							"durationMs": 10
+						},
+						{
+							"type": "text",
+							"text": "Classified as spam.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+					"timestamp": "2026-10-01T00:06:04.419Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMV7M8K3FHVP4J9V172W"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMV7M8K3FHVP4J9V172W"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNVjY0WUY2UzU3SFdSRjVFR1pC",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+				"timestamp": "2026-10-01T00:06:04.394Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Buy cheap watches now!!!",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+			"turnId": "turn_01M3TCGMVCET89SHZ6AEGA83WM",
+			"timestamp": "2026-10-01T00:06:04.396Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"toolCallId": "call_classify",
+			"toolName": "classify",
+			"input": {},
+			"timestamp": "2026-10-01T00:06:04.397Z",
+			"position": {
+				"batch": 5,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"timestamp": "2026-10-01T00:06:04.398Z",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"toolCallId": "call_classify",
+			"output": {
+				"label": "spam"
+			},
+			"durationMs": 10,
+			"timestamp": "2026-10-01T00:06:04.408Z",
+			"position": {
+				"batch": 15,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+			"turnId": "turn_01M3TCGMVZJ6ZV2Z9YVAQZXCW6",
+			"timestamp": "2026-10-01T00:06:04.415Z",
+			"position": {
+				"batch": 16,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"kind": "text",
+			"delta": "Classified a",
+			"position": {
+				"batch": 18,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"kind": "text",
+			"delta": "s spam.",
+			"position": {
+				"batch": 19,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"messageId": "entry_01M3TCGMVCG7VKCS89AZ934DDK",
+			"timestamp": "2026-10-01T00:06:04.418Z",
+			"position": {
+				"batch": 21,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMV7NPXT3777WRR3PRKV",
+			"submissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMV64YF6S57HWRF5EGZB",
+			"timestamp": "2026-10-01T00:06:04.419Z",
+			"position": {
+				"batch": 22,
+				"index": 0
+			}
+		}
+	]
+}
