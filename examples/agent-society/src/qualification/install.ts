@@ -30,6 +30,7 @@ type Result = Record<string, unknown>;
 interface AgentStub {
 	__flueWake(request: unknown): Promise<Result>;
 	__qualInspect(): Promise<Result>;
+	__qualRecords(): Promise<Result>;
 	__qualSnapshot(): Promise<Result>;
 	__qualArmFault(plan: unknown): Promise<Result>;
 	__qualEvict(): Promise<Result>;
@@ -133,6 +134,11 @@ export function installQualification(app: Hono): void {
 	app.get('/qual/inspect/:agent/:id', async (c) => {
 		const stub = await agentStub(c.env as Vars, c.req.param('agent'), c.req.param('id'));
 		return c.json(await stub.__qualInspect());
+	});
+
+	app.get('/qual/records/:agent/:id', async (c) => {
+		const stub = await agentStub(c.env as Vars, c.req.param('agent'), c.req.param('id'));
+		return c.json(await stub.__qualRecords());
 	});
 
 	app.post('/qual/fault/:agent/:id', async (c) => {
