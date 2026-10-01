@@ -19,10 +19,12 @@ import type {
 	CodemodeExecutor,
 	CodemodeProvider,
 } from '../codemode/executor.ts';
+import { registerCodemodeModule } from '../codemode/catalog.ts';
 import { toIdentifier } from '../codemode/identifiers.ts';
 import { installCloudflareWorkersShim } from './cloudflare-workers-shim.ts';
 
 installCloudflareWorkersShim();
+registerCodemodeModule(() => import('@cloudflare/codemode'));
 
 export interface NodeCodemodeExecutorOptions {
 	/** Deadline for one script, tool calls included. Default 60 000 ms. */
@@ -194,7 +196,7 @@ export class NodeCodemodeExecutor implements CodemodeExecutor {
 							reply({ error: error instanceof Error ? error.message : String(error) }),
 					);
 			});
-			worker.on('error', (error) => settle({ result: undefined, error: error.message }));
+			worker.on('error', (error: Error) => settle({ result: undefined, error: error.message }));
 			worker.on('exit', (exitCode) => {
 				if (!settled)
 					settle({ result: undefined, error: `The script's worker exited (code ${exitCode}).` });

@@ -314,7 +314,7 @@ export function createMcpConnectionCache(): McpConnectionCache {
 			const current = link;
 			try {
 				const listing = await current.listing();
-				const key = fingerprint(listing.tools, definition.tools);
+				const key = fingerprint(listing.tools, current.definition.tools);
 				let entry = adapted.get(current);
 				if (entry?.key !== key) {
 					entry = { key, tools: adaptServerTools(current, listing) };

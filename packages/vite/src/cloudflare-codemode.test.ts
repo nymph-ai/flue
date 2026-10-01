@@ -190,8 +190,9 @@ describe('Cloudflare Worker bundle', () => {
 		expect(findings(output, /DynamicWorkerExecutor|globalOutbound/).length).toBeGreaterThan(0);
 		// The stdio transport, with the process spawner, is not.
 		expect(findings(output, /cross-spawn/)).toEqual([]);
-		expect(findings(output, /StdioClientTransport/)).toEqual([]);
-		expect(findings(output, /@modelcontextprotocol\/client\/stdio/)).toEqual([]);
+		// (The client's root module names StdioClientTransport in docs and
+		// messages; the transport itself is a separate module, never bundled.)
+		expect(findings(output, /client\/dist\/stdio\.mjs/)).toEqual([]);
 		// `node:child_process` imports exist only in @anthropic-ai/sdk's Node-only
 		// entries (agent-toolset/node, internal/node), which pi-ai reaches through
 		// a dynamic import and workerd satisfies with its built-in stub. Nothing

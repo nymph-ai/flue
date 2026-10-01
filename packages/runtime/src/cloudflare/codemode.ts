@@ -17,8 +17,11 @@
  * - Each distinct (id, code) pair counts as a Dynamic Worker created that
  *   day for billing; a script is a new one every time.
  */
-import { DynamicWorkerExecutor } from '@cloudflare/codemode';
+import * as codemode from '@cloudflare/codemode';
+import { registerCodemodeModule } from '../codemode/catalog.ts';
 import type { CodemodeExecutor } from '../codemode/executor.ts';
+
+registerCodemodeModule(async () => codemode);
 
 /** The Worker Loader binding `@flue/vite` adds when an agent calls `useCodeMode()`. */
 export const CODEMODE_LOADER_BINDING = 'LOADER';
@@ -63,7 +66,7 @@ export function createCodemodeExecutor(options: CodemodeExecutorOptions): Codemo
 				return { ...code, limits: { ...limits, ...code.limits } };
 			}),
 	};
-	const inner = new DynamicWorkerExecutor({
+	const inner = new codemode.DynamicWorkerExecutor({
 		loader,
 		globalOutbound: null,
 		timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,

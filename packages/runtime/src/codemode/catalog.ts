@@ -9,19 +9,38 @@
  * declarations — both run on the host and answer into the running script, so
  * a catalog of hundreds of methods costs the prompt nothing.
  *
- * `@cloudflare/codemode` is loaded on first use (its root module imports
- * `cloudflare:workers`, which Node only resolves once `@flue/runtime/node`
- * has installed its shim).
+ * `@cloudflare/codemode` is loaded on first use, through the loader the
+ * platform entry registered (its root module imports `cloudflare:workers`,
+ * which Node only resolves once `@flue/runtime/node` has installed its shim).
  */
 import type * as Codemode from '@cloudflare/codemode';
 
 export type CodemodeModule = typeof Codemode;
 
+let loader: (() => Promise<CodemodeModule>) | undefined;
 let loading: Promise<CodemodeModule> | undefined;
 
-/** `@cloudflare/codemode`, imported once. */
+/**
+ * Make `@cloudflare/codemode` available to the `codemode` tool. The platform
+ * entry that provides the executor registers it — `@flue/runtime/cloudflare`
+ * with a static import, `@flue/runtime/node` with a dynamic one after its
+ * `cloudflare:workers` shim — so the shared runtime never imports the package
+ * itself and builds that do not use Code Mode never resolve it.
+ */
+export function registerCodemodeModule(load: () => Promise<CodemodeModule>): void {
+	loader ??= load;
+}
+
+/** `@cloudflare/codemode`, loaded once through the registered loader. */
 export function loadCodemode(): Promise<CodemodeModule> {
-	loading ??= import('@cloudflare/codemode');
+	if (!loader) {
+		return Promise.reject(
+			new Error(
+				'[flue] Code Mode needs its executor from @flue/runtime/cloudflare (createCodemodeExecutor) or @flue/runtime/node (NodeCodemodeExecutor).',
+			),
+		);
+	}
+	loading ??= loader();
 	loading.catch(() => {
 		loading = undefined;
 	});

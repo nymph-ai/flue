@@ -74,7 +74,7 @@ export function Assistant() {
 }
 ```
 
-Flue never stores or manages your tokens. It is your responsibility to own any OAuth flow, token storage, and refresh token logic.
+With a string or a function, Flue never stores or manages your tokens: the OAuth flow, token storage and refresh are yours. To have Flue run the flow instead, see [Let Flue run the OAuth flow](#let-flue-run-the-oauth-flow).
 
 To attach a server after the user authorizes it mid-conversation, declare the connection conditionally on a persistent flag:
 
@@ -95,6 +95,52 @@ useAgentStart(async () => {
 ```
 
 When your OAuth flow completes and the flag flips, the agent has the server's tools from its next message on. If several agents need to share one user's authorization, put the integration in your application: an application-owned integration service can itself be an MCP server that agents connect to.
+
+### Let Flue run the OAuth flow
+
+Instead of managing tokens yourself, pass `mcpOAuth(...)` as `auth`. Flue discovers the server's authorization server, registers a client (with a Client ID Metadata Document when you give one and the server supports it, dynamic registration otherwise), runs the authorization-code flow with PKCE, and refreshes tokens:
+
+```ts
+import { mcpOAuth, useMcpConnection } from '@flue/runtime';
+
+useMcpConnection({
+  name: 'linear',
+  url: 'https://mcp.linear.app/mcp',
+  auth: mcpOAuth({
+    principal: userId, // whose credentials these are
+    redirectUrl: 'https://your-app.example.com/__flue/mcp/oauth/callback',
+  }),
+});
+```
+
+Until the user has authorized, connecting fails with `McpAuthorizationRequiredError`; its `authorizationUrl` is where to send them. The authorization server redirects back to `/__flue/mcp/oauth/callback`, which Flue serves in front of your `app.ts`, checks the response's issuer, and stores the tokens. The next submission connects.
+
+Credentials are bound to one principal and one authorization server. On Cloudflare they live in the `FlueMcpAuth` Durable Object, which `@flue/vite` binds when an agent module calls `mcpOAuth(`; add a migration for it to your wrangler config:
+
+```jsonc title="wrangler.jsonc"
+"migrations": [{ "tag": "v2", "new_sqlite_classes": ["FlueMcpAuth"] }]
+```
+
+On Node, credentials are kept in memory; pass `setMcpOAuthBroker(createMcpOAuthBroker({ storage }))` to keep them in your own store.
+
+## Protocol and transports
+
+Flue speaks the stateless MCP protocol (revision 2026-07-28) over Streamable HTTP and falls back to servers on earlier revisions. An agent keeps no connection open between messages, so a server's tool list is re-read when its cache hint expires, or on the agent's next wake.
+
+On Node, a local server process can be used over stdio:
+
+```ts
+useMcpConnection({
+  name: 'files',
+  transport: 'stdio',
+  command: 'npx',
+  args: ['-y', 'my-mcp-server'],
+});
+```
+
+Cloudflare Workers cannot start processes, so stdio servers fail there with an error. The legacy HTTP+SSE transport is not supported.
+
+A server that asks for user input in the middle of a tool call (an elicitation) gets no answer: the call fails with an error naming what the server asked for.
 
 ## Specifying tools
 
