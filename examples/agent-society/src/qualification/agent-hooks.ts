@@ -116,6 +116,12 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 					ctx,
 					'SELECT status, count(*) AS n FROM submissions GROUP BY status ORDER BY status',
 				),
+				tasks: rows(ctx, 'SELECT kind, status, count(*) AS n FROM tasks GROUP BY kind, status'),
+				observed:
+					rows(
+						ctx,
+						`SELECT count(*) AS n FROM entries WHERE record LIKE '%"kind":"flue.observed"%'`,
+					)[0]?.n ?? 0,
 				alarm: await ctx.storage.getAlarm(),
 				activity: {
 					counts: rows(

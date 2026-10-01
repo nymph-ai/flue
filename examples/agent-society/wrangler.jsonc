@@ -27,8 +27,14 @@
 		},
 		// The qualification build's scratch object rebuilt instances from their
 		// Pi log; there is no Pi log any more.
-		{ "tag": "society-v2", "deleted_classes": ["QualReplica"] }
+		{ "tag": "society-v2", "deleted_classes": ["QualReplica"] },
+		{ "tag": "society-v3", "new_sqlite_classes": ["FlueStewardAgent", "FlueSageAgent"] }
 	],
+	// The `ops` MCP server (society-ops, a stateless 2026-07-28 server the
+	// qualification deploys): a service binding, since a Worker cannot fetch
+	// another workers.dev Worker of its account. The steward sends the
+	// OPS_MCP_TOKEN secret as its bearer token.
+	"services": [{ "binding": "OPS", "service": "society-ops" }],
 	"vars": {
 		// The agents-server's own root: it serves the Durable Streams protocol and
 		// the subscription API (/__ds/subscriptions) there. The VPC binding
@@ -39,6 +45,10 @@
 		// scripted | workers-ai
 		"SOCIETY_MODEL": "scripted",
 		"WORKERS_AI_MODEL": "@cf/moonshotai/kimi-k2.6",
+		// The sage always runs on Workers AI.
+		"SAGE_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		// The steward's questions expire after 30 minutes.
+		"QUESTION_TIMEOUT_MS": "1800000",
 		"SCRIPTED_TOKENS_PER_SECOND": "50",
 		// Serves /qual/* when the build compiled it in (QUALIFICATION=1 vite build).
 		"QUALIFICATION": "1"

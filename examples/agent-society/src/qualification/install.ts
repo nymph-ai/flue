@@ -105,6 +105,22 @@ export function installQualification(app: Hono): void {
 		return c.json({ path, head: await log.head(path) });
 	});
 
+	// Read-only: up to 200 messages of a stream from an offset, through the configured log.
+	app.get('/qual/stream-read', async (c) => {
+		const path = c.req.query('path');
+		const from = c.req.query('from') ?? '-1';
+		const log = configuredStreamsLog(c.env as Vars);
+		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
+		const batch = await settled(() => log.read(path, from as never));
+		if ('error' in batch) return c.json({ path, ...batch });
+		return c.json({
+			path,
+			messages: batch.messages.slice(0, 200),
+			nextOffset: batch.nextOffset,
+			upToDate: batch.upToDate,
+		});
+	});
+
 	// Ring an entity's doorbell by hand: the same `__flueWake({ stream, head })`
 	// RPC the wake route makes for a verified Electric webhook, for the given
 	// streams (default: the entity's inbox) at their current tails. Only the

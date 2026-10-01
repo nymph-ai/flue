@@ -1,6 +1,6 @@
 # Agent society
 
-Three `'use agent'` agents — `alice`, `bob` and `curator` — on Pi Durable, each
+Five `'use agent'` agents — `alice`, `bob`, `curator`, `steward` and `sage` — on Pi Durable, each
 instance an addressable entity (nymph-ai/nymphai #3752) in the shape of
 `docs/cloudflare-native.md`. Each instance's Pi state lives in its own Durable
 Object SQLite; its inbox and events stream live on an Electric Agents server,
@@ -11,6 +11,14 @@ and the instance's alarm admits what arrived.
 - `alice` and `bob` talk to each other with `send_message`.
 - `curator` observes the Hacker News world stream (`v1/stream/world/hn/items`)
   and is woken by new items.
+- `steward` runs operations on the `ops` MCP server (`society-ops`, a
+  stateless 2026-07-28 server reached through the `OPS` service binding with
+  the `OPS_MCP_TOKEN` bearer secret), directly and from Code Mode scripts.
+  `ops.record` needs a person's approval, and `ops.deploy` answers
+  `input_required` (an elicitation): both become questions on the steward's
+  `flue/v1/steward/<id>/questions` stream (`useQuestions()`), answered with
+  `POST /agents/steward/<id>/questions/<questionId>/answer`.
+- `sage` always answers with Workers AI (`SAGE_MODEL`) through the `AI` binding.
 
 ## Models
 
@@ -31,7 +39,7 @@ deployment also sets `QUALIFICATION=1` and behind the `SOCIETY_TOKEN` secret:
   written, the wake book, the conversation cache, an activity log per
   instance, forced eviction;
 - `/qual/*` routes (`src/qualification/install.ts`), including hand-rung
-  doorbells.
+  doorbells and read-only stream reads.
 
 Any other build leaves all of it out. The monorepo deploys and drives this app
 with `fabric/society/deploy/deploy-society.sh` and

@@ -1,7 +1,8 @@
 /**
- * The agent society: three `'use agent'` agents on Pi Durable, every instance
- * an addressable entity whose history lives on Electric (the `FLUE_STREAMS*`
- * vars and the `FLUE_STREAMS` Workers VPC binding; see wrangler.jsonc).
+ * The agent society: five `'use agent'` agents on Pi Durable, every instance
+ * an addressable entity whose inbox and events live on Electric (the
+ * `FLUE_STREAMS*` vars and the `FLUE_STREAMS` Workers VPC binding; see
+ * wrangler.jsonc) and whose Pi state lives in its own Durable Object.
  *
  * The agent routes are behind the `SOCIETY_TOKEN` bearer secret, since a
  * deployment may run a billed model. Entity wakes (`/__flue/streams/wake`)
@@ -12,6 +13,8 @@ import { Hono } from 'hono';
 import { Alice } from './agents/alice.ts';
 import { Bob } from './agents/bob.ts';
 import { Curator } from './agents/curator.ts';
+import { Sage } from './agents/sage.ts';
+import { Steward } from './agents/steward.ts';
 import { societyModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
 
@@ -19,7 +22,7 @@ const app = new Hono<{ Bindings: Record<string, unknown> }>();
 
 app.get('/', (c) =>
 	c.json({
-		society: ['alice', 'bob', 'curator'],
+		society: ['alice', 'bob', 'curator', 'steward', 'sage'],
 		model: societyModel(),
 		streams: Boolean(c.env.FLUE_STREAMS_URL),
 	}),
@@ -39,5 +42,7 @@ if (__QUALIFICATION__) installQualification(app as never);
 app.route('/agents/alice', createAgentRouter(Alice));
 app.route('/agents/bob', createAgentRouter(Bob));
 app.route('/agents/curator', createAgentRouter(Curator));
+app.route('/agents/steward', createAgentRouter(Steward));
+app.route('/agents/sage', createAgentRouter(Sage));
 
 export default app;

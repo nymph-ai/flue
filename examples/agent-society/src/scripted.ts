@@ -13,6 +13,10 @@
  *   observe <stream> [<key> [<from>]]  observe the stream from an offset (default: its
  *                                  start), waking on new items
  *   schedule <delay-ms> <text>     schedule_wake for this agent
+ *   codemode record <id>           a Code Mode script calling ops.record({ id })
+ *                                  (approval-gated on the steward)
+ *   mcp <tool> <arg>               the ops MCP server's tool directly:
+ *                                  `mcp deploy <service>`, `mcp echo <text>`
  *   chain <n>                      n publish_event rounds, then an answer
  *   slow <n>                       an answer of n sentences, streamed slowly
  *
@@ -110,6 +114,20 @@ function commandCalls(line: string): Call[] | undefined {
 			},
 		];
 	}
+	if (verb === 'codemode' && words[1] === 'record' && words[2]) {
+		return [
+			{
+				name: 'codemode',
+				args: { code: `async () => await ops.record({ id: ${JSON.stringify(words[2])} })` },
+			},
+		];
+	}
+	if (verb === 'mcp' && words[1] === 'deploy' && words[2]) {
+		return [{ name: 'mcp__ops__deploy', args: { service: words[2] } }];
+	}
+	if (verb === 'mcp' && words[1] === 'echo') {
+		return [{ name: 'mcp__ops__echo', args: { text: words.slice(2).join(' ') || 'hello' } }];
+	}
 	if (verb === 'schedule' && words.length >= 2) {
 		return [
 			{
@@ -197,7 +215,7 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 			(result) => result.role === 'toolResult' && result.isError,
 		).length;
 		return fauxAssistantMessage(
-			`Done: ${results.length} tool call(s)${failed ? `, ${failed} failed` : ''}. ${textOf(results.at(-1)).slice(0, 160)}`,
+			`Done: ${results.length} tool call(s)${failed ? `, ${failed} failed` : ''}. ${textOf(results.at(-1)).slice(0, 400)}`,
 		);
 	}
 	if (signal?.type === 'a2a.spawn') return fauxAssistantMessage('Spawned and ready.');
