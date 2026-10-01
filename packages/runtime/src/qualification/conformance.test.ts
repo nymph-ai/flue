@@ -43,7 +43,7 @@ import {
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import {
-	type Backend,
+	type BackendSpec,
 	backends,
 	context,
 	contiguous,
@@ -89,8 +89,8 @@ afterEach(async () => {
 	await removeTempFiles();
 });
 
-async function setup(backend: Backend): Promise<QualWorld> {
-	const qw = await qualWorld(backend);
+async function setup(spec: BackendSpec): Promise<QualWorld> {
+	const qw = await qualWorld(spec.make());
 	worlds.push(qw.world);
 	return qw;
 }
@@ -223,7 +223,7 @@ async function events(qw: QualWorld, ref: EntityRef) {
 
 describe.each(backends())('conformance over $name', (backend) => {
 	describe('b. eviction during a Pi turn', () => {
-		it.each([1, 3, 6])(
+		it.each([2, 8, 14])(
 			'aborted after %i acknowledged commits, the turn resumes with nothing lost or done twice',
 			async (after) => {
 				const qw = await setup(backend);
@@ -326,7 +326,7 @@ describe.each(backends())('conformance over $name', (backend) => {
 			'on the log itself: a retry is a duplicate, a gap is reported, an older epoch is fenced',
 			async () => {
 				const qw = await setup(backend);
-				const path = `${backend.idPrefix}qual/producer-${submissionCounter++}`;
+				const path = `${qw.backend.idPrefix}qual/producer-${submissionCounter++}`;
 				await qw.log.ensure(path);
 				const append = (epoch: number, seq: number, streamSeq: string, n: number) =>
 					qw.log.append(path, {
@@ -555,8 +555,8 @@ describe.each(backends())('conformance over $name', (backend) => {
 
 describe('j. backend swap', () => {
 	/** One scenario's public results: settlements, histories, inbox texts, events, commit counts. */
-	async function run(backend: Backend) {
-		const qw = await setup(backend);
+	async function run(spec: BackendSpec) {
+		const qw = await setup(spec);
 		const alice = qw.world.entity(qw.ref('agent', 'alice'), societyResponder);
 		const bob = qw.world.entity(qw.ref('agent', 'bob'), societyResponder);
 		await alice.open();
@@ -584,7 +584,7 @@ describe('j. backend swap', () => {
 		const bobTurn = await deriveKeyedSubmissionId(bob.ref.type, bob.ref.id, ping.messageId);
 		outcomes.push((await bob.requireHost().waitForSettlement(bobTurn, context)).outcome);
 		await bob.flush();
-		const prefix = backend.idPrefix;
+		const prefix = qw.backend.idPrefix;
 		const result = {
 			outcomes,
 			alice: normalizeIds(await transcript(alice), prefix),
@@ -608,7 +608,7 @@ describe('j. backend swap', () => {
 		'the same scenario has identical public results on every backend',
 		async () => {
 			const all = backends();
-			const baseline = await run(all[0] as Backend);
+			const baseline = await run(all[0] as BackendSpec);
 			expect(baseline.outcomes).toEqual(['completed', 'completed', 'completed']);
 			expect(baseline.inboxes.alice).toHaveLength(1);
 			for (const backend of all.slice(1)) {

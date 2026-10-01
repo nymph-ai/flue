@@ -115,9 +115,19 @@ export function electricBackend(baseUrl: string): Backend {
 	};
 }
 
-export function backends(): Backend[] {
+/** A backend kind; every `make()` is a fresh, empty store (or a fresh id space on a shared server). */
+export interface BackendSpec {
+	readonly name: string;
+	make(): Backend;
+}
+
+export function backends(): BackendSpec[] {
 	const url = process.env.FLUE_DS_URL;
-	return [memoryBackend(), bridgeBackend(), ...(url ? [electricBackend(url)] : [])];
+	return [
+		{ name: 'memory', make: memoryBackend },
+		{ name: 'bridge (DO SQLite)', make: bridgeBackend },
+		...(url ? [{ name: 'durable-streams server', make: () => electricBackend(url) }] : []),
+	];
 }
 
 // ─── Kill switch ────────────────────────────────────────────────────────────
@@ -145,6 +155,8 @@ export class Incarnation {
 	#seen = 0;
 	#acked = 0;
 	fired: Fault | undefined;
+	/** Runs the moment the incarnation dies: a dead process stops, it does not spin. */
+	onDeath: (() => void) | undefined;
 
 	constructor(fault?: Fault) {
 		this.#fault = fault;
@@ -203,6 +215,7 @@ export class Incarnation {
 		this.dead = true;
 		this.fired = fault;
 		this.#fault = undefined;
+		this.onDeath?.();
 	}
 }
 
@@ -334,6 +347,9 @@ export async function qualWorld(backend: Backend): Promise<QualWorld> {
 		const fault = armed.get(key);
 		armed.delete(key);
 		const incarnation = new Incarnation(fault);
+		// Stop the dead incarnation's work right away (its scheduler would
+		// otherwise retry against storage that only throws, without yielding).
+		incarnation.onDeath = () => entity.abandon();
 		incarnations.set(key, incarnation);
 		return new KillableLog(inner, incarnation);
 	};
