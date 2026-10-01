@@ -6,4 +6,5 @@ declare module 'cloudflare:test' {
 		callback: (instance: unknown, state: DurableObjectState) => R | Promise<R>,
 	): Promise<R>;
 	export function runDurableObjectAlarm(stub: DurableObjectStub): Promise<boolean>;
+	export function evictDurableObject(stub: DurableObjectStub): Promise<void>;
 }

@@ -11,7 +11,7 @@ export { CodemodeRuntime } from '../../cloudflare/codemode.ts';
 // Flue's Durable Object storage adapters (src/cloudflare/workers/do-sqlite.workers.test.ts).
 export { SqliteProbe } from '../../cloudflare/workers/probe.ts';
 // A new entity's first wake, row by row (src/cloudflare/workers/first-wake.workers.test.ts).
-export { FirstWakeAgent } from '../../cloudflare/workers/first-wake.ts';
+export { FirstWakeAgent, RowsAgent } from '../../cloudflare/workers/first-wake.ts';
 
 export class CodemodeTestAgent extends DurableObject {}
 

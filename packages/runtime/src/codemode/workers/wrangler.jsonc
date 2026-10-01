@@ -7,7 +7,8 @@
 	// Worker needs no binding or migration for it. SQLITE_PROBE holds Flue's
 	// Durable Object storage adapters (src/cloudflare/workers); FIRST_WAKE is an
 	// agent's Durable Object as the generated entry builds it, over the Agents
-	// SDK (src/cloudflare/workers/first-wake.ts).
+	// SDK's Lifecycle (src/cloudflare/workers/first-wake.ts), and ROWS another,
+	// with tools and Code Mode.
 	"name": "flue-codemode-workers-tests",
 	"main": "./test-worker.ts",
 	"compatibility_date": "2026-07-22",
@@ -18,10 +19,14 @@
 			{ "name": "AGENT", "class_name": "CodemodeTestAgent" },
 			{ "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" },
 			{ "name": "SQLITE_PROBE", "class_name": "SqliteProbe" },
-			{ "name": "FIRST_WAKE", "class_name": "FirstWakeAgent" }
+			{ "name": "FIRST_WAKE", "class_name": "FirstWakeAgent" },
+			{ "name": "ROWS", "class_name": "RowsAgent" }
 		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["CodemodeTestAgent", "SqliteProbe", "FirstWakeAgent"] }
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["CodemodeTestAgent", "SqliteProbe", "FirstWakeAgent", "RowsAgent"]
+		}
 	]
 }
