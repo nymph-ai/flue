@@ -11,7 +11,10 @@ export {
 export type {
 	AgentAbortResult,
 	CreateFlueClientOptions,
+	FlueAnswerResult,
 	FlueClient,
+	FlueQuestionAnswer,
+	FlueQuestionSummary,
 	HttpClientOptions,
 	RequestHeaders,
 } from './client.ts';

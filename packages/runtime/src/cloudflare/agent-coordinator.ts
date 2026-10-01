@@ -48,6 +48,12 @@ import {
 	handleAgentConversationHead,
 	handleAgentConversationRead,
 } from '../runtime/handle-conversation-routes.ts';
+import {
+	answerResponse,
+	matchQuestionPath,
+	parseAnswerRequest,
+	questionsResponse,
+} from '../runtime/question-routes.ts';
 import { agentStreamPath } from '../runtime/stream-offsets.ts';
 import type { EntityDoorbell } from '../entity/webhook-route.ts';
 import {
@@ -193,7 +199,7 @@ function isWakeReason(value: unknown): value is FlueWakeReason {
 		typeof value === 'object' &&
 		value !== null &&
 		typeof (value as { kind?: unknown }).kind === 'string' &&
-		['live-tasks', 'schedule', 'pump', 'dispatch'].includes((value as { kind: string }).kind)
+		['live-tasks', 'schedule', 'pump', 'dispatch', 'questions'].includes((value as { kind: string }).kind)
 	);
 }
 
@@ -433,6 +439,24 @@ class CloudflareAgentCoordinator {
 		if (isInternalInstanceInfoRequest(request)) return Response.json(await this.#core().info());
 		if (isAbortRequest(request, this.#agentName, this.#instance.name)) {
 			return Response.json({ aborted: await this.#core().abort() });
+		}
+		const question = matchQuestionPath(
+			new URL(request.url).pathname,
+			this.#agentName,
+			this.#instance.name,
+		);
+		if (question?.kind === 'list' && request.method === 'GET') {
+			return questionsResponse(await this.#core().pendingQuestions());
+		}
+		if (question?.kind === 'answer' && request.method === 'POST') {
+			const answer = await parseAnswerRequest(request);
+			return answerResponse(
+				question.questionId,
+				await this.#core().answerQuestion(question.questionId, answer.answer, {
+					...(answer.from ? { from: answer.from } : {}),
+					...(answer.answerId ? { answerId: answer.answerId } : {}),
+				}),
+			);
 		}
 		const method = request.method;
 		if (method === 'GET' || method === 'HEAD') {

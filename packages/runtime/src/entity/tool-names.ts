@@ -9,6 +9,7 @@ export const ENTITY_TOOL_NAMES = [
 	'observe',
 	'spawn_agent',
 	'schedule_wake',
+	'answer_question',
 ] as const;
 
 export type EntityToolName = (typeof ENTITY_TOOL_NAMES)[number];

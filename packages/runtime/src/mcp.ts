@@ -34,7 +34,12 @@ import { version as runtimeVersion } from '../package.json' with { type: 'json' 
 import { fnv1a64 } from './fnv.ts';
 import { createMcpAuthProvider } from './mcp-oauth.ts';
 import type { McpConnectionDefinition } from './mcp-types.ts';
-import { askQuestion, type McpInputQuestion, QuestionParkedError } from './questions.ts';
+import {
+	askQuestion,
+	type FlueAnswer,
+	type McpInputQuestion,
+	QuestionParkedError,
+} from './questions.ts';
 import {
 	type McpCallResult,
 	type McpToolSource,
@@ -332,6 +337,39 @@ class McpServerLink {
 		)) as CallToolResult;
 	}
 
+	/**
+	 * Continue a `tools/call` parked on `question` (Pi reran the call after an
+	 * eviction, `pi/questions.ts`): get the answer from the seam, then send the
+	 * original request again on a fresh request id with `inputResponses` and
+	 * the server's `requestState`, byte for byte. A further `input_required`
+	 * is asked like any other.
+	 */
+	async resume(tool: Tool, question: McpInputQuestion, signal?: AbortSignal): Promise<CallToolResult> {
+		let answer: FlueAnswer;
+		try {
+			answer = await askQuestion(question, signal);
+		} catch (error) {
+			if (error instanceof QuestionParkedError) throw error;
+			throw new McpInputRequiredError(
+				this.definition.name,
+				question.method,
+				question.inputRequests,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+		const client = await this.#connect();
+		const params = {
+			...(question.params as Record<string, unknown>),
+			...(answer.kind === 'mcp-input' ? { inputResponses: answer.inputResponses } : {}),
+			...(question.requestState !== undefined ? { requestState: question.requestState } : {}),
+		};
+		return (await client.callTool(params as never, {
+			...this.#requestOptions,
+			toolDefinition: tool,
+			...(signal ? { signal } : {}),
+		})) as CallToolResult;
+	}
+
 	async close(): Promise<void> {
 		this.#closed = true;
 		const stale = this.#client;
@@ -615,15 +653,7 @@ function adaptServerTools(
 		registerPreparedToolAdapter(definition, {
 			parameters: normalizeInputSchema(tool.inputSchema),
 			async execute(args, signal) {
-				const result = await call(args, signal);
-				const content = toModelContent(result);
-				if (result.isError) {
-					throw new Error(
-						content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n') ||
-							`MCP tool "${tool.name}" failed.`,
-					);
-				}
-				return content;
+				return mcpToolOutput(tool.name, await call(args, signal));
 			},
 		});
 		const source: McpToolSource = {
@@ -638,10 +668,26 @@ function adaptServerTools(
 				...(tool.annotations ? { annotations: Object.freeze({ ...tool.annotations }) } : {}),
 			},
 			call,
+			async resume(question, signal) {
+				if (signal?.aborted) throw new Error('Operation aborted');
+				return (await link.resume(tool, question, signal)) as McpCallResult;
+			},
 		};
 		registerMcpToolSource(definition, source);
 		return Object.freeze(definition);
 	});
+}
+
+/** What the model sees of an MCP tool result; an error result throws its text. */
+export function mcpToolOutput(toolName: string, result: McpCallResult): PreparedToolContent[] {
+	const content = toModelContent(result);
+	if (result.isError) {
+		throw new Error(
+			content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n') ||
+				`MCP tool "${toolName}" failed.`,
+		);
+	}
+	return content;
 }
 
 const SAFE_PART = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*$/;

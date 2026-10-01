@@ -56,11 +56,21 @@ export {
 	type FlueAnswer,
 	type FlueQuestion,
 	type McpInputQuestion,
+	type QuestionCall,
 	type QuestionHandler,
 	QuestionParkedError,
 	QuestionsNotWiredError,
 	setQuestionHandler,
 } from './questions.ts';
+export {
+	appendAnswer,
+	inputAnsweredEvent,
+	parseFlueAnswer,
+	parseInputAnswered,
+	parseInputRequested,
+	summarizeQuestion,
+} from './entity/questions.ts';
+export { questionsPath } from './entity/paths.ts';
 export { createNodeAgentCoordinator, createNodeDispatchQueue } from './node/agent-coordinator.ts';
 // The shared Node runtime assembly `start()` and the CLI's `flue run` build
 // on: registration → persistence validation → coordinator → runtime seed.

@@ -27,11 +27,13 @@ import { createContextKey } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { FluePiHost } from '../pi/host.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
-import { type DurableStreamLog, DurableStreamLogError } from '../streams/log.ts';
+import type { DurableStreamLog } from '../streams/log.ts';
 import type { A2aDirective, A2aInboxMessage, PublishedEvent } from './events.ts';
 import { deliveredFromSchedule, entityMessageJson, parseEntityMessage } from './messages.ts';
 import type { ObservationBook } from './observations.ts';
 import { entityKey, eventsPath, inboxPath, sameEntity } from './paths.ts';
+import { appendAnswer, parseFlueAnswer } from './questions.ts';
+import { appendCreating } from './append.ts';
 import type { ScheduleBook } from './schedules.ts';
 import {
 	EntityLifecycle,
@@ -100,22 +102,6 @@ export async function spawnedUid(child: EntityRef): Promise<string> {
 	return `inst_sp_${hex.slice(0, 26)}`;
 }
 
-/** Append to `path`, creating the stream first when it does not exist yet (one PUT, once). */
-async function appendCreating(
-	log: DurableStreamLog,
-	path: string,
-	message: unknown,
-	signal: AbortSignal | undefined,
-): Promise<void> {
-	try {
-		await log.append(path, [message], signal);
-	} catch (error) {
-		if (!(error instanceof DurableStreamLogError) || error.code !== 'not-found') throw error;
-		await log.ensure(path, signal);
-		await log.append(path, [message], signal);
-	}
-}
-
 /** Message id of a relayed directive: one per (sender, purpose, id), so repeats deduplicate. */
 function directiveMessageId(self: EntityRef, purpose: string, id: string): string {
 	return `${purpose}:${entityKey(self)}/${id}`;
@@ -168,6 +154,20 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				event,
 			};
 			await appendCreating(log, eventsPath(self), published, context.abortSignal);
+			return { eventId };
+		},
+		async answer(target, questionId, answer, answerOptions, context) {
+			assertEntity(target, 'An answer target');
+			if (typeof questionId !== 'string' || questionId.length === 0)
+				throw new EntityServiceError('An answer needs the question id.');
+			const parsed = parseFlueAnswer(answer);
+			if (!parsed) {
+				throw new EntityServiceError(
+					'An answer is {"kind":"codemode-approval","decision":"approve"|"reject","reason"?} or {"kind":"mcp-input","inputResponses":{…}}.',
+				);
+			}
+			const eventId = answerOptions.eventId ?? defaultId(context, 'answer');
+			await appendAnswer(log, target, { from: self, questionId, answer: parsed, eventId }, context.abortSignal);
 			return { eventId };
 		},
 	};

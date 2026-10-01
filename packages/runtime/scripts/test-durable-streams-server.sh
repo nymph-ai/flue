@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs src/streams/electric-log.test.ts, the A2A entity scenario
-# (src/entity/a2a.electric.test.ts) and the entity conformance suite
+# (src/entity/a2a.electric.test.ts), the question scenarios
+# (src/entity/questions.electric.test.ts) and the entity conformance suite
 # (src/qualification/conformance.test.ts) against the real Durable Streams
 # Node reference server (`@durable-streams/server`, the server Electric's
 # agents-server embeds), including webhook subscriptions whose signed wakes
@@ -86,4 +87,5 @@ FLUE_DS_URL="http://127.0.0.1:${ds_port}/v1/stream" \
 FLUE_DS_WEBHOOK_URL="http://127.0.0.1:${hook_port}/hook" \
 FLUE_DS_WEBHOOK_CAPTURE_URL="http://127.0.0.1:${hook_port}/captured" \
 	vitest run src/streams/electric-log.test.ts src/entity/a2a.electric.test.ts \
+		src/entity/questions.electric.test.ts \
 		src/qualification/conformance.test.ts "$@"

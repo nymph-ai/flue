@@ -11,11 +11,11 @@
  *   carrying input requests (an elicitation, a sampling request, the roots
  *   list) and, usually, an opaque `requestState`.
  *
- * Both call {@link askQuestion}. What answers is installed with
- * {@link setQuestionHandler}; until the Electric lane installs its handler
- * (the `input-requested` entity event), the default rejects every question
- * with {@link QuestionsNotWiredError}, and the asking call fails with that
- * message.
+ * Both call {@link askQuestion}. An agent instance with entity streams
+ * answers through its own handler (see "The Electric handler" below);
+ * elsewhere the process-wide one set with {@link setQuestionHandler} does,
+ * and by default it rejects every question with
+ * {@link QuestionsNotWiredError}, so the asking call fails with that message.
  *
  * ## The handler contract
  *
@@ -68,7 +68,22 @@
  * `signal` aborts when the asking call is aborted (the turn was cancelled).
  * A handler that is still waiting should then reject — parking (2) is the
  * normal response.
+ *
+ * ## The Electric handler
+ *
+ * With entity streams configured, every agent instance installs
+ * `entity/questions.ts`'s handler as {@link QUESTION_HANDLER} (rule 9). It
+ * answers through case 1 and parks *inside* Pi Durable: the question becomes
+ * a `flue.question` task owned by the asking tool call, the call waits on it,
+ * and the turn stays open without a model round trip. If the instance is
+ * evicted meanwhile, the wait rejects with {@link QuestionParkedError}
+ * (case 2) and Pi reruns the tool call on the next wake; the rerun finds the
+ * parked question and continues it (`pi/questions.ts`).
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { Context, ContextKey } from '@earendil-works/chord';
+import { createContextKey } from '@earendil-works/chord/context';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 
 /** One action a Code Mode execution is paused on. */
 export interface CodemodePendingAction {
@@ -135,14 +150,44 @@ export type FlueAnswer =
 			readonly inputResponses: Readonly<Record<string, unknown>>;
 	  };
 
+/**
+ * The tool call a question is asked from: the Pi tool invocation and its
+ * context. The Electric lane's handler parks the question inside it
+ * (`entity/questions.ts`); the module-level default handler ignores it.
+ */
+export interface QuestionCall {
+	readonly api: ToolExecutionApi;
+	readonly context: Context;
+}
+
 /** Answers questions; see the module documentation for the contract. */
-export type QuestionHandler = (question: FlueQuestion, signal?: AbortSignal) => Promise<FlueAnswer>;
+export type QuestionHandler = (
+	question: FlueQuestion,
+	signal?: AbortSignal,
+	call?: QuestionCall,
+) => Promise<FlueAnswer>;
 
 /** The question was durably parked; the call ends now and is continued when the answer arrives. */
 export class QuestionParkedError extends Error {
 	override readonly name = 'QuestionParkedError';
 	constructor(readonly question: FlueQuestion) {
 		super(`[flue] Waiting for an answer to ${question.id}; the call continues when it arrives.`);
+	}
+}
+
+/** The question was not answered before `useQuestions({ timeoutMs })` ran out. */
+export class QuestionTimeoutError extends Error {
+	override readonly name = 'QuestionTimeoutError';
+	constructor(readonly questionId: string) {
+		super(`[flue] Nobody answered ${questionId} in time; the question expired.`);
+	}
+}
+
+/** The question was withdrawn (its call was aborted or interrupted) before an answer arrived. */
+export class QuestionCancelledError extends Error {
+	override readonly name = 'QuestionCancelledError';
+	constructor(readonly questionId: string) {
+		super(`[flue] ${questionId} was withdrawn before it was answered.`);
 	}
 }
 
@@ -169,17 +214,49 @@ const notWired: QuestionHandler = (question) => Promise.reject(new QuestionsNotW
 
 let handler: QuestionHandler = notWired;
 
-/** Install the question handler (`undefined` restores the not-wired default). */
+/**
+ * Install the process-wide question handler (`undefined` restores the
+ * not-wired default). An agent instance with entity streams installs its own
+ * per instance instead, as the {@link QUESTION_HANDLER} value of its Pi
+ * context; that one wins inside the instance's tool calls.
+ */
 export function setQuestionHandler(next: QuestionHandler | undefined): void {
 	handler = next ?? notWired;
 }
 
 /**
- * Ask the installed handler. Resolves only with an answer of the question's
- * kind; a mismatched answer is a handler bug and rejects.
+ * The per-instance question handler, carried by the Pi Harness context, so
+ * every task invocation (and so every tool call) of the instance sees it.
+ */
+export const QUESTION_HANDLER: ContextKey<QuestionHandler> =
+	createContextKey<QuestionHandler>('flue.questions.handler');
+
+const callScope = new AsyncLocalStorage<QuestionCall>();
+
+/**
+ * Run `work` as part of `call`: a question asked anywhere below it — deep in
+ * the MCP client, or from a Code Mode connector — is asked from this tool
+ * call. Tools that can ask (the `codemode` tool and MCP tools) wrap their
+ * execution in it.
+ */
+export function runInQuestionCall<T>(call: QuestionCall, work: () => T): T {
+	return callScope.run(call, work);
+}
+
+/** The tool call a question asked now would belong to, if any. */
+export function currentQuestionCall(): QuestionCall | undefined {
+	return callScope.getStore();
+}
+
+/**
+ * Ask: the instance's handler when the current tool call carries one, else
+ * the process-wide one. Resolves only with an answer of the question's kind;
+ * a mismatched answer is a handler bug and rejects.
  */
 export async function askQuestion(question: FlueQuestion, signal?: AbortSignal): Promise<FlueAnswer> {
-	const answer = await handler(question, signal);
+	const call = callScope.getStore();
+	const scoped = call?.context.value(QUESTION_HANDLER);
+	const answer = scoped ? await scoped(question, signal, call) : await handler(question, signal, call);
 	if (!answer || answer.kind !== question.kind) {
 		throw new Error(
 			`[flue] The question handler answered ${question.id} with a "${String(answer?.kind)}" answer; expected "${question.kind}".`,

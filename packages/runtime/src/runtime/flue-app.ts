@@ -7,6 +7,8 @@ import type {
 } from '../types.ts';
 import type { AttachedAgentSubmissionAdmission } from './agent-submissions.ts';
 import type { ConversationProjectionSource } from './conversation-source.ts';
+import type { PendingQuestion } from '../pi/questions.ts';
+import type { AnswerRequest, AnswerResult } from './question-routes.ts';
 import { enqueueDispatch } from './dispatch.ts';
 import type { DispatchQueue } from './dispatch-queue.ts';
 import { normalizeMessageInput } from './message-input.ts';
@@ -44,6 +46,15 @@ export interface NodeRuntime extends RuntimeBase {
 		agentName: string,
 		instanceId: string,
 	) => Promise<{ exists: boolean; uid?: string }>;
+	/** The questions an instance waits on (rule 9). */
+	pendingQuestions: (agentName: string, instanceId: string) => Promise<PendingQuestion[]>;
+	/** Answer one of an instance's questions through its inbox. */
+	answerQuestion: (
+		agentName: string,
+		instanceId: string,
+		questionId: string,
+		request: AnswerRequest,
+	) => Promise<AnswerResult>;
 }
 
 export interface CloudflareRuntime extends RuntimeBase {

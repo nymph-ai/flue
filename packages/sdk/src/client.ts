@@ -44,6 +44,34 @@ export interface AgentAbortResult {
 	aborted: boolean;
 }
 
+/**
+ * The answer to a question an agent waits on: a Code Mode approval, or the
+ * responses to an MCP server's input requests (elicitation), keyed as the
+ * server keyed them.
+ */
+export type FlueQuestionAnswer =
+	| { readonly kind: 'codemode-approval'; readonly decision: 'approve' }
+	| { readonly kind: 'codemode-approval'; readonly decision: 'reject'; readonly reason?: string }
+	| { readonly kind: 'mcp-input'; readonly inputResponses: Readonly<Record<string, unknown>> };
+
+/** A question the agent instance waits on. */
+export interface FlueQuestionSummary {
+	readonly id: string;
+	/** The question as asked: `kind` is `codemode-approval` or `mcp-input`. */
+	readonly question: { readonly kind: string; readonly id: string } & Record<string, unknown>;
+	readonly askedAt: number;
+	readonly timeoutAt?: number;
+	readonly conversationId: number | null;
+}
+
+/** Result of answering a question. */
+export interface FlueAnswerResult {
+	readonly questionId: string;
+	readonly accepted: true;
+	/** The `input-answered` event appended to the agent's inbox. */
+	readonly eventId: string;
+}
+
 /** Options for creating a client for one agent conversation. */
 export type CreateFlueClientOptions = HttpClientOptions;
 
@@ -88,6 +116,26 @@ export interface FlueClient {
 	 * outcome asynchronously.
 	 */
 	abort(options?: { signal?: AbortSignal }): Promise<AgentAbortResult>;
+	/**
+	 * The questions the agent instance waits on: Code Mode approvals and MCP
+	 * input requests, oldest first.
+	 */
+	questions(options?: { signal?: AbortSignal }): Promise<FlueQuestionSummary[]>;
+	/**
+	 * Answer one question. The answer is appended to the agent's inbox, which
+	 * wakes it; the waiting call continues. Rejects with `FlueApiError` 404
+	 * for an unknown question and 409 for one already answered or expired.
+	 * Pass `answerId` to make a retried answer idempotent.
+	 */
+	answer(
+		questionId: string,
+		answer: FlueQuestionAnswer,
+		options?: {
+			answerId?: string;
+			from?: { type: string; id: string };
+			signal?: AbortSignal;
+		},
+	): Promise<FlueAnswerResult>;
 	/**
 	 * Reads one materialized conversation snapshot — the whole conversation,
 	 * or only its newest messages with `limit`.
@@ -172,6 +220,24 @@ export function createFlueClient(options: CreateFlueClientOptions): FlueClient {
 			http.json<AgentAbortResult>({
 				method: 'POST',
 				path: '/abort',
+				signal: opts.signal,
+			}),
+		questions: async (opts = {}) =>
+			(
+				await http.json<{ questions: FlueQuestionSummary[] }>({
+					path: '/questions',
+					signal: opts.signal,
+				})
+			).questions,
+		answer: (questionId, answer, opts = {}) =>
+			http.json<FlueAnswerResult>({
+				method: 'POST',
+				path: `/questions/${encodeURIComponent(questionId)}/answer`,
+				body: {
+					answer,
+					...(opts.answerId !== undefined ? { answerId: opts.answerId } : {}),
+					...(opts.from !== undefined ? { from: opts.from } : {}),
+				},
 				signal: opts.signal,
 			}),
 		history: async (opts = {}) => {

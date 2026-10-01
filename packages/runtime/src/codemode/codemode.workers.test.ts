@@ -43,6 +43,9 @@ function fakeApi(documents: Map<string, unknown>, callId: string): ToolExecution
 		`${token.definition.kind}:${String(conversationId)}`;
 	return {
 		callId,
+		// One tool task per call: the codemode tool keeps a task-scoped record of
+		// the call (`pi/questions.ts` FlueQuestionCall).
+		taskId: callId,
 		conversationId: 1,
 		output: () => {},
 		diagnostic: () => {},
@@ -228,7 +231,8 @@ describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Work
 			createCodemodeToolRegistration({ tools: [greet, ...largeCatalog()] }),
 		);
 		expect(tool.name).toBe(CODEMODE_TOOL_NAME);
-		expect(tool.replay).toBe('unsafe');
+		// Rerun only to continue a parked question; any other rerun settles as interrupted.
+		expect(tool.replay).toBe('safe');
 		for (const phrase of ['codemode.search(', 'codemode.describe(', 'codemode.step(', 'codemode.run(']) {
 			expect(tool.description).toContain(phrase);
 		}
@@ -438,6 +442,26 @@ describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Work
 		expect(ops.deployed).toEqual(['b-3']);
 		// The resumed run's store() writes were kept.
 		expect([...documents.values()]).toContainEqual({ values: { last: 'b-3' } });
+	});
+
+	it('a rerun of a call that never parked settles as interrupted instead of running the script again', async () => {
+		const ops = opsServer();
+		const { inside, documents } = agent();
+		const options: CodemodeToolOptions = { tools: [ops.tool] };
+		const code = 'async () => await ops.deploy({ id: "c-1" })';
+		const api = fakeApi(documents, 'call-once');
+		const first = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
+		);
+		expect(first.isError).toBeUndefined();
+		expect(ops.deployed).toEqual(['c-1']);
+		// Pi reruns the same tool task (the same api): the call already started.
+		const rerun = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
+		);
+		expect(rerun.isError).toBe(true);
+		expect(textOf(rerun)).toContain('interrupted');
+		expect(ops.deployed).toEqual(['c-1']);
 	});
 
 	it('runs a snippet the developer saved from an earlier execution', async () => {

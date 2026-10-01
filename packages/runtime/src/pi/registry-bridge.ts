@@ -29,6 +29,7 @@ import type {
 import { ENTITY_TOOL_NAMES } from '../entity/tool-names.ts';
 import { ToolNameConflictError } from '../errors.ts';
 import type { CodeModeDeclaration } from '../hooks/use-code-mode.ts';
+import type { QuestionsDeclaration } from '../hooks/use-questions.ts';
 import type { AgentOutputChannel } from '../message-output.ts';
 import type { McpConnectionDefinition } from '../mcp-types.ts';
 import { FINISH_TOOL_NAME, GIVE_UP_TOOL_NAME } from '../result.ts';
@@ -101,6 +102,8 @@ export interface RenderedAgent {
 	readonly sandboxTools?: readonly ToolRegistration[];
 	/** `useCodeMode()` declaration: offers the `codemode` tool over the render's other tools. */
 	readonly codeMode?: CodeModeDeclaration;
+	/** `useQuestions()` declaration: where questions go and when they expire. */
+	readonly questions?: QuestionsDeclaration;
 }
 
 /** Assemble a {@link RenderedAgent} from one render's config and output channel. */
@@ -114,6 +117,7 @@ export function renderedAgentFrom(
 		readonly context?: string;
 		readonly workspaceSkills?: readonly RegisteredSkill[];
 		readonly codeMode?: CodeModeDeclaration;
+		readonly questions?: QuestionsDeclaration;
 	} = {},
 ): RenderedAgent {
 	return {
@@ -134,6 +138,7 @@ export function renderedAgentFrom(
 		},
 		sandbox: config.sandbox !== undefined,
 		...(extras.codeMode !== undefined ? { codeMode: extras.codeMode } : {}),
+		...(extras.questions !== undefined ? { questions: extras.questions } : {}),
 	};
 }
 

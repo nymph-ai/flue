@@ -42,11 +42,15 @@ import {
 	parseToolInput,
 	resolveToolRun,
 } from '../tool.ts';
+import { mcpToolOutput } from '../mcp.ts';
+import { runInQuestionCall } from '../questions.ts';
 import {
 	getMcpToolSource,
 	getPreparedToolAdapter,
+	type McpToolSource,
 	registerMcpToolSource,
 } from '../tool-adapter.ts';
+import { beginQuestionableCall, cancelQuestion } from './questions.ts';
 import type { ToolDefinition, ToolStep } from '../tool-types.ts';
 import type { FlueHarness, FlueLogger } from '../types.ts';
 
@@ -121,22 +125,71 @@ export function flueToolRegistration(
 	if (!prepared) assertToolDefinition(tool, `Tool "${tool.name}"`);
 	const parameters = (prepared?.parameters ??
 		(tool.input ? valibotToJsonSchema(tool.input) : EMPTY_PARAMETERS)) as unknown as TSchema;
+	const source = getMcpToolSource(tool);
+	// An MCP tool can park on a question (`input_required`); see executeMcpTool.
+	const asks = prepared !== undefined && source?.resume !== undefined;
 	const registration: ToolRegistration = {
 		name: tool.name,
 		description: tool.description,
 		parameters,
 		// Durable tools route every side effect through `step.do`, so an
-		// interrupted call may rerun; everything else settles as interrupted.
-		replay: tool.durable ? 'safe' : 'unsafe',
+		// interrupted call may rerun; an MCP tool reruns only to continue a
+		// parked question; everything else settles as interrupted.
+		replay: tool.durable || asks ? 'safe' : 'unsafe',
 		async execute(args, api, context): Promise<ToolExecutionResult> {
-			const run = () => executeFlueTool(tool, prepared, deps, args, api, context);
+			const plain = () => executeFlueTool(tool, prepared, deps, args, api, context);
+			const run =
+				asks && source
+					? () =>
+							runInQuestionCall({ api, context }, () =>
+								executeMcpTool(tool.name, source, plain, api, context),
+							)
+					: plain;
 			return deps.around ? deps.around({ tool: tool.name, api }, run, context) : run();
 		},
 	};
 	// Code Mode reaches an MCP tool's server through its registration.
-	const source = getMcpToolSource(tool);
 	if (source) registerMcpToolSource(registration, source);
 	return registration;
+}
+
+/**
+ * An MCP tool call that may park on an `input_required` question
+ * (`pi/questions.ts`): a first run runs; a rerun of a call parked on a
+ * question continues it — the answer, then the request again with the
+ * answers and the server's `requestState`; any other rerun settles as
+ * interrupted, as `replay: "unsafe"` would.
+ */
+async function executeMcpTool(
+	name: string,
+	source: McpToolSource,
+	run: () => Promise<ToolExecutionResult>,
+	api: ToolExecutionApi,
+	context: Context,
+): Promise<ToolExecutionResult> {
+	const begun = await beginQuestionableCall(api, context);
+	if (begun.kind === 'first') return run();
+	if (begun.kind === 'resume' && begun.question.kind === 'mcp-input' && source.resume) {
+		const result = await source.resume(begun.question, context.abortSignal);
+		return {
+			content: mcpToolOutput(name, result).map((block) =>
+				block.type === 'text'
+					? { type: 'text' as const, text: block.text }
+					: { type: 'image' as const, data: block.data, mimeType: block.mimeType },
+			),
+			details: { customTool: name },
+		};
+	}
+	if (begun.question) await cancelQuestion(api, begun.question.id, Date.now(), context);
+	return {
+		content: [
+			{
+				type: 'text',
+				text: `Tool ${name} was interrupted (the agent restarted) and may have partly run.`,
+			},
+		],
+		isError: true,
+	};
 }
 
 async function executeFlueTool(

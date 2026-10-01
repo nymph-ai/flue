@@ -1,4 +1,5 @@
 import type { McpToolAnnotations } from './mcp-types.ts';
+import type { McpInputQuestion } from './questions.ts';
 import type { ToolDefinition } from './tool-types.ts';
 
 /** Model-facing tool result content: text, or a base64 image. */
@@ -63,6 +64,11 @@ export interface McpToolSource {
 	};
 	/** Call the tool and resolve with the server's `CallToolResult`. */
 	call(args: Record<string, unknown>, signal?: AbortSignal): Promise<McpCallResult>;
+	/**
+	 * Continue a call parked on an `input_required` question: wait for its
+	 * answer, then retry the request with the answers and the request state.
+	 */
+	resume?(question: McpInputQuestion, signal?: AbortSignal): Promise<McpCallResult>;
 }
 
 /** The parts of an MCP `CallToolResult` Flue reads. */

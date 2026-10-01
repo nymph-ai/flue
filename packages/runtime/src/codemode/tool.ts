@@ -16,10 +16,14 @@
  * - what happens when an execution pauses for approval: the question seam
  *   (`questions.ts`).
  *
- * Pi replays the tool as `unsafe`: nested calls have effects, so an
- * interrupted call settles as interrupted and is never rerun. Durability of
- * the execution itself is the runtime's: a paused execution survives in the
- * facet and is continued by {@link resumeCodemodeQuestion}.
+ * Nested calls have effects, so an interrupted script is never rerun. The
+ * tool is registered `replay: "safe"` only so that a call parked on a
+ * question survives an eviction (`pi/questions.ts`): Pi reruns it, and the
+ * rerun continues the parked execution in the facet instead of starting the
+ * script again; a rerun of a call that had not parked settles as
+ * interrupted, as `replay: "unsafe"` would. The paused execution itself
+ * lives in the facet and is continued like {@link resumeCodemodeQuestion}
+ * does.
  */
 import type { Context, JsonValue } from '@earendil-works/chord';
 import type {
@@ -29,11 +33,14 @@ import type {
 } from '@earendil-works/pi-durable';
 import { fnv1a64 } from '../fnv.ts';
 import { toModelContent } from '../mcp.ts';
+import { beginQuestionableCall, cancelQuestion } from '../pi/questions.ts';
 import {
 	askQuestion,
 	type CodemodeApprovalQuestion,
+	currentQuestionCall,
 	type FlueAnswer,
 	QuestionParkedError,
+	runInQuestionCall,
 } from '../questions.ts';
 import { getMcpToolSource, type McpToolSource } from '../tool-adapter.ts';
 import type { CodemodeExecutor, CodemodeProvider } from './executor.ts';
@@ -358,6 +365,8 @@ export function createCodemodeToolRegistration(options: CodemodeToolOptions): To
 				})),
 			});
 		}
+		// An MCP server's input_required inside a script is asked from this call.
+		const questionCall = currentQuestionCall();
 		for (const entry of catalog.servers) {
 			const byName = new Map(entry.sources.map(({ source }) => [source.tool.name, source]));
 			connectors.push({
@@ -375,7 +384,8 @@ export function createCodemodeToolRegistration(options: CodemodeToolOptions): To
 				call: (toolName, args) => {
 					const source = byName.get(toolName);
 					if (!source) throw new Error(`Unknown method ${entry.namespace}.${toolName}.`);
-					return source.call(args, context.abortSignal);
+					const call = () => source.call(args, context.abortSignal);
+					return questionCall ? runInQuestionCall(questionCall, call) : call();
 				},
 			});
 		}
@@ -604,35 +614,66 @@ export function createCodemodeToolRegistration(options: CodemodeToolOptions): To
 		return settle(invocation, next.outcome, api, context, started);
 	};
 
+	const executeCall = async (
+		args: JsonValue,
+		api: ToolExecutionApi,
+		context: Context,
+	): Promise<ToolExecutionResult> => {
+		const code =
+			args !== null && typeof args === 'object' && !Array.isArray(args)
+				? (args as { code?: unknown }).code
+				: undefined;
+		if (typeof code !== 'string' || code.trim().length === 0) {
+			return {
+				content: [
+					{ type: 'text', text: '`code` must be a non-empty string of JavaScript source.' },
+				],
+				isError: true,
+			};
+		}
+		if (code.length > MAX_CODE_LENGTH) {
+			return {
+				content: [{ type: 'text', text: 'The script is too large (over 1 MB).' }],
+				isError: true,
+			};
+		}
+		const started = performance.now();
+		const begun = await beginQuestionableCall(api, context);
+		if (begun.kind === 'resume' && begun.question.kind === 'codemode-approval') {
+			// Pi reran a call parked on an approval: continue that execution.
+			const invocation = await open(api, context);
+			const paused: CodemodeOutcome = {
+				status: 'paused',
+				executionId: begun.question.executionId,
+				pending: begun.question.pending,
+			};
+			return settle(invocation, paused, api, context, started);
+		}
+		if (begun.kind !== 'first') {
+			if (begun.question) await cancelQuestion(api, begun.question.id, Date.now(), context);
+			return {
+				content: [
+					{
+						type: 'text',
+						text: 'The codemode call was interrupted (the agent restarted) and may have partly run: calls it made are not undone. Check their effects before running the code again.',
+					},
+				],
+				isError: true,
+			};
+		}
+		const invocation = await open(api, context);
+		const outcome = await raceAbort(invocation.session.execute(code), context.abortSignal);
+		return settle(invocation, outcome, api, context, started);
+	};
+
 	const registration: ToolRegistration = {
 		name: CODEMODE_TOOL_NAME,
 		description: createCodemodeDescription(catalog),
 		parameters: PARAMETERS as unknown as ToolRegistration['parameters'],
-		// Nested calls have side effects; an interrupted script is not rerun.
-		replay: 'unsafe',
-		async execute(args, api, context): Promise<ToolExecutionResult> {
-			const code =
-				args !== null && typeof args === 'object' && !Array.isArray(args)
-					? (args as { code?: unknown }).code
-					: undefined;
-			if (typeof code !== 'string' || code.trim().length === 0) {
-				return {
-					content: [
-						{ type: 'text', text: '`code` must be a non-empty string of JavaScript source.' },
-					],
-					isError: true,
-				};
-			}
-			if (code.length > MAX_CODE_LENGTH) {
-				return {
-					content: [{ type: 'text', text: 'The script is too large (over 1 MB).' }],
-					isError: true,
-				};
-			}
-			const started = performance.now();
-			const invocation = await open(api, context);
-			const outcome = await raceAbort(invocation.session.execute(code), context.abortSignal);
-			return settle(invocation, outcome, api, context, started);
+		// Rerun only to continue a parked question; see the module documentation.
+		replay: 'safe',
+		execute(args, api, context): Promise<ToolExecutionResult> {
+			return runInQuestionCall({ api, context }, () => executeCall(args, api, context));
 		},
 	};
 	Object.defineProperty(registration, RESUME, { value: resume, enumerable: false });

@@ -11,6 +11,7 @@
  * nothing imports `node:`. The coordinators are cut over to it in step 8.
  */
 import type { Context } from '@earendil-works/chord';
+import { withContextValue } from '@earendil-works/chord/context';
 import type { Models } from '@earendil-works/pi-ai';
 import {
 	type ConversationId,
@@ -27,7 +28,15 @@ import {
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
 import type { Sandbox } from '../sandbox.ts';
 import type { DispatchReceipt, FlueHarness, FlueLogger, SubagentDefinition } from '../types.ts';
+import { QUESTION_HANDLER, type QuestionHandler } from '../questions.ts';
 import { FlueReceipts, FlueSessions } from './docs.ts';
+import {
+	expireQuestions,
+	onlyParked,
+	parkedConversations,
+	parkedQuestionTasks,
+	QuestionTask,
+} from './questions.ts';
 import { executionEnvFromSandbox } from './execution-env.ts';
 import { type FlueAttachmentPort, lifecycleHooks } from './hooks.ts';
 import {
@@ -62,7 +71,9 @@ export type WakeReason =
 	| { readonly kind: 'schedule'; readonly scheduleId: string }
 	/** A doorbell recorded new entity events: drain them (`entity/pump.ts`). */
 	| { readonly kind: 'pump' }
-	| { readonly kind: 'dispatch' };
+	| { readonly kind: 'dispatch' }
+	/** A parked question's deadline (`pi/questions.ts`). */
+	| { readonly kind: 'questions' };
 
 /** Backstop wake while Pi has live tasks, so an evicted instance resumes them (§2.5). */
 export const LIVE_TASK_BACKSTOP_MS = 30_000;
@@ -143,6 +154,12 @@ export interface FluePiHost {
 	configure(conversationId: ConversationId, context: Context): Promise<void>;
 	/** Register call-scoped tools (a prompt's `tools` option, its result tools) until disposed. */
 	addTools(tools: readonly ToolDefinition[], extra?: readonly ToolRegistration[]): Registration;
+	/**
+	 * Install this instance's question handler (`entity/questions.ts`): it rides
+	 * the Harness context as `QUESTION_HANDLER`, so every tool call sees it.
+	 * Before `open()` only.
+	 */
+	setQuestionHandler(handler: QuestionHandler): void;
 	close(context: Context): Promise<void>;
 }
 
@@ -153,6 +170,7 @@ class PiHost implements FluePiHost {
 	readonly #env: ExecutionEnv | undefined;
 	readonly #now: () => number;
 	#harness: Harness | undefined;
+	#questionHandler: QuestionHandler | undefined;
 
 	constructor(options: FluePiHostOptions) {
 		this.#options = options;
@@ -162,6 +180,7 @@ class PiHost implements FluePiHost {
 			(options.sandbox ? executionEnvFromSandbox(options.sandbox, options.sandbox.cwd) : undefined);
 		this.registry = createRegistry<ToolRegistration>();
 		this.registry.tasks.add(DelegateTask);
+		this.registry.tasks.add(QuestionTask);
 		const delegation = {
 			rosterFor: (...args: Parameters<RegistryBridge['rosterFor']>) =>
 				this.#bridge.rosterFor(...args),
@@ -202,8 +221,17 @@ class PiHost implements FluePiHost {
 		return this.#harness;
 	}
 
-	async open(context: Context): Promise<void> {
+	setQuestionHandler(handler: QuestionHandler): void {
+		if (this.#harness) throw new Error('[flue] Install the question handler before the Pi host opens.');
+		this.#questionHandler = handler;
+	}
+
+	async open(openContext: Context): Promise<void> {
 		if (this.#harness) return;
+		// Task invocations inherit the Harness context: the question handler rides it.
+		const context = this.#questionHandler
+			? withContextValue(QUESTION_HANDLER, this.#questionHandler, openContext)
+			: openContext;
 		const storage = await this.#options.storage();
 		this.#harness = await Harness.open(
 			storage,
@@ -218,7 +246,10 @@ class PiHost implements FluePiHost {
 		);
 		await this.#options.onOpened?.(this.#harness, storage, context);
 		await this.#harness.root(context);
-		await countAttempts(this.#harness, context);
+		// Reopening under a parked question is not a retry: no attempt is counted.
+		await countAttempts(this.#harness, context, () =>
+			parkedConversations(this.harness, context),
+		);
 	}
 
 	async #sessionConversations(context: Context): Promise<ConversationId[]> {
@@ -326,10 +357,18 @@ class PiHost implements FluePiHost {
 		const harness = this.harness;
 		await repairAdmissions(harness, context);
 		const deadline = await enforceTimeouts(harness, this.#now(), context);
+		const questionDeadline = await expireQuestions(harness, this.#now(), context);
 		harness.resume();
 		if (deadline !== undefined) await this.#options.armWake(deadline, { kind: 'live-tasks' });
+		if (questionDeadline !== undefined)
+			await this.#options.armWake(questionDeadline, { kind: 'questions' });
 		const inspection = await harness.inspect(context);
-		if (inspection.tasks.length > 0) {
+		// Work that only waits on parked questions needs no backstop: the
+		// answer's doorbell, or the question's deadline, wakes the instance.
+		if (
+			inspection.tasks.length > 0 &&
+			!onlyParked(inspection.tasks, await parkedQuestionTasks(harness, context))
+		) {
 			await this.#options.armWake(this.#now() + LIVE_TASK_BACKSTOP_MS, { kind: 'live-tasks' });
 		}
 	}

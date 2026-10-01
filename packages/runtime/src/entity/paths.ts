@@ -5,6 +5,7 @@
  *
  * - `flue/v1/{type}/{id}/inbox`  — what other entities send it;
  * - `flue/v1/{type}/{id}/events` — what it publishes;
+ * - `flue/v1/{type}/{id}/questions` — the questions it waits on;
  *
  * `{type}` and `{id}` are `encodeURIComponent`-encoded, so an id like
  * `parent/key` stays one segment (`parent%2Fkey`).
@@ -28,6 +29,14 @@ export function inboxPath(entity: EntityAddress): string {
 
 export function eventsPath(entity: EntityAddress): string {
 	return `${entityStreamRoot(entity)}/events`;
+}
+
+/**
+ * `flue/v1/{type}/{id}/questions` — the `input-requested` events of the
+ * entity's parked questions (rule 9), for UIs and other agents to watch.
+ */
+export function questionsPath(entity: EntityAddress): string {
+	return `${entityStreamRoot(entity)}/questions`;
 }
 
 /**
