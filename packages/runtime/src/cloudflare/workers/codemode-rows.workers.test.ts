@@ -21,11 +21,12 @@ import { carol } from './turn-driver.ts';
 type Rows = { rowsRead: number; rowsWritten: number };
 
 /**
- * Measured 2026-10-01 (sql + key-value keys): the 10-call turn 610 read /
+ * Measured 2026-10-01 (sql + key-value keys): the 10-call turn 586 read /
  * 218 written, the cold store() turn 617 / 234. On `@cloudflare/codemode`
  * the same turns cost 679 / 276 and 711 / 239, of which its facet's tables
- * 69 / 58 and 10 / 5 (BuildBuddy a9066d83-090a-40b4-9fb8-75a11f06cb30). The
- * ceilings leave a little room for the scheduler's polling.
+ * 69 / 58 and 10 / 5 (BuildBuddy a9066d83-090a-40b4-9fb8-75a11f06cb30; that
+ * run's server was a 40-issue tracker, this one 40 notes, with the same
+ * call shape). The ceilings leave a little room for the scheduler's polling.
  */
 const BUDGET: Record<'tenCalls' | 'coldStore', Rows> = {
 	tenCalls: { rowsRead: 650, rowsWritten: 230 },

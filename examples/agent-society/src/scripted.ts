@@ -235,7 +235,7 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 			(result) => result.role === 'toolResult' && result.isError,
 		).length;
 		return fauxAssistantMessage(
-			`Done: ${results.length} tool call(s)${failed ? `, ${failed} failed` : ''}. ${textOf(results.at(-1)).slice(0, 400)}`,
+			`Done: ${results.length} tool call(s)${failed ? `, ${failed} failed` : ''}. ${textOf(results.at(-1)).slice(0, 8000)}`,
 		);
 	}
 	if (signal?.type === 'a2a.spawn') return fauxAssistantMessage('Spawned and ready.');
