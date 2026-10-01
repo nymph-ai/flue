@@ -4,7 +4,8 @@
 	// runtime in a Durable Object Facet of the agent: CodemodeTestAgent stands
 	// in for an AgentDO. CODEMODE_RUNTIME is a test-only binding so that
 	// ctx.exports offers the facet class under vitest-pool-workers; a real
-	// Worker needs no binding or migration for it.
+	// Worker needs no binding or migration for it. SQLITE_PROBE holds Flue's
+	// Durable Object storage adapters (src/cloudflare/workers).
 	"name": "flue-codemode-workers-tests",
 	"main": "./test-worker.ts",
 	"compatibility_date": "2026-07-22",
@@ -13,8 +14,9 @@
 	"durable_objects": {
 		"bindings": [
 			{ "name": "AGENT", "class_name": "CodemodeTestAgent" },
-			{ "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" }
+			{ "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" },
+			{ "name": "SQLITE_PROBE", "class_name": "SqliteProbe" }
 		]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeTestAgent"] }]
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeTestAgent", "SqliteProbe"] }]
 }
