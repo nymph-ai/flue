@@ -1,9 +1,0 @@
-{
-	// Workers-pool test Worker for the Code Mode conformance corpus
-	// (vitest.workers.config.ts): the Dynamic Worker executor needs a
-	// Worker Loader binding.
-	"name": "flue-codemode-conformance",
-	"compatibility_date": "2026-04-01",
-	"compatibility_flags": ["nodejs_compat"],
-	"worker_loaders": [{ "binding": "LOADER" }]
-}

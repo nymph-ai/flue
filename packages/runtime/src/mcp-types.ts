@@ -3,8 +3,14 @@
  * and `mcp.ts` (the connector) can import them.
  */
 
-/** Remote MCP transport. */
-export type McpTransport = 'streamable-http' | 'sse';
+/**
+ * MCP transport. `'streamable-http'` (the default) speaks the stateless
+ * 2026-07-28 protocol and negotiates down to servers on earlier revisions.
+ * `'stdio'` runs a local server process and exists only on the Node target.
+ * `'sse'` (the legacy HTTP+SSE transport) is refused: it needs a standing
+ * stream, which an agent that hibernates between wakes cannot hold.
+ */
+export type McpTransport = 'streamable-http' | 'stdio' | 'sse';
 
 /**
  * Tool annotations from an MCP server's `tools/list` entry. The MCP adapter
@@ -28,37 +34,55 @@ export interface McpToolAnnotations {
 }
 
 /**
- * Bearer credential for an MCP server: a static token, or a resolver the
- * runtime calls to obtain the current token — per request, so rotating and
- * per-user credentials stay fresh for a connection's whole lifetime. Keep the
- * durable key (say, a user id) in the resolver's closure and fetch the token
- * inside it; tokens are never persisted.
+ * OAuth for an MCP server (the MCP 2026-07-28 authorization rules): the
+ * runtime discovers the server's authorization server, registers a client
+ * (a Client ID Metadata Document when the server supports one, dynamic
+ * registration otherwise), runs the authorization-code flow with PKCE, binds
+ * every stored credential to the authorization server's issuer, and
+ * refreshes tokens one at a time. Credentials live in Flue's OAuth store — on
+ * Cloudflare the `FlueMcpAuth` Durable Object, one per principal and
+ * authorization server; on Node an in-memory store unless one is configured.
+ * Build it with `mcpOAuth(...)`.
  */
-export type McpAuth = string | (() => string | Promise<string>);
+export interface McpOAuth {
+	readonly type: 'oauth';
+	/**
+	 * Whose credentials these are: a stable identifier of the user or
+	 * service the agent acts for. Tokens are never shared across principals.
+	 */
+	readonly principal: string;
+	/**
+	 * Absolute URL of the OAuth callback route Flue serves,
+	 * `https://<your app>/__flue/mcp/oauth/callback`.
+	 */
+	readonly redirectUrl: string;
+	/** Scope to request. Default: the scopes the server's metadata advertises. */
+	readonly scope?: string;
+	/**
+	 * HTTPS URL of a Client ID Metadata Document describing this client.
+	 * Used as the `client_id` when the authorization server supports Client
+	 * ID Metadata Documents; otherwise the client registers dynamically.
+	 */
+	readonly clientMetadataUrl?: string;
+	/** `client_name` for dynamic registration. Default `"Flue"`. */
+	readonly clientName?: string;
+}
 
 /**
- * One MCP server, as `defineMcpConnection(...)`, `useMcpConnection(...)`, and
- * `createMcpConnection(...)` consume it.
+ * Credential for an MCP server: a static bearer token, a resolver the
+ * runtime calls to obtain the current bearer token — per request, so
+ * rotating and per-user credentials stay fresh for a connection's whole
+ * lifetime — or OAuth ({@link McpOAuth}). Keep the durable key (say, a user
+ * id) in a resolver's closure and fetch the token inside it; bearer tokens
+ * are never persisted.
  */
-export interface McpConnectionDefinition {
+export type McpAuth = string | (() => string | Promise<string>) | McpOAuth;
+
+/** Fields every MCP connection definition shares. */
+interface McpConnectionDefinitionBase {
 	/** Server name — the `mcp__<server>__` namespace of its adapted tools. */
 	name: string;
-	/** MCP server endpoint. */
-	url: string | URL;
-	/** Defaults to modern streamable HTTP. Use `'sse'` for legacy MCP servers. */
-	transport?: McpTransport;
-	/** Bearer credential, sent as `Authorization: Bearer <token>` on every request. */
-	auth?: McpAuth;
-	/**
-	 * Static headers merged into MCP transport requests (set-wins over
-	 * `requestInit` headers). For credentials, prefer `auth`.
-	 */
-	headers?: HeadersInit;
-	/** Additional MCP transport request configuration. */
-	requestInit?: RequestInit;
-	/** Custom fetch implementation used by the MCP transport. */
-	fetch?: typeof fetch;
-	/** Per-request timeout in milliseconds for MCP requests. Defaults to the MCP SDK default (60 seconds). */
+	/** Per-request timeout in milliseconds for MCP requests. Defaults to 60 seconds. */
 	timeoutMs?: number;
 	/** Reset the per-request timeout whenever the server sends a progress notification. Defaults to `false`. */
 	resetTimeoutOnProgress?: boolean;
@@ -79,6 +103,48 @@ export interface McpConnectionDefinition {
 	optional?: boolean;
 }
 
+/** A remote MCP server, over Streamable HTTP. */
+export interface McpHttpConnectionDefinition extends McpConnectionDefinitionBase {
+	/** MCP server endpoint. */
+	url: string | URL;
+	/** Defaults to `'streamable-http'`. */
+	transport?: 'streamable-http' | 'sse';
+	/** Credential sent with every request; see {@link McpAuth}. */
+	auth?: McpAuth;
+	/**
+	 * Static headers merged into MCP transport requests (set-wins over
+	 * `requestInit` headers). For credentials, prefer `auth`.
+	 */
+	headers?: HeadersInit;
+	/** Additional MCP transport request configuration. */
+	requestInit?: RequestInit;
+	/** Custom fetch implementation used by the MCP transport. */
+	fetch?: typeof fetch;
+}
+
+/**
+ * A local MCP server process spoken to over stdio. Node target only: a
+ * Cloudflare Worker cannot start processes, and the stdio transport is never
+ * bundled into a Worker.
+ */
+export interface McpStdioConnectionDefinition extends McpConnectionDefinitionBase {
+	transport: 'stdio';
+	/** Executable to run. */
+	command: string;
+	/** Command-line arguments. */
+	args?: string[];
+	/** Environment for the process. Default: a minimal inherited environment. */
+	env?: Record<string, string>;
+	/** Working directory for the process. */
+	cwd?: string;
+}
+
+/**
+ * One MCP server, as `defineMcpConnection(...)`, `useMcpConnection(...)`, and
+ * `createMcpConnection(...)` consume it.
+ */
+export type McpConnectionDefinition = McpHttpConnectionDefinition | McpStdioConnectionDefinition;
+
 /**
  * One optional MCP connection that failed to resolve at submission
  * initialization: the server contributed no tools, and the session announces
@@ -89,4 +155,16 @@ export interface McpUnavailableConnection {
 	name: string;
 	/** Failure description, from the connect or discovery error. */
 	reason: string;
+}
+
+/** Whether a definition runs a local process over stdio. */
+export function isStdioDefinition(
+	definition: McpConnectionDefinition,
+): definition is McpStdioConnectionDefinition {
+	return definition.transport === 'stdio';
+}
+
+/** Whether an `auth` value is an {@link McpOAuth} declaration. */
+export function isMcpOAuth(auth: McpAuth | undefined): auth is McpOAuth {
+	return typeof auth === 'object' && auth !== null && (auth as McpOAuth).type === 'oauth';
 }

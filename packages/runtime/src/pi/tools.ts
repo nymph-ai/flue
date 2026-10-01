@@ -42,7 +42,11 @@ import {
 	parseToolInput,
 	resolveToolRun,
 } from '../tool.ts';
-import { getPreparedToolAdapter } from '../tool-adapter.ts';
+import {
+	getMcpToolSource,
+	getPreparedToolAdapter,
+	registerMcpToolSource,
+} from '../tool-adapter.ts';
 import type { ToolDefinition, ToolStep } from '../tool-types.ts';
 import type { FlueHarness, FlueLogger } from '../types.ts';
 
@@ -117,7 +121,7 @@ export function flueToolRegistration(
 	if (!prepared) assertToolDefinition(tool, `Tool "${tool.name}"`);
 	const parameters = (prepared?.parameters ??
 		(tool.input ? valibotToJsonSchema(tool.input) : EMPTY_PARAMETERS)) as unknown as TSchema;
-	return {
+	const registration: ToolRegistration = {
 		name: tool.name,
 		description: tool.description,
 		parameters,
@@ -129,6 +133,10 @@ export function flueToolRegistration(
 			return deps.around ? deps.around({ tool: tool.name, api }, run, context) : run();
 		},
 	};
+	// Code Mode reaches an MCP tool's server through its registration.
+	const source = getMcpToolSource(tool);
+	if (source) registerMcpToolSource(registration, source);
+	return registration;
 }
 
 async function executeFlueTool(
@@ -141,8 +149,18 @@ async function executeFlueTool(
 ): Promise<ToolExecutionResult> {
 	const { mergedSignal } = composeTimeoutSignal(tool.timeoutMs, context.abortSignal);
 	if (prepared) {
-		const text = await prepared.execute(args as Record<string, unknown>, mergedSignal);
-		return { content: [{ type: 'text', text }], details: { customTool: tool.name } };
+		const output = await prepared.execute(args as Record<string, unknown>, mergedSignal);
+		return {
+			content:
+				typeof output === 'string'
+					? [{ type: 'text', text: output }]
+					: output.map((block) =>
+							block.type === 'text'
+								? { type: 'text' as const, text: block.text }
+								: { type: 'image' as const, data: block.data, mimeType: block.mimeType },
+						),
+			details: { customTool: tool.name },
+		};
 	}
 	const log = deps.logger?.(tool.name, api.callId) ?? NOOP_LOGGER;
 	const parsed = parseToolInput(tool, args, mergedSignal, {

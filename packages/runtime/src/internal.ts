@@ -45,6 +45,7 @@ export { createInstrumentationOwner, runWithInstrumentationOwner } from './instr
 // Coordinator-facing MCP shapes: the per-instance connection resolvers the
 // Node and Cloudflare coordinators inject into submission contexts.
 export type { McpConnectionDefinition, McpConnectionResolver } from './mcp.ts';
+export { handleMcpOAuthCallback, MCP_OAUTH_CALLBACK_PATH } from './mcp-oauth.ts';
 export { createNodeAgentCoordinator, createNodeDispatchQueue } from './node/agent-coordinator.ts';
 // The shared Node runtime assembly `start()` and the CLI's `flue run` build
 // on: registration → persistence validation → coordinator → runtime seed.

@@ -1,4 +1,4 @@
-import type { McpConnectionDefinition, McpTransport } from '../mcp-types.ts';
+import { isMcpOAuth, type McpConnectionDefinition, type McpTransport } from '../mcp-types.ts';
 import { requireRenderFrame } from './frame.ts';
 
 const DEFINITION_KEYS = new Set<string>([
@@ -13,9 +13,16 @@ const DEFINITION_KEYS = new Set<string>([
 	'resetTimeoutOnProgress',
 	'tools',
 	'optional',
+	'command',
+	'args',
+	'env',
+	'cwd',
 ]);
 
-const TRANSPORTS: readonly McpTransport[] = ['streamable-http', 'sse'];
+const STDIO_KEYS = new Set<string>(['command', 'args', 'env', 'cwd']);
+const HTTP_KEYS = new Set<string>(['url', 'auth', 'headers', 'requestInit', 'fetch']);
+
+const TRANSPORTS: readonly McpTransport[] = ['streamable-http', 'stdio', 'sse'];
 
 /**
  * Validate an MCP connection definition. Shared between
@@ -40,44 +47,15 @@ function assertMcpConnectionDefinition(
 			throw new Error(`[flue] ${source} "${name}" received unknown field "${key}".`);
 		}
 	}
-	const { url } = candidate;
-	if (typeof url !== 'string' && !(url instanceof URL)) {
-		throw new Error(`[flue] ${source} "${name}" requires \`url\`: the MCP server endpoint.`);
-	}
-	if (typeof url === 'string' && !URL.canParse(url)) {
-		throw new Error(
-			`[flue] ${source} "${name}" url ${JSON.stringify(url)} is not a valid absolute URL.`,
-		);
-	}
 	if (candidate.transport !== undefined && !TRANSPORTS.includes(candidate.transport)) {
 		throw new Error(
 			`[flue] ${source} "${name}" transport must be one of ${TRANSPORTS.map((transport) => `'${transport}'`).join(', ')}.`,
 		);
 	}
-	if (candidate.auth !== undefined) {
-		const validStatic = typeof candidate.auth === 'string' && candidate.auth.length > 0;
-		if (!validStatic && typeof candidate.auth !== 'function') {
-			throw new Error(
-				`[flue] ${source} "${name}" auth must be a bearer token or a function resolving one per request.`,
-			);
-		}
-	}
-	if (
-		candidate.headers !== undefined &&
-		(typeof candidate.headers !== 'object' || candidate.headers === null)
-	) {
-		throw new Error(
-			`[flue] ${source} "${name}" headers must be a static HeadersInit value; for credentials resolved per request, use \`auth\`.`,
-		);
-	}
-	if (
-		candidate.requestInit !== undefined &&
-		(typeof candidate.requestInit !== 'object' || Array.isArray(candidate.requestInit))
-	) {
-		throw new Error(`[flue] ${source} "${name}" requestInit must be an object.`);
-	}
-	if (candidate.fetch !== undefined && typeof candidate.fetch !== 'function') {
-		throw new Error(`[flue] ${source} "${name}" fetch must be a function.`);
+	if (candidate.transport === 'stdio') {
+		assertStdioFields(definition as Record<string, unknown>, source, name);
+	} else {
+		assertHttpFields(definition as Record<string, unknown>, source, name);
 	}
 	if (
 		candidate.timeoutMs !== undefined &&
@@ -105,6 +83,91 @@ function assertMcpConnectionDefinition(
 	}
 	if (candidate.optional !== undefined && typeof candidate.optional !== 'boolean') {
 		throw new Error(`[flue] ${source} "${name}" optional must be a boolean.`);
+	}
+}
+
+function assertStdioFields(
+	definition: Record<string, unknown>,
+	source: string,
+	name: string,
+): void {
+	for (const key of Object.keys(definition)) {
+		if (HTTP_KEYS.has(key)) {
+			throw new Error(
+				`[flue] ${source} "${name}" uses transport 'stdio', which takes no \`${key}\`.`,
+			);
+		}
+	}
+	if (typeof definition.command !== 'string' || definition.command.length === 0) {
+		throw new Error(
+			`[flue] ${source} "${name}" uses transport 'stdio' and requires \`command\`: the server executable.`,
+		);
+	}
+	if (
+		definition.args !== undefined &&
+		(!Array.isArray(definition.args) || definition.args.some((arg) => typeof arg !== 'string'))
+	) {
+		throw new Error(`[flue] ${source} "${name}" args must be an array of strings.`);
+	}
+	if (
+		definition.env !== undefined &&
+		(typeof definition.env !== 'object' ||
+			definition.env === null ||
+			Object.values(definition.env).some((value) => typeof value !== 'string'))
+	) {
+		throw new Error(`[flue] ${source} "${name}" env must be a record of strings.`);
+	}
+	if (definition.cwd !== undefined && typeof definition.cwd !== 'string') {
+		throw new Error(`[flue] ${source} "${name}" cwd must be a string.`);
+	}
+}
+
+function assertHttpFields(definition: Record<string, unknown>, source: string, name: string): void {
+	for (const key of Object.keys(definition)) {
+		if (STDIO_KEYS.has(key)) {
+			throw new Error(
+				`[flue] ${source} "${name}" received \`${key}\`, which only a transport 'stdio' definition takes.`,
+			);
+		}
+	}
+	const { url } = definition;
+	if (typeof url !== 'string' && !(url instanceof URL)) {
+		throw new Error(`[flue] ${source} "${name}" requires \`url\`: the MCP server endpoint.`);
+	}
+	if (typeof url === 'string' && !URL.canParse(url)) {
+		throw new Error(
+			`[flue] ${source} "${name}" url ${JSON.stringify(url)} is not a valid absolute URL.`,
+		);
+	}
+	const auth = definition.auth as unknown;
+	if (auth !== undefined) {
+		const validStatic = typeof auth === 'string' && auth.length > 0;
+		const validOAuth =
+			isMcpOAuth(auth as never) &&
+			typeof (auth as { principal?: unknown }).principal === 'string' &&
+			typeof (auth as { redirectUrl?: unknown }).redirectUrl === 'string';
+		if (!validStatic && typeof auth !== 'function' && !validOAuth) {
+			throw new Error(
+				`[flue] ${source} "${name}" auth must be a bearer token, a function resolving one per request, or mcpOAuth({ principal, redirectUrl }).`,
+			);
+		}
+	}
+	if (
+		definition.headers !== undefined &&
+		(typeof definition.headers !== 'object' || definition.headers === null)
+	) {
+		throw new Error(
+			`[flue] ${source} "${name}" headers must be a static HeadersInit value; for credentials resolved per request, use \`auth\`.`,
+		);
+	}
+	if (
+		definition.requestInit !== undefined &&
+		(typeof definition.requestInit !== 'object' || Array.isArray(definition.requestInit))
+	) {
+		throw new Error(`[flue] ${source} "${name}" requestInit must be an object.`);
+	}
+	if (definition.fetch !== undefined && typeof definition.fetch !== 'function') {
+		throw new Error(`[flue] ${source} "${name}" fetch must be a function.`);
 	}
 }
 
