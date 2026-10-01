@@ -45,8 +45,8 @@
 		// scripted | workers-ai
 		"SOCIETY_MODEL": "scripted",
 		"WORKERS_AI_MODEL": "@cf/moonshotai/kimi-k2.6",
-		// The sage always runs on Workers AI.
-		"SAGE_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		// The sage always runs on Workers AI (not llama-3.3 until nymph-ai/nymphai#3866).
+		"SAGE_MODEL": "@cf/moonshotai/kimi-k2.6",
 		// The steward's questions expire after 30 minutes.
 		"QUESTION_TIMEOUT_MS": "1800000",
 		"SCRIPTED_TOKENS_PER_SECOND": "50",
