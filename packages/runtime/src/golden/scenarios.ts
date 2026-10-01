@@ -122,7 +122,7 @@ const lookup = defineTool({
 	description: 'Look up a value by key.',
 	input: v.object({ key: v.string() }),
 	output: v.object({ value: v.string() }),
-	run: ({ data }) => ({ value: data.key.toUpperCase() }),
+	run: ({ data }) => ({ output: { value: data.key.toUpperCase() } }),
 });
 
 const explode = defineTool({
@@ -151,7 +151,7 @@ const classify = defineTool({
 		const response = await harness.prompt('Classify the message as spam or ham.', {
 			result: v.object({ label: v.picklist(['spam', 'ham']) }),
 		});
-		return response.data;
+		return { output: response.data };
 	},
 });
 
