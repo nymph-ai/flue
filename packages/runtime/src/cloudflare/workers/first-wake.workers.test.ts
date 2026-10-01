@@ -92,6 +92,12 @@ describe("a new entity's first wake on Durable Object SQLite (workerd)", () => {
 			phases.doorbell = take('doorbell (__flueWake)');
 			await untilSettled(stub, 1);
 			phases.birth = take('alarm: pump, birth admission, turn');
+			// The live-task backstop the turn armed, made due now.
+			await runInDurableObject(stub, (_instance, state) =>
+				sqlTrace.unrecorded(() =>
+					state.storage.sql.exec('UPDATE cf_agents_schedules SET time = 0').toArray(),
+				),
+			);
 			await runDurableObjectAlarm(stub);
 			await sleep(200);
 			phases.backstop = take('backstop alarm (live-tasks)');

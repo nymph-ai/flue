@@ -17,9 +17,19 @@ export interface StatementCost {
 	rowsWritten: number;
 }
 
+/** Whose statement: by the tables it names. */
+export type StatementOwner = 'agents-sdk' | 'flue' | 'pi';
+
+export function statementOwner(sql: string): StatementOwner {
+	if (/\bcf_agents?_/.test(sql)) return 'agents-sdk';
+	if (/\bflue_/.test(sql)) return 'flue';
+	return 'pi';
+}
+
 export interface TraceSummary {
 	readonly rowsRead: number;
 	readonly rowsWritten: number;
+	readonly byOwner: Readonly<Record<StatementOwner, { rowsRead: number; rowsWritten: number }>>;
 	/** Keys the key-value API read and wrote (`get`/`put`/`delete`). */
 	readonly kv: { readonly read: number; readonly written: number };
 	/** Per statement text (whitespace collapsed), most expensive first. */
@@ -67,6 +77,11 @@ class SqlTrace {
 		const statements = new Map<string, StatementCost>();
 		let rowsRead = 0;
 		let rowsWritten = 0;
+		const byOwner: Record<StatementOwner, { rowsRead: number; rowsWritten: number }> = {
+			'agents-sdk': { rowsRead: 0, rowsWritten: 0 },
+			flue: { rowsRead: 0, rowsWritten: 0 },
+			pi: { rowsRead: 0, rowsWritten: 0 },
+		};
 		for (const { sql, cursor } of this.#cursors) {
 			const key = sql.replace(/\s+/g, ' ').trim();
 			const cost = statements.get(key) ?? { calls: 0, rowsRead: 0, rowsWritten: 0 };
@@ -76,10 +91,14 @@ class SqlTrace {
 			statements.set(key, cost);
 			rowsRead += cursor.rowsRead;
 			rowsWritten += cursor.rowsWritten;
+			const owner = byOwner[statementOwner(key)];
+			owner.rowsRead += cursor.rowsRead;
+			owner.rowsWritten += cursor.rowsWritten;
 		}
 		return {
 			rowsRead,
 			rowsWritten,
+			byOwner,
 			kv: { ...this.#kv },
 			statements: [...statements.entries()].sort(
 				([, a], [, b]) => b.rowsRead + b.rowsWritten - (a.rowsRead + a.rowsWritten),
@@ -130,7 +149,7 @@ export function installSqlTrace(storage: DurableObjectStorage): void {
 }
 
 /** `[first-wake]` report lines: totals, then the `limit` most expensive statements. */
-export function formatTrace(label: string, summary: TraceSummary, limit = 40): string {
+export function formatTrace(label: string, summary: TraceSummary, limit = 200): string {
 	const lines = summary.statements
 		.slice(0, limit)
 		.map(
@@ -139,6 +158,9 @@ export function formatTrace(label: string, summary: TraceSummary, limit = 40): s
 		);
 	return [
 		`[first-wake] ${label}: sql read ${summary.rowsRead} written ${summary.rowsWritten}; kv keys read ${summary.kv.read} written ${summary.kv.written}; ${summary.statements.length} statements`,
+		`  by owner: ${Object.entries(summary.byOwner)
+			.map(([owner, rows]) => `${owner} ${rows.rowsRead}r/${rows.rowsWritten}w`)
+			.join(', ')}`,
 		...lines.map((line) => `  ${line}`),
 	].join('\n');
 }
