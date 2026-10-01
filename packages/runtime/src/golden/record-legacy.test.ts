@@ -55,6 +55,23 @@ async function readAllUpdates(agentName: string, id: string): Promise<unknown[]>
 	return chunks;
 }
 
+/** The raw canonical records, for the legacy-import test. */
+async function readRecords(agentName: string, id: string): Promise<unknown[]> {
+	const runtime = getFlueRuntime();
+	if (runtime?.target !== 'node') throw new Error('expected the node runtime');
+	const batches: unknown[] = [];
+	let offset = '-1';
+	while (true) {
+		const read = await runtime.conversationStreamStore.read(agentStreamPath(agentName, id), {
+			offset,
+		});
+		for (const batch of read.batches) batches.push(batch.records);
+		offset = read.nextOffset;
+		if (read.upToDate) break;
+	}
+	return batches;
+}
+
 for (const scenario of GOLDEN_SCENARIOS) {
 	it.runIf(RECORD)(
 		`records the legacy wire for ${scenario.name}`,
