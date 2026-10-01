@@ -46,6 +46,10 @@
 			"types": "./dist/cloudflare/internal.d.mts",
 			"import": "./dist/cloudflare/internal.mjs"
 		},
+		"./qualification": {
+			"types": "./dist/qualification/index.d.mts",
+			"import": "./dist/qualification/index.mjs"
+		},
 		"./node": {
 			"types": "./dist/node/index.d.mts",
 			"import": "./dist/node/index.mjs"

@@ -1,0 +1,43 @@
+{
+	// The agent society Worker. Flue contributes the generated entry and the
+	// per-agent Durable Object bindings (flueWorkerConfig() in vite.config.ts);
+	// everything else is authored here.
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "society",
+	"compatibility_date": "2026-09-25",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	// Workers AI, for SOCIETY_MODEL=workers-ai.
+	"ai": { "binding": "AI" },
+	// Electric Agents in k3s (namespace fabric-society), through Cloudflare
+	// Tunnel b5c8a1b2-99d5-4914-b64a-a7874383cb5e: FLUE_STREAMS is the binding
+	// every instance's log, inbox and events stream are reached through.
+	"vpc_services": [{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }],
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"durable_objects": {
+		"bindings": [{ "name": "QUAL_REPLICA", "class_name": "QualReplica" }]
+	},
+	// Adding an agent = a new 'use agent' module, its mount in app.ts, and a
+	// migration for its generated class (`Flue<Name>Agent`).
+	"migrations": [
+		{
+			"tag": "society-v1",
+			"new_sqlite_classes": ["FlueAliceAgent", "FlueBobAgent", "FlueCuratorAgent", "QualReplica"]
+		}
+	],
+	"vars": {
+		// The agents-server's own root: it serves the Durable Streams protocol and
+		// the subscription API (/__ds/subscriptions) there. The VPC binding
+		// routes the cluster-local name.
+		"FLUE_STREAMS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437",
+		"FLUE_STREAMS_JWKS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437/__ds/jwks.json",
+		"FLUE_STREAMS_WEBHOOK_URL": "https://society.nymphai.workers.dev/__flue/streams/wake",
+		// scripted | workers-ai
+		"SOCIETY_MODEL": "scripted",
+		"WORKERS_AI_MODEL": "@cf/moonshotai/kimi-k2.6",
+		"SCRIPTED_TOKENS_PER_SECOND": "50",
+		// Serves /qual/* when the build compiled it in (QUALIFICATION=1 vite build).
+		"QUALIFICATION": "1"
+	}
+}
