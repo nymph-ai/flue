@@ -89,6 +89,7 @@ for (const scenario of GOLDEN_SCENARIOS) {
 					replies: run.replies,
 					history: await readRoute(agentName, id, 'view=history'),
 					updates: await readAllUpdates(agentName, id),
+					records: await readRecords(agentName, id),
 				};
 				const encoded = base64(JSON.stringify(fixture));
 				console.log(`GOLDEN_FIXTURE ${scenario.name} ${encoded}`);
