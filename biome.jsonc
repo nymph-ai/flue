@@ -51,7 +51,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["**/tsconfig.json", "**/tsconfig.*.json"],
+			"includes": ["**/tsconfig.json", "**/tsconfig.*.json", "knip.json"],
 			"json": {
 				"parser": {
 					"allowComments": true,

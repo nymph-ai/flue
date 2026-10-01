@@ -25,8 +25,8 @@ minimumReleaseAgeExclude:
   - workerd
   - miniflare
   - '@ai-sdk/*'
-  - '@earendil-works/pi-ai'
-  - '@earendil-works/pi-agent-core'
+  # Pi is pinned exactly (see overrides below); its release cadence is the gate.
+  - '@earendil-works/*'
   # Vendor SDKs pinned exactly by @earendil-works/pi-ai; the pi release
   # cadence is the effective gate for these.
   - '@anthropic-ai/sdk'
@@ -39,3 +39,14 @@ minimumReleaseAgeExclude:
   - protobufjs
   - react
   - react-dom
+overrides:
+  # Pi is pinned exactly at one release across the workspace (PI_UPGRADE_PLAN.md
+  # §7 step 1). Pi packages depend on each other with caret ranges, so every
+  # @earendil-works package is forced to the same version here.
+  '@earendil-works/chord': 0.99.2
+  '@earendil-works/pi-agent-core': 0.99.2
+  '@earendil-works/pi-ai': 0.99.2
+  '@earendil-works/pi-codemode': 0.99.2
+  '@earendil-works/pi-durable': 0.99.2
+  '@earendil-works/pi-mcp': 0.99.2
+  '@earendil-works/pi-telemetry': 0.99.2
