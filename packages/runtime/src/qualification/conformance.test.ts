@@ -42,6 +42,7 @@ import {
 } from '../pi/stream-storage-test-support.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
+import { compareOffsets } from '../streams/offset.ts';
 import {
 	type BackendSpec,
 	backends,
@@ -257,7 +258,7 @@ describe.each(backends())('conformance over $name', (backend) => {
 	});
 
 	describe('c. crash around the Electric append acknowledgement', () => {
-		it.each([0, 2])(
+		it.each([0, 2, 8])(
 			'crash after the local commit, before the POST (after %i appends): published once on reopen',
 			async (after) => {
 				const qw = await setup(backend);
@@ -275,7 +276,7 @@ describe.each(backends())('conformance over $name', (backend) => {
 			TIMEOUT,
 		);
 
-		it.each([0, 2])(
+		it.each([0, 2, 8])(
 			'crash after the POST, before the ack (after %i appends): the retry is a duplicate, never a second commit',
 			async (after) => {
 				const qw = await setup(backend);
@@ -435,8 +436,15 @@ describe.each(backends())('conformance over $name', (backend) => {
 					const before = (await piConversationSource(freshClient(qw.log), path).head()).snapshot;
 					await entity.close();
 					await entity.open();
+					await entity.flush();
 					const after = (await piConversationSource(freshClient(qw.log), path).head()).snapshot;
-					expect(after).toEqual(before);
+					// The same public conversation, projected cold from the log after a
+					// redeploy. Reopening may append its own commits (it re-renders), so
+					// the offset may move; nothing a reader sees does.
+					const { offset: beforeOffset, ...beforeHistory } = (before ?? {}) as { offset?: string };
+					const { offset: afterOffset, ...afterHistory } = (after ?? {}) as { offset?: string };
+					expect(afterHistory).toEqual(beforeHistory);
+					expect(compareOffsets(afterOffset ?? '-1', beforeOffset ?? '-1')).toBeGreaterThanOrEqual(0);
 					await expectReplaysIdentically(qw, entity);
 				}
 			},

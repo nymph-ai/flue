@@ -454,8 +454,11 @@ export function normalizeIds(value: unknown, prefix = ''): unknown {
 			if (['messageId', 'submissionId', 'eventId', 'requestId', 'at', 'acceptedAt'].includes(key)) {
 				return typeof inner === 'string' || typeof inner === 'number' ? '<id>' : inner;
 			}
-			if (typeof inner === 'string' && prefix && inner.includes(prefix)) {
-				return inner.replaceAll(prefix, '');
+			if (typeof inner === 'string') {
+				// Faux tool call ids are random (pi-ai's `fauxToolCall`), and so are
+				// the message/event ids derived from them.
+				const stripped = inner.replace(/tool:\d+:[a-z0-9]+/g, 'tool:<call>');
+				return prefix ? stripped.replaceAll(prefix, '') : stripped;
 			}
 			return inner;
 		}),
