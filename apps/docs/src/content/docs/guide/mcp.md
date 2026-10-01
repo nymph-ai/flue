@@ -1,7 +1,7 @@
 ---
 title: MCP
 description: Connect agents to remote MCP servers and mount their tools.
-lastReviewedAt: 2026-07-23
+lastReviewedAt: 2026-10-01
 ---
 
 [MCP](https://modelcontextprotocol.io) (Model Context Protocol) is an open standard for connecting AI agents to external services. Instead of writing a [tool](/docs/guide/tools/) for every Linear, Notion, or GitHub action your agent needs, connect to an MCP server and your agent gets access to its tools, remotely.
@@ -125,22 +125,13 @@ On Node, credentials are kept in memory; pass `setMcpOAuthBroker(createMcpOAuthB
 
 ## Protocol and transports
 
-Flue speaks the stateless MCP protocol (revision 2026-07-28) over Streamable HTTP and falls back to servers on earlier revisions. An agent keeps no connection open between messages, so a server's tool list is re-read when its cache hint expires, or on the agent's next wake.
+Flue speaks one MCP protocol revision, the stateless 2026-07-28, over Streamable HTTP. A connection starts with `server/discover` and carries no session, so an agent keeps no connection open between messages: a server's tool list is re-read when its cache hint expires, or on the agent's next wake.
 
-On Node, a local server process can be used over stdio:
+Servers on earlier revisions are not supported. Flue does not fall back to the 2025 `initialize` handshake; connecting to such a server fails with `McpProtocolVersionError`, which names the server and the versions it offered (or what it answered to `server/discover`). There is no stdio transport on any target, and the legacy HTTP+SSE transport is not supported either: run a local server behind Streamable HTTP.
 
-```ts
-useMcpConnection({
-  name: 'files',
-  transport: 'stdio',
-  command: 'npx',
-  args: ['-y', 'my-mcp-server'],
-});
-```
+### When a server asks for input
 
-Cloudflare Workers cannot start processes, so stdio servers fail there with an error. The legacy HTTP+SSE transport is not supported.
-
-A server that asks for user input in the middle of a tool call (an elicitation) gets no answer: the call fails with an error naming what the server asked for.
+A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue puts that request to the agent's question channel and, once answered, sends the call again with the answers and the server's `requestState`. Questions to people are published as entity events (see [Code Mode approvals](/docs/guide/code-mode/#approvals), which use the same channel). Until that is wired, nothing answers, and the call fails with `McpInputRequiredError`, whose message names what the server asked for.
 
 ## Specifying tools
 
@@ -201,6 +192,7 @@ This can also be helpful inside of a Node.js script, if you're ever using the No
 
 ## Next steps
 
+- [Code Mode](/docs/guide/code-mode/) — let the model call MCP servers from code, with approvals, instead of one tool call at a time.
 - [Tools](/docs/guide/tools/) — how tools work in Flue, including guards and conditional mounting.
 - [`useMcpConnection` reference](/docs/reference/agent-hooks-api/#usemcpconnection) — the hook's render contract and semantics.
 - [`McpConnectionDefinition`](/docs/reference/agent-api/#mcpconnectiondefinition) and [`createMcpConnection`](/docs/reference/agent-api/#createmcpconnection) — the definition fields and the adaptation contract.
