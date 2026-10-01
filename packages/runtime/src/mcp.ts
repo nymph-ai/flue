@@ -1,12 +1,19 @@
+// Only these three names are imported: the pi-mcp root also re-exports
+// `StdioTransport` (node:child_process, cross-spawn), which the package's
+// `sideEffects: false` lets the bundler drop, and which workerd could not
+// load. @flue/vite aliases both modules to throwing stubs on the Cloudflare
+// target as a backstop (PI_UPGRADE_PLAN.md §6).
 import {
 	type AuthProvider,
 	type CallToolResult,
-	Client,
-	SSEClientTransport,
-	StreamableHTTPClientTransport,
+	McpClient,
+	type McpFetch,
+	type McpRequestOptions,
+	type McpTransport as PiMcpTransport,
+	StreamableHttpTransport,
 	type Tool,
-	type Transport,
-} from '@modelcontextprotocol/client';
+	toLlmContent,
+} from '@earendil-works/pi-mcp';
 import { version as runtimeVersion } from '../package.json' with { type: 'json' };
 import type { McpAuth, McpConnectionDefinition, McpTransport } from './mcp-types.ts';
 import { registerPreparedToolAdapter } from './tool-adapter.ts';
@@ -19,9 +26,19 @@ export type {
 	McpTransport,
 } from './mcp-types.ts';
 
-/** Request options in the MCP SDK's shape (its `timeout` is milliseconds). */
-type McpRequestOptions = {
-	timeout?: number;
+/**
+ * The per-request timeout Flue has always documented for `timeoutMs`. pi-mcp's
+ * own default is 30 seconds; the connection keeps Flue's.
+ */
+const DEFAULT_MCP_REQUEST_TIMEOUT_MS = 60_000;
+
+/** Per-request behaviour shared by discovery and tool calls. */
+type McpCallOptions = {
+	/**
+	 * Renew the request timeout on server progress. pi-mcp renews it whenever a
+	 * progress notification arrives for a request that asked for progress, and
+	 * only asks when an `onProgress` listener is supplied.
+	 */
 	resetTimeoutOnProgress?: boolean;
 };
 
@@ -82,8 +99,6 @@ export function createMcpConnectionCache(): McpConnectionCache {
 	};
 }
 
-type McpClient = Pick<Client, 'callTool' | 'close' | 'connect' | 'listTools'>;
-
 /**
  * Connects to a remote MCP server described by a
  * {@link McpConnectionDefinition} and adapts its listed tools into ordinary
@@ -96,54 +111,37 @@ type McpClient = Pick<Client, 'callTool' | 'close' | 'connect' | 'listTools'>;
 export async function createMcpConnection(
 	definition: McpConnectionDefinition,
 ): Promise<McpConnection> {
-	const url = definition.url instanceof URL ? definition.url : new URL(definition.url);
-	const requestInit = mergeRequestInit(definition.requestInit, definition.headers);
-	const transport = createTransport(
-		url,
-		definition.transport ?? 'streamable-http',
-		requestInit,
-		definition.fetch,
-		definition.auth === undefined ? undefined : createAuthProvider(definition.auth),
-	);
-	const client = new Client({
+	const transport = createTransport(definition);
+	const client = new McpClient({
 		name: 'flue',
 		version: runtimeVersion,
+		requestTimeoutMs: definition.timeoutMs ?? DEFAULT_MCP_REQUEST_TIMEOUT_MS,
 	});
 
 	return createMcpConnectionWithClient(
 		definition.name,
 		client,
 		transport,
-		{
-			timeout: definition.timeoutMs,
-			resetTimeoutOnProgress: definition.resetTimeoutOnProgress,
-		},
+		{ resetTimeoutOnProgress: definition.resetTimeoutOnProgress },
 		{ tools: definition.tools },
 	);
 }
 
+/** The slice of pi-mcp's {@link McpClient} a connection uses. */
+type McpConnectionClient = Pick<McpClient, 'callTool' | 'close' | 'connect' | 'listTools'>;
+
 export async function createMcpConnectionWithClient(
 	name: string,
-	client: McpClient,
-	transport: Transport,
-	requestOptions: McpRequestOptions = {},
+	client: McpConnectionClient,
+	transport: PiMcpTransport,
+	callOptions: McpCallOptions = {},
 	selection: { tools?: readonly string[] } = {},
 ): Promise<McpConnection> {
 	try {
 		await client.connect(transport);
-		let page = await client.listTools(undefined, requestOptions);
-		const tools = [...page.tools];
-		const seenCursors = new Set<string>();
-		while (page.nextCursor !== undefined) {
-			if (seenCursors.has(page.nextCursor)) {
-				throw new Error(
-					`[flue] MCP server "${name}" repeated tools/list cursor ${JSON.stringify(page.nextCursor)} during tool discovery.`,
-				);
-			}
-			seenCursors.add(page.nextCursor);
-			page = await client.listTools({ cursor: page.nextCursor }, requestOptions);
-			tools.push(...page.tools);
-		}
+		// pi-mcp follows `nextCursor` through every page and rejects a server
+		// that repeats a cursor, so discovery cannot loop.
+		const tools = await client.listTools(progressOptions(callOptions));
 
 		return {
 			name,
@@ -151,7 +149,7 @@ export async function createMcpConnectionWithClient(
 				name,
 				client,
 				selectMcpTools(name, tools, selection.tools),
-				requestOptions,
+				callOptions,
 			),
 			close: () => client.close(),
 		};
@@ -162,10 +160,10 @@ export async function createMcpConnectionWithClient(
 }
 
 /**
- * Adapt the `auth` credential to the MCP SDK's {@link AuthProvider}: the
- * transport calls `token()` before every request, and on a 401 awaits
- * `onUnauthorized` and retries once — re-resolving the token, so the
- * application's credential store is the refresh policy.
+ * Adapt the `auth` credential to pi-mcp's {@link AuthProvider}: the transport
+ * calls `token()` before every request, and on a 401 (or a 403 asking for more
+ * scope) awaits `onUnauthorized` and retries once — re-resolving the token, so
+ * the application's credential store is the refresh policy.
  */
 function createAuthProvider(auth: McpAuth): AuthProvider {
 	const resolveToken = typeof auth === 'function' ? auth : () => auth;
@@ -216,32 +214,74 @@ function formatToolNames(names: readonly string[]): string {
 	return [...new Set(names)].map((name) => JSON.stringify(name)).join(', ');
 }
 
-function createTransport(
-	url: URL,
-	transport: McpTransport,
-	requestInit: RequestInit,
-	fetchImpl: typeof fetch | undefined,
-	authProvider: AuthProvider | undefined,
-) {
+/**
+ * The Streamable HTTP transport for a definition. Legacy HTTP+SSE servers are
+ * refused explicitly: pi-mcp implements only Streamable HTTP (and stdio, which
+ * Flue does not expose), and silently trying Streamable HTTP against an SSE
+ * endpoint would fail later with a misleading protocol error.
+ */
+function createTransport(definition: McpConnectionDefinition): StreamableHttpTransport {
+	const transport: McpTransport = definition.transport ?? 'streamable-http';
 	if (transport === 'sse') {
-		return new SSEClientTransport(url, {
-			requestInit,
-			fetch: fetchImpl,
-			authProvider,
-		});
+		throw new Error(
+			`[flue] MCP server "${definition.name}" is declared with transport 'sse' (the legacy HTTP+SSE transport), which the MCP client does not support. ` +
+				"Point `url` at the server's Streamable HTTP endpoint and drop `transport: 'sse'` — servers that still offer legacy SSE almost always serve Streamable HTTP too.",
+		);
 	}
-	return new StreamableHTTPClientTransport(url, {
-		requestInit,
-		fetch: fetchImpl,
-		authProvider,
+	const { headers: initHeaders, ...init } = definition.requestInit ?? {};
+	return new StreamableHttpTransport({
+		url: definition.url,
+		headers: mergeHeaders(initHeaders, definition.headers),
+		fetch: createFetch(definition.fetch, init),
+		...(definition.auth === undefined ? {} : { authProvider: createAuthProvider(definition.auth) }),
 	});
+}
+
+/**
+ * `requestInit` headers first, then `headers` (set wins), as a plain record —
+ * the shape pi-mcp takes. Per-request protocol headers still override both.
+ */
+function mergeHeaders(
+	initHeaders: HeadersInit | undefined,
+	headers: HeadersInit | undefined,
+): Record<string, string> {
+	const merged = new Headers(initHeaders);
+	for (const [key, value] of new Headers(headers)) merged.set(key, value);
+	return Object.fromEntries(merged);
+}
+
+/**
+ * pi-mcp has no `requestInit`: it hands `fetch` only method, headers, body and
+ * its own abort signal. The rest of `requestInit` (credentials, cache,
+ * redirect, a caller signal, …) is applied by wrapping `fetch`, under the
+ * transport's per-request fields. Without any, the transport keeps its default.
+ */
+function createFetch(
+	baseFetch: typeof fetch | undefined,
+	init: Omit<RequestInit, 'headers'>,
+): McpFetch | undefined {
+	if (Object.keys(init).length === 0) return baseFetch;
+	return (input, request) => {
+		const signals = [init.signal, request?.signal].filter(
+			(signal): signal is AbortSignal => signal !== undefined && signal !== null,
+		);
+		return (baseFetch ?? fetch)(input, {
+			...init,
+			...request,
+			...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
+		});
+	};
+}
+
+function progressOptions(callOptions: McpCallOptions): McpRequestOptions {
+	return callOptions.resetTimeoutOnProgress ? { onProgress: () => {} } : {};
 }
 
 function createMcpTools(
 	serverName: string,
-	client: McpClient,
+	client: McpConnectionClient,
 	tools: Tool[],
-	requestOptions: McpRequestOptions,
+	callOptions: McpCallOptions,
 ): ToolDefinition[] {
 	const names = new Set<string>();
 
@@ -282,16 +322,10 @@ function createMcpTools(
 			parameters: normalizeInputSchema(tool.inputSchema),
 			async execute(args, signal) {
 				if (signal?.aborted) throw new Error('Operation aborted');
-				// The client validates structured output against the tool's
-				// declared output schema itself and surfaces a mismatch as an
-				// error — nothing to re-check here.
-				const result: CallToolResult = await client.callTool(
-					{
-						name: tool.name,
-						arguments: args,
-					},
-					{ ...requestOptions, signal },
-				);
+				const result = await client.callTool(tool.name, args, {
+					...progressOptions(callOptions),
+					...(signal === undefined ? {} : { signal }),
+				});
 				const text = formatMcpResult(result);
 				if (result.isError) {
 					throw new Error(text);
@@ -301,21 +335,6 @@ function createMcpTools(
 		});
 		return Object.freeze(definition);
 	});
-}
-
-function mergeRequestInit(
-	requestInit: RequestInit | undefined,
-	headers: HeadersInit | undefined,
-): RequestInit {
-	if (!headers) return requestInit ?? {};
-	const mergedHeaders = new Headers(requestInit?.headers);
-	for (const [key, value] of new Headers(headers)) {
-		mergedHeaders.set(key, value);
-	}
-	return {
-		...requestInit,
-		headers: mergedHeaders,
-	};
 }
 
 function createToolName(serverName: string, toolName: string): string {
@@ -353,42 +372,17 @@ function normalizeInputSchema(schema: Tool['inputSchema']): object {
 	};
 }
 
+/**
+ * The model-facing text of a tool result, through pi-mcp's `toLlmContent`:
+ * text passes through, embedded text resources are unwrapped, audio, links and
+ * binary resources become short placeholders, and `structuredContent` is used
+ * only when the server sent no content blocks (servers mirror structured
+ * results as text). Flue's prepared-tool adapter returns one string, so images
+ * are named by a placeholder here rather than attached.
+ */
 function formatMcpResult(result: CallToolResult): string {
-	const parts: string[] = [];
-
-	if (result.structuredContent !== undefined) {
-		parts.push(`Structured content:\n${JSON.stringify(result.structuredContent, null, 2)}`);
-	}
-
-	for (const item of result.content ?? []) {
-		if (item.type === 'text') {
-			parts.push(item.text);
-			continue;
-		}
-		if (item.type === 'image') {
-			parts.push(`[Image: ${item.mimeType}, ${item.data.length} base64 chars]`);
-			continue;
-		}
-		if (item.type === 'audio') {
-			parts.push(`[Audio: ${item.mimeType}, ${item.data.length} base64 chars]`);
-			continue;
-		}
-		if (item.type === 'resource') {
-			const resource = item.resource;
-			if ('text' in resource) {
-				parts.push(`[Resource: ${resource.uri}]\n${resource.text}`);
-			} else {
-				parts.push(`[Resource: ${resource.uri}, ${resource.blob.length} base64 chars]`);
-			}
-			continue;
-		}
-		if (item.type === 'resource_link') {
-			const description = item.description ? ` - ${item.description}` : '';
-			parts.push(`[Resource link: ${item.name} (${item.uri})${description}]`);
-			continue;
-		}
-		parts.push(JSON.stringify(item));
-	}
-
+	const parts = toLlmContent(result).map((item) =>
+		item.type === 'text' ? item.text : `[Image: ${item.mimeType}, ${item.data.length} base64 chars]`,
+	);
 	return parts.filter(Boolean).join('\n\n') || '(MCP tool returned no content)';
 }

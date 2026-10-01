@@ -10,7 +10,11 @@
 		// The Flue Pi adapter (PI_UPGRADE_PLAN.md §7 steps 6, 10, 11) is not wired
 		// into the coordinators until step 8; its exports are its public surface.
 		"packages/runtime/src/pi/*.ts": ["exports", "types"],
-		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"]
+		"examples/cloudflare/src/sandboxes/cloudflare-computer.ts": ["exports", "types"],
+		// Read by the Pi registry bridge once the coordinators cut over
+		// (PI_UPGRADE_PLAN.md §7 step 8); remove with the other temporary ignores.
+		"packages/runtime/src/pi/codemode/tool.ts": ["exports", "types"],
+		"packages/runtime/src/hooks/use-code-mode.ts": ["exports", "types"]
 	},
 	"workspaces": {
 		".": {
@@ -42,10 +46,7 @@
 			"ignoreDependencies": [
 				"@hono/node-server",
 				// consumed by the Pi adapter (PI_UPGRADE_PLAN.md §7)
-				"@earendil-works/chord",
-				"@earendil-works/pi-codemode",
-				"@earendil-works/pi-durable",
-				"@earendil-works/pi-mcp"
+				"@earendil-works/pi-durable"
 			]
 		},
 		"packages/vite": {
