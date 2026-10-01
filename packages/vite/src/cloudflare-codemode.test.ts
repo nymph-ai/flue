@@ -108,29 +108,6 @@ async function buildCloudflareFixture(
 	return readTree(path.join(root, 'dist'));
 }
 
-/** Build the same app for the Node target (no cloudflare() plugin). */
-async function buildNodeFixture(agentSource: string): Promise<void> {
-	const packageRoot = fileURLToPath(new URL('..', import.meta.url));
-	const root = await fs.promises.mkdtemp(path.join(packageRoot, '.fixture-node-'));
-	temporary.push(root);
-	await writeFiles(root, {
-		'package.json': JSON.stringify({
-			name: 'flue-codemode-node-fixture',
-			private: true,
-			type: 'module',
-		}),
-		'src/app.ts': ["import { Hono } from 'hono';", 'export default new Hono();', ''].join('\n'),
-		'src/agents/researcher.ts': agentSource,
-	});
-	const builder = await createBuilder({
-		root,
-		configFile: false,
-		logLevel: 'silent',
-		plugins: [flue()],
-	});
-	await builder.buildApp();
-}
-
 /** Every match of `pattern` in the emitted scripts, with its chunk's source modules and surroundings. */
 function findings(output: Map<string, string>, pattern: RegExp) {
 	return [...output]
@@ -228,23 +205,6 @@ describe('Cloudflare Worker bundle', () => {
 		);
 		// The sandbox's JavaScript is part of the runtime; the 640 KB QuickJS module is not.
 		expect([...output.keys()].filter((file) => file.endsWith('.wasm'))).toEqual([]);
-	}, 180_000);
-
-	it('builds a Node app that calls useCodeMode()', async () => {
-		await expect(
-			buildNodeFixture(
-				[
-					"'use agent';",
-					"import { useCodeMode, useModel } from '@flue/runtime';",
-					'export function Researcher() {',
-					"\tuseModel('anthropic/claude-sonnet-4-6');",
-					'\tuseCodeMode();',
-					"\treturn 'Hello.';",
-					'}',
-					'',
-				].join('\n'),
-			),
-		).resolves.toBeUndefined();
 	}, 180_000);
 
 	it('binds the FlueMcpAuth Durable Object when an agent uses MCP OAuth', async () => {

@@ -20,10 +20,16 @@ import { carol } from './turn-driver.ts';
 
 type Rows = { rowsRead: number; rowsWritten: number };
 
-/** Ceilings at the measured values (see the commit that set them). */
+/**
+ * Measured 2026-10-01 (sql + key-value keys): the 10-call turn 610 read /
+ * 218 written, the cold store() turn 617 / 234. On `@cloudflare/codemode`
+ * the same turns cost 679 / 276 and 711 / 239, of which its facet's tables
+ * 69 / 58 and 10 / 5 (BuildBuddy a9066d83-090a-40b4-9fb8-75a11f06cb30). The
+ * ceilings leave a little room for the scheduler's polling.
+ */
 const BUDGET: Record<'tenCalls' | 'coldStore', Rows> = {
-	tenCalls: { rowsRead: 100_000, rowsWritten: 100_000 },
-	coldStore: { rowsRead: 100_000, rowsWritten: 100_000 },
+	tenCalls: { rowsRead: 650, rowsWritten: 230 },
+	coldStore: { rowsRead: 650, rowsWritten: 245 },
 };
 
 function take(label: string): TraceSummary {

@@ -15,6 +15,8 @@
  *   schedule <delay-ms> <text>     schedule_wake for this agent
  *   codemode record <id>           a Code Mode script calling tools.mcp__ops__record({ id })
  *                                  (approval-gated on the steward)
+ *   codemode frustration           the "You Said No MCP!" script (you-said-no-mcp.ts)
+ *   codemode recall                a script returning how many results it stored
  *   mcp <tool> <arg>               the ops MCP server's tool directly:
  *                                  `mcp deploy <service>`, `mcp echo <text>`
  *   chain <n>                      n publish_event rounds, then an answer
@@ -34,6 +36,7 @@ import {
 	type Message,
 	type Provider,
 } from '@earendil-works/pi-ai';
+import { FRUSTRATION_SCRIPT } from './you-said-no-mcp.ts';
 
 export const SCRIPTED_PROVIDER = 'scripted';
 export const SCRIPTED_MODEL = 'society-1';
@@ -121,6 +124,12 @@ function commandCalls(line: string): Call[] | undefined {
 				args: { code: `return await tools.mcp__ops__record({ id: ${JSON.stringify(words[2])} });` },
 			},
 		];
+	}
+	if (verb === 'codemode' && words[1] === 'frustration') {
+		return [{ name: 'codemode', args: { code: FRUSTRATION_SCRIPT } }];
+	}
+	if (verb === 'codemode' && words[1] === 'recall') {
+		return [{ name: 'codemode', args: { code: 'return load("frustration")?.length ?? null;' } }];
 	}
 	if (verb === 'mcp' && words[1] === 'deploy' && words[2]) {
 		return [{ name: 'mcp__ops__deploy', args: { service: words[2] } }];

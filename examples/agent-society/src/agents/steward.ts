@@ -26,6 +26,15 @@ export function Steward() {
 			fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
 				ops.fetch(input as never, init)) as typeof fetch,
 		});
+		// A stand-in for the Linear MCP server on society-ops, for the Code
+		// Mode demo (`codemode frustration`).
+		useMcpConnection({
+			name: 'linear',
+			url: 'https://society-ops.internal/linear/mcp',
+			headers: { authorization: `Bearer ${vars.OPS_MCP_TOKEN}` },
+			fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+				ops.fetch(input as never, init)) as typeof fetch,
+		});
 		useCodeMode({ requiresApproval: ['mcp__ops__record'] });
 	}
 	useQuestions({ timeoutMs: Number(vars.QUESTION_TIMEOUT_MS ?? 1_800_000) });

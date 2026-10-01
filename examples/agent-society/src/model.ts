@@ -5,12 +5,15 @@
  * Workers AI through the `AI` binding, model `WORKERS_AI_MODEL`).
  */
 import { env } from 'cloudflare:workers';
+import { typesafeProvider } from '@earendil-works/pi-ai/providers/typesafe';
 import { setProvider } from '@flue/runtime';
 import { SCRIPTED_MODEL, SCRIPTED_PROVIDER, scriptedProvider } from './scripted.ts';
 
 const vars = env as unknown as Record<string, string | undefined>;
 
 setProvider(scriptedProvider({ tokensPerSecond: Number(vars.SCRIPTED_TOKENS_PER_SECOND ?? '50') }));
+// TypeSafe's Jev, for Code Mode's models.classify() (TYPESAFE_API_KEY).
+setProvider(typesafeProvider());
 
 export function societyModel(): string {
 	if (vars.SOCIETY_MODEL === 'workers-ai') {
