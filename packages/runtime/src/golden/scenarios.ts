@@ -121,6 +121,7 @@ const lookup = defineTool({
 	name: 'lookup',
 	description: 'Look up a value by key.',
 	input: v.object({ key: v.string() }),
+	output: v.object({ value: v.string() }),
 	run: ({ data }) => ({ value: data.key.toUpperCase() }),
 });
 
@@ -145,6 +146,7 @@ const classify = defineTool({
 	name: 'classify',
 	description: 'Classify the message with a structured sub-prompt.',
 	harness: true,
+	output: v.object({ label: v.picklist(['spam', 'ham']) }),
 	async run({ harness }) {
 		const response = await harness.prompt('Classify the message as spam or ham.', {
 			result: v.object({ label: v.picklist(['spam', 'ham']) }),
@@ -313,9 +315,10 @@ export const GOLDEN_SCENARIOS: readonly GoldenScenario[] = [
 		agent: Compaction,
 		models: { models: [{ id: 'small', contextWindow: 1200, maxTokens: 200 }] },
 		respond: (messages) => {
-			const text = allText(messages);
-			if (/summar/i.test(text))
+			// Summarization requests end with the summarizer's instructions.
+			if (/summar/i.test(textOf(lastNonSystem(messages)))) {
 				return fauxAssistantMessage('Summary: the user asked three questions.');
+			}
 			return fauxAssistantMessage(LONG_ANSWER);
 		},
 		async drive(handle) {
