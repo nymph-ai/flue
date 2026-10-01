@@ -28,8 +28,8 @@ and the instance's alarm admits what arrived.
   (`src/scripted.ts`). Only the model's choices are scripted; every turn still
   runs Pi Durable end to end. A prompt is a list of commands (`send bob/b1
 ping`, `spawn bob kid 50`, `observe <stream> <key> <from>`, `chain 3`, …).
-- `live`: the real model `LIVE_MODEL`, Muse Spark 1.3 through OpenRouter
-  (`openrouter/meta/muse-spark-1.3`), keyed by the `OPENROUTER_API_KEY` secret.
+- `live`: the real model `LIVE_MODEL`, Muse Spark 1.3 on Meta's Model API
+  (`meta/muse-spark-1.3`), keyed by the `META_API_KEY` secret.
 
 ## Qualification build
 
