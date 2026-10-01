@@ -57,15 +57,21 @@ is uninteresting by design.
    event with a deterministic id derived from the Pi task and tool call. Pi's
    tool replay re-sends the same id; receivers deduplicate on it. There is no
    outbox around Pi's commit.
-6. **MCP is stateless and remote.** Streamable HTTP with the 2026-07-28
-   protocol (no sessions, no initialize handshake, `server/discover`), falling
-   back to servers on earlier revisions. stdio is not a Cloudflare capability.
-   OAuth tokens live in a Durable Object keyed by principal and authorization
-   server; redirects land on the Gateway.
+6. **MCP is stateless and remote, only.** Streamable HTTP with the
+   2026-07-28 protocol (no sessions, no initialize handshake,
+   `server/discover`). Servers on earlier revisions and stdio servers are not
+   supported, on any target. OAuth tokens live in a Durable Object keyed by
+   principal and authorization server; redirects land on the Gateway.
 7. **Code Mode runs in Dynamic Workers.** `@cloudflare/codemode` in the
-   AgentDO, registered with Pi Durable as one tool. Generated code reaches the
-   world only through the tools and connectors the AgentDO hands it, with
-   discovery (`codemode.search`, `codemode.describe`) inside the sandbox.
+   AgentDO, registered with Pi Durable as one tool, with its own runtime as a
+   Cloudflare Durable Object Facet of the AgentDO (search, describe, snippets,
+   steps, approvals). Generated code reaches the world only through the tools
+   and connectors the AgentDO hands it.
+9. **Questions to people are entity events.** MCP `input_required` results
+   (elicitation) and Code Mode approvals publish an `input-requested` event on
+   Electric and park the call durably; the answer arrives in the agent's inbox,
+   rings the doorbell, and the call is retried with the answers and the
+   server's `requestState`. Humans are participants on streams like agents.
 8. **No always-on connections from an AgentDO.** Nothing that defeats
    hibernation: no outbound WebSockets, no long-lived MCP listen streams.
    Freshness comes from wakes and cacheable list results.
@@ -73,5 +79,6 @@ is uninteresting by design.
 ## Not part of the design
 
 Containers, Queues, Workflows, PGlite, Node runtimes on Cloudflare, Electric as a
-replica of Pi's log, and Cloudflare's "Durable Object Facets" (the name is
-unrelated to Chord facets).
+replica of Pi's log, stdio MCP, and pre-2026-07-28 MCP servers. (Cloudflare's
+"Durable Object Facets" are used only as Code Mode's runtime; the name is
+unrelated to Chord facets.)
