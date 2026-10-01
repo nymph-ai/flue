@@ -27,6 +27,7 @@ import {
 	answer,
 	context,
 	durableStreamsWakeBody,
+	eventually,
 	lastMessage,
 	readAll,
 	type TestEntity,
@@ -364,6 +365,8 @@ describe('relay drainer', () => {
 		const file = await tempFile();
 		const first = await open(file, faulty);
 		await first.storage.commit([{ type: 'conversation', value: { id: 1 } }] as never, context);
+		// The inbox exists, so the crashing POST is the one that lands.
+		await log.ensure(inboxPath(BOB));
 		faulty.crashOnce(inboxPath(BOB), 'drop-ack');
 		await commitSend(first.storage, 'm-1');
 		expect(first.storage.relay.pending()).toBe(1);
@@ -735,6 +738,12 @@ describe('entity lifecycle', () => {
 		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({ done: true, entities: ['agent/alice'] });
 		const observed = async (entity: TestEntity) =>
 			(await entity.entries()).filter((entry) => entry.kind === 'flue.observed').map((entry) => entry.data);
+		// Write submissions are placed by the Pi inbox; wait for them.
+		const observedCount = (entity: TestEntity, count: number) =>
+			eventually(async () => ((await observed(entity)).length >= count ? true : undefined), {
+				what: `${count} observed entries`,
+			});
+		await observedCount(alice, 2);
 		expect(await observed(alice)).toEqual([
 			expect.objectContaining({ key: 'hn', stream: world, index: 0, item: item(1) }),
 			expect.objectContaining({ key: 'hn', stream: world, index: 1, item: item(2) }),
@@ -746,6 +755,7 @@ describe('entity lifecycle', () => {
 		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({ done: true });
 		await publish(3);
 		expect((await wake(2, await tail(h.log, world))).json).toMatchObject({ done: true });
+		await observedCount(alice, 3);
 		expect((await observed(alice)).map((data) => (data as { item: { id: string } }).item.id)).toEqual([
 			'hn-1',
 			'hn-2',

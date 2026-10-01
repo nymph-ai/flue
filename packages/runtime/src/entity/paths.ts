@@ -102,7 +102,7 @@ function fromBase64Url(value: string): string | undefined {
 	if (!/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
 	const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
 	try {
-		return new TextDecoder('utf-8', { fatal: true }).decode(
+		return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(
 			decodeBase64(base64 + '='.repeat((4 - (base64.length % 4)) % 4)),
 		);
 	} catch {
