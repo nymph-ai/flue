@@ -14,6 +14,20 @@ import {
 	defineEntry,
 } from '@earendil-works/pi-durable';
 
+/** Deltas Pi may chain after a document's last base before the next change is stored whole. */
+export const DELTAS_PER_BASE = 4;
+
+/**
+ * Every Flue document's checkpoint predicate. Pi materializes a document from
+ * its newest base plus every delta after it, and a document without a
+ * predicate never gets a new base: each read replays its whole history. With
+ * this one, a read costs at most {@link DELTAS_PER_BASE} + 1 revision rows
+ * however often the document was written.
+ */
+export function boundedDeltas(_value: unknown, _ops: unknown, info: CheckpointInfo): boolean {
+	return info.deltasSinceBase >= DELTAS_PER_BASE;
+}
+
 /** Instance identity recorded once at birth (`admitInstanceContact` semantics). */
 export type FlueInstanceState = {
 	/** `null` until the first admitted contact creates the instance. */
@@ -26,6 +40,7 @@ export type FlueInstanceState = {
 export const FlueInstance = defineDoc<FlueInstanceState>({
 	kind: 'flue.instance',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ uid: null, createdAt: null }),
 });
@@ -79,6 +94,7 @@ export type FlueReceiptState = {
 export const FlueReceipts = defineDocFamily<FlueReceiptState, null>({
 	kind: 'flue.receipts',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	family: true,
 	scope: 'session',
 	initial: () => ({
@@ -103,13 +119,17 @@ export const FlueReceipts = defineDocFamily<FlueReceiptState, null>({
 export type FlueReceiptIndexState = {
 	admitting: string[];
 	live: { [submissionId: string]: number };
-	/** Pi submission id → Flue submission id, for `answeredBySubmissionId`. */
+	/**
+	 * Pi submission id → Flue submission id, for `answeredBySubmissionId`: the
+	 * most recent `ANSWER_HOST_WINDOW` admissions only (`receipts.ts`).
+	 */
 	byPiSubmission: { [piSubmissionId: string]: string };
 };
 
 export const FlueReceiptIndex = defineDoc<FlueReceiptIndexState>({
 	kind: 'flue.receipt-index',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ admitting: [], live: {}, byPiSubmission: {} }),
 });
@@ -120,6 +140,7 @@ export type FlueSessionsState = { sessions: { [name: string]: number } };
 export const FlueSessions = defineDoc<FlueSessionsState>({
 	kind: 'flue.sessions',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ sessions: {} }),
 });
@@ -136,6 +157,7 @@ export type FlueStateValues = { values: { [name: string]: JsonValue } };
 export const FlueState = defineDoc<FlueStateValues>({
 	kind: 'flue.state',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ values: {} }),
 });
@@ -150,6 +172,7 @@ export type FlueScheduleState = {
 export const FlueSchedules = defineDocFamily<FlueScheduleState, null>({
 	kind: 'flue.schedules',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	family: true,
 	scope: 'session',
 	initial: () => ({ atMs: 0, message: null, status: 'cancelled' }),
@@ -166,6 +189,7 @@ export type FlueObservationState = {
 export const FlueObservations = defineDocFamily<FlueObservationState, null>({
 	kind: 'flue.observations',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	family: true,
 	scope: 'session',
 	initial: () => ({ source: null, offset: '-1', wake: false, updatedAt: 0 }),
@@ -187,6 +211,7 @@ export type FlueProfileState = {
 export const FlueProfile = defineDoc<FlueProfileState>({
 	kind: 'flue.profile',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'conversation',
 	history: 'latest',
 	fork: 'current',
@@ -213,6 +238,7 @@ export type FlueRunsState = { runs: { [runKey: string]: FlueRunState } };
 export const FlueRuns = defineDoc<FlueRunsState>({
 	kind: 'flue.runs',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'conversation',
 	history: 'latest',
 	fork: 'initial',
@@ -225,6 +251,7 @@ export type FlueDelegationState = { taskId: number | null };
 export const FlueDelegation = defineDoc<FlueDelegationState>({
 	kind: 'flue.delegation',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'task',
 	initial: () => ({ taskId: null }),
 });

@@ -5,6 +5,7 @@
  */
 import type { JsonValue } from '@earendil-works/chord';
 import { defineDoc, defineEntry } from '@earendil-works/pi-durable';
+import { boundedDeltas } from '../pi/docs.ts';
 import type { DeliveredMessage } from '../types.ts';
 
 /** Armed schedules by key, with their due time: what a wake scans. */
@@ -13,6 +14,7 @@ export type FlueScheduleIndexState = { armed: { [key: string]: number } };
 export const FlueScheduleIndex = defineDoc<FlueScheduleIndexState>({
 	kind: 'flue.schedule-index',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ armed: {} }),
 });
@@ -23,6 +25,7 @@ export type FlueObservationIndexState = { keys: { [key: string]: string } };
 export const FlueObservationIndex = defineDoc<FlueObservationIndexState>({
 	kind: 'flue.observation-index',
 	version: 1,
+	checkpointWhen: boundedDeltas,
 	scope: 'session',
 	initial: () => ({ keys: {} }),
 });

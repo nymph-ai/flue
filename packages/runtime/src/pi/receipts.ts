@@ -104,6 +104,15 @@ export interface AdmissionOptions {
 
 type AdmissionOutcome = { readonly receipt: FlueReceiptState; readonly deduplicated: boolean };
 
+/**
+ * Admitted inputs the receipt index maps back from their Pi submission id,
+ * newest first: what `answerHost` searches for the input that started a run.
+ * The inputs of one run are admitted close together, so a bounded window
+ * keeps the index — rewritten on every admission — from growing with the
+ * instance's history.
+ */
+export const ANSWER_HOST_WINDOW = 64;
+
 /** Detach a committed or draft document value (drafts are proxies). */
 function plain<T>(value: unknown): T {
 	return JSON.parse(JSON.stringify(value)) as T;
@@ -325,6 +334,9 @@ export async function completeAdmission(
 		},
 		context,
 	);
+	// Settled receipts leave the live set here, in a commit this admission
+	// makes anyway, rather than in a commit of their own on some later wake.
+	const settled = await settledLive(harness, context);
 	return harness.commit(async (tx) => {
 		const record = await tx.doc(FlueReceipts, submissionId, null);
 		record.status = 'admitted';
@@ -332,8 +344,18 @@ export async function completeAdmission(
 		const index = await tx.doc(FlueReceiptIndex);
 		const at = index.admitting.indexOf(submissionId);
 		if (at !== -1) index.admitting.splice(at, 1);
+		for (const id of settled) delete index.live[id];
 		index.live[submissionId] = submission.id;
 		index.byPiSubmission[String(submission.id)] = submissionId;
+		// Only recent inputs can share a run with a later one: keep a bounded window.
+		const known = Object.keys(index.byPiSubmission);
+		if (known.length > ANSWER_HOST_WINDOW) {
+			const oldest = known
+				.map(Number)
+				.sort((left, right) => left - right)
+				.slice(0, known.length - ANSWER_HOST_WINDOW);
+			for (const id of oldest) delete index.byPiSubmission[String(id)];
+		}
 		return plain<FlueReceiptState>(record);
 	}, context);
 }
@@ -564,28 +586,34 @@ export async function classifyAndAbort(
 	}
 }
 
-/** Live receipts: admitted, still in the index. Settled ones leave the index here. */
+/** Receipts in the live set whose Pi submission has settled (or is gone). */
+async function settledLive(harness: Harness, context: Context): Promise<string[]> {
+	const index = await harness.snapshot(FlueReceiptIndex, context);
+	const settled: string[] = [];
+	for (const [submissionId, piSubmissionId] of Object.entries(index?.live ?? {})) {
+		const record = await piRecord(harness, piSubmissionId, context);
+		if (!record || record.status === 'done' || record.status === 'unanswered')
+			settled.push(submissionId);
+	}
+	return settled;
+}
+
+/**
+ * Live receipts: admitted, in the live set, and not settled. Writes nothing:
+ * settled ones leave the set at the next admission (`completeAdmission`), so
+ * an idle wake costs reads only.
+ */
 export async function liveReceipts(
 	harness: Harness,
 	context: Context,
 ): Promise<{ submissionId: string; receipt: FlueReceiptState }[]> {
 	const index = await harness.snapshot(FlueReceiptIndex, context);
 	const live: { submissionId: string; receipt: FlueReceiptState }[] = [];
-	const settled: string[] = [];
 	for (const [submissionId, piSubmissionId] of Object.entries(index?.live ?? {})) {
 		const record = await piRecord(harness, piSubmissionId, context);
+		if (!record || record.status === 'done' || record.status === 'unanswered') continue;
 		const receipt = await harness.snapshot(FlueReceipts, submissionId, context);
-		if (!record || !receipt || record.status === 'done' || record.status === 'unanswered') {
-			settled.push(submissionId);
-			continue;
-		}
-		live.push({ submissionId, receipt: receipt as FlueReceiptState });
-	}
-	if (settled.length > 0) {
-		await harness.commit(async (tx) => {
-			const draft = await tx.doc(FlueReceiptIndex);
-			for (const submissionId of settled) delete draft.live[submissionId];
-		}, context);
+		if (receipt) live.push({ submissionId, receipt: receipt as FlueReceiptState });
 	}
 	return live;
 }

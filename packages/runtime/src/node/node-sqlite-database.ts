@@ -27,11 +27,19 @@ export interface NodeSqliteDatabaseOptions {
 
 export class NodeSqliteDatabase implements CountingSqliteDatabase {
 	readonly rows: SqliteRowCounters = { rowsRead: 0, rowsWritten: 0 };
+	/** Per-statement counters, once `traceStatements()` turned them on (diagnosis, tests). */
+	statements: Map<string, SqliteRowCounters> | undefined;
 	readonly #database: DatabaseSync;
 	#closed = false;
 
 	constructor(database: DatabaseSync) {
 		this.#database = database;
+	}
+
+	/** Count rows per statement text from now on. */
+	traceStatements(): Map<string, SqliteRowCounters> {
+		this.statements ??= new Map();
+		return this.statements;
 	}
 
 	exec(sql: string): void {
@@ -43,6 +51,11 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 		const count = (read: number, written: number) => {
 			this.rows.rowsRead += read;
 			this.rows.rowsWritten += written;
+			if (!this.statements) return;
+			const counters = this.statements.get(sql) ?? { rowsRead: 0, rowsWritten: 0 };
+			counters.rowsRead += read;
+			counters.rowsWritten += written;
+			this.statements.set(sql, counters);
 		};
 		return {
 			run: (...params: SqliteValue[]) => {

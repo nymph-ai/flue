@@ -253,6 +253,9 @@ function signalMessages(texts: readonly string[], timestamp: number): UserMessag
 	return texts.map((text) => ({ role: 'user', content: [{ type: 'text', text }], timestamp }));
 }
 
+/** Runs `flue.runs` keeps per conversation (the run in flight and a few before it). */
+const RUNS_KEPT = 8;
+
 /** Build the Flue `GenerationHooks` for one host. */
 export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks> {
 	/**
@@ -280,6 +283,10 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 			// Assign first, then re-read: the draft only tracks writes made through it.
 			if (doc.runs[key] === undefined) {
 				doc.runs[key] = { started: [], appends: [], anchor: 0, metadata: {}, continuations: 0 };
+				// Finished runs are never read again: keep the newest few, so the
+				// document read before every request does not grow with history.
+				const keys = Object.keys(doc.runs).sort((left, right) => Number(right) - Number(left));
+				for (const stale of keys.slice(RUNS_KEPT)) delete doc.runs[stale];
 			}
 			const run = doc.runs[key];
 			if (run) update(run as FlueRunState);
