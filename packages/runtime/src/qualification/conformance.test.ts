@@ -77,7 +77,7 @@ async function traced<T>(what: string, run: () => Promise<T>): Promise<T> {
 	try {
 		return await run();
 	} catch (error) {
-		trace(`${what} failed: ${error instanceof Error ? `${error.name}: ${error.message}\n${error.stack?.split('\n').slice(1, 6).join('\n')}` : String(error)}`);
+		trace(`${what} failed: ${error instanceof Error ? `${error.name}: ${error.message}\n${error.stack?.split('\n').slice(1, 30).join('\n')}` : String(error)}`);
 		throw error;
 	}
 }
@@ -200,10 +200,11 @@ async function crashAndRecoverNow(qw: QualWorld, fault: Fault, body: string) {
 	trace(`fired after ${first.appends.length} appends, ${alice.calls} model calls, ${admitted}; reopening`);
 	alice.abandon();
 
-	await alice.open();
+	await traced('reopen', () => alice.open());
 	const second = qw.incarnation(alice);
+	trace(`second incarnation ${second === first ? 'IS' : 'is not'} the first`);
 	expect(second.dead).toBe(false);
-	await alice.requireHost().wake({ kind: 'live-tasks' }, context);
+	await traced('wake', () => alice.requireHost().wake({ kind: 'live-tasks' }, context));
 	trace('reopened; waiting for the settlement');
 	const settlement = await alice.requireHost().waitForSettlement(submissionId, context);
 	trace(`settled ${settlement.outcome} after ${alice.calls} model calls`);
