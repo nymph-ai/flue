@@ -64,6 +64,23 @@ const TIMEOUT = 60_000;
 function trace(message: string): void {
 	if (process.env.QUAL_TRACE) process.stderr.write(`[conformance] ${message}\n`);
 }
+
+if (process.env.QUAL_TRACE) {
+	setInterval(() => {
+		const { heapUsed, rss } = process.memoryUsage();
+		trace(`heap ${Math.round(heapUsed / 1e6)} MB, rss ${Math.round(rss / 1e6)} MB`);
+	}, 2000).unref();
+}
+
+/** Trace a failing step's error before vitest buffers it (an OOM later would lose it). */
+async function traced<T>(what: string, run: () => Promise<T>): Promise<T> {
+	try {
+		return await run();
+	} catch (error) {
+		trace(`${what} failed: ${error instanceof Error ? `${error.name}: ${error.message}\n${error.stack?.split('\n').slice(1, 6).join('\n')}` : String(error)}`);
+		throw error;
+	}
+}
 const worlds: TestWorld[] = [];
 
 afterEach(async () => {
@@ -141,7 +158,11 @@ async function expectEachCommitOnce(qw: QualWorld, entity: TestEntity): Promise<
 }
 
 /** Crash an entity's turn with `fault`, reopen it, and let Pi finish the work. */
-async function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
+function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
+	return traced(`${fault.kind}/${fault.after}`, () => crashAndRecoverNow(qw, fault, body));
+}
+
+async function crashAndRecoverNow(qw: QualWorld, fault: Fault, body: string) {
 	trace(`${qw.backend.name}: ${fault.kind} after ${fault.after} on ${fault.stream}, "${body}"`);
 	const alice = qw.world.entity(qw.ref('agent', 'alice'), societyResponder);
 	qw.arm(alice, fault);
