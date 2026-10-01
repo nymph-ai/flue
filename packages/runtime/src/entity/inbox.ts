@@ -1,28 +1,27 @@
 /**
- * The inbox consumer (PI_UPGRADE_PLAN.md §2.5 "Wake"): read this entity's
- * inbox from a persisted cursor, admit each relayed message through
- * `FluePiHost.admit`, advance the cursor, and report `processedThrough`.
+ * The inbox consumer (docs/cloudflare-native.md rule 4): read one batch of
+ * this entity's inbox from a cursor, admit each event through
+ * `FluePiHost.admit`, and say where the batch ended. The pump
+ * (`pump.ts`) commits the cursor after each batch.
  *
  * Admission is idempotent: the submission id is
  * `deriveKeyedSubmissionId(self.type, self.id, messageId)` (the frozen
- * `sub_ik_` derivation), used as the Pi request id, so a redelivered wake, a
- * lost cursor or two overlapping wakes admit every message once. The cursor
- * (`flue_entity_cursors`) is therefore advisory — it saves re-reading, it
- * does not decide what is admitted.
+ * `sub_ik_` derivation), used as the Pi request id, so a redelivered event —
+ * a sender's replayed tool call, a crash before the cursor moved, two
+ * overlapping pumps — is admitted once (rule 5).
  *
- * A message is admitted, or — when it can never be (a payload conflict, a
- * spawn of an instance that already exists) — reported and skipped, so one
- * bad message cannot wedge the inbox. Anything else (storage, a closed host)
- * throws before the cursor moves past it.
+ * An event is admitted, or — when it can never be (a payload conflict, a
+ * spawn of an instance that already exists, a malformed message) — reported
+ * and skipped, so one bad event cannot wedge the inbox. Anything else
+ * (storage, a closed host) throws before the cursor moves past it.
  */
 import type { Context } from '@earendil-works/chord';
 import { AgentInstanceExistsError, SubmissionConflictError } from '../errors.ts';
-import { type A2aInboxMessage, parseA2aInboxMessage } from '../pi/a2a-entries.ts';
+import { type A2aInboxMessage, parseA2aInboxMessage } from './events.ts';
 import type { FluePiHost } from '../pi/host.ts';
-import type { EntityCursorStore } from '../pi/stream-storage.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import { DurableStreamLogError, type DurableStreamLog } from '../streams/log.ts';
-import { asStreamOffset, STREAM_START } from '../streams/offset.ts';
+import { asStreamOffset, type StreamOffset } from '../streams/offset.ts';
 import { deliveredFromEntity, parseEntityMessage } from './messages.ts';
 import { entityKey, inboxPath } from './paths.ts';
 import type { ScheduleBook } from './schedules.ts';
@@ -32,16 +31,19 @@ export interface InboxConsumerOptions {
 	readonly host: FluePiHost;
 	readonly entity: EntityRef;
 	readonly log: DurableStreamLog;
-	readonly cursors: () => EntityCursorStore;
 	readonly schedules: ScheduleBook;
 	readonly now: () => number;
 	readonly onReport: (error: unknown) => void;
 }
 
-export interface InboxDrainResult {
-	/** The inbox offset everything up to (inclusive) has been handled through. */
-	readonly processedThrough: string;
-	/** Submission ids admitted (or found already admitted) in this pass. */
+/** One batch of the inbox, handled. */
+export interface InboxBatchResult {
+	/** Where the batch ended: everything through it is admitted (or skipped). */
+	readonly nextOffset: StreamOffset;
+	readonly upToDate: boolean;
+	/** Events read in the batch. */
+	readonly events: number;
+	/** Submission ids admitted (or found already admitted). */
 	readonly admitted: readonly string[];
 	readonly skipped: number;
 }
@@ -59,63 +61,44 @@ export function relayedScheduleKey(from: EntityRef, scheduleId: string): string 
 export class InboxConsumer {
 	readonly path: string;
 	readonly #options: InboxConsumerOptions;
-	#running: Promise<InboxDrainResult> | undefined;
 
 	constructor(options: InboxConsumerOptions) {
 		this.#options = options;
 		this.path = inboxPath(options.entity);
 	}
 
-	get cursorKey(): string {
-		return `inbox:${this.path}`;
-	}
-
-	/** The persisted cursor (`-1` before anything was read). */
-	cursor(): string {
-		return this.#options.cursors().get(this.cursorKey) ?? STREAM_START;
-	}
-
-	/** Drain the inbox; concurrent callers share one pass. */
-	drain(context: Context): Promise<InboxDrainResult> {
-		if (this.#running) return this.#running;
-		const run = this.#drain(context).finally(() => {
-			this.#running = undefined;
-		});
-		this.#running = run;
-		return run;
-	}
-
-	async #drain(context: Context): Promise<InboxDrainResult> {
+	/** Read the batch after `from` and admit every event in it. */
+	async batch(from: StreamOffset, context: Context): Promise<InboxBatchResult> {
 		const { log, onReport } = this.#options;
-		let offset = this.cursor();
+		let batch: Awaited<ReturnType<DurableStreamLog['read']>>;
+		try {
+			batch = await log.read(this.path, asStreamOffset(from));
+		} catch (error) {
+			if (error instanceof DurableStreamLogError && error.code === 'not-found') {
+				return { nextOffset: from, upToDate: true, events: 0, admitted: [], skipped: 0 };
+			}
+			throw error;
+		}
 		const admitted: string[] = [];
 		let skipped = 0;
-		while (true) {
-			let batch: Awaited<ReturnType<DurableStreamLog['read']>>;
-			try {
-				batch = await log.read(this.path, asStreamOffset(offset));
-			} catch (error) {
-				if (error instanceof DurableStreamLogError && error.code === 'not-found') break;
-				throw error;
+		for (const raw of batch.messages) {
+			const message = parseA2aInboxMessage(raw);
+			if (!message) {
+				onReport(new Error(`[flue] Skipped a malformed message on inbox "${this.path}".`));
+				skipped++;
+				continue;
 			}
-			for (const raw of batch.messages) {
-				const message = parseA2aInboxMessage(raw);
-				if (!message) {
-					onReport(new Error(`[flue] Skipped a malformed message on inbox "${this.path}".`));
-					skipped++;
-					continue;
-				}
-				const outcome = await this.#handle(message, context);
-				if (outcome === 'skipped') skipped++;
-				else if (outcome !== undefined) admitted.push(outcome);
-			}
-			if (batch.nextOffset !== offset) {
-				offset = batch.nextOffset;
-				await this.#options.cursors().set(this.cursorKey, offset);
-			}
-			if (batch.upToDate || batch.messages.length === 0) break;
+			const outcome = await this.#handle(message, context);
+			if (outcome === 'skipped') skipped++;
+			else if (outcome !== undefined) admitted.push(outcome);
 		}
-		return { processedThrough: offset, admitted, skipped };
+		return {
+			nextOffset: batch.nextOffset,
+			upToDate: batch.upToDate || batch.messages.length === 0,
+			events: batch.messages.length,
+			admitted,
+			skipped,
+		};
 	}
 
 	/** Admit one message; the submission id, `undefined` for a directive without one, or `skipped`. */

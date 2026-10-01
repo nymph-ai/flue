@@ -3,8 +3,7 @@
  * the log's base URL (`…/v1/stream` on a bare Durable Streams server, the
  * agents-server's public URL behind Electric):
  *
- * - `flue/v1/{type}/{id}/pi`     — the canonical Pi log (`StreamStorage`);
- * - `flue/v1/{type}/{id}/inbox`  — what other entities send it (the relay);
+ * - `flue/v1/{type}/{id}/inbox`  — what other entities send it;
  * - `flue/v1/{type}/{id}/events` — what it publishes;
  *
  * `{type}` and `{id}` are `encodeURIComponent`-encoded, so an id like
@@ -19,9 +18,9 @@
  */
 
 import { decodeBase64, encodeBase64 } from '../base64.ts';
-import { type EntityAddress, entityStreamRoot } from '../pi/a2a-entries.ts';
+import { type EntityAddress, entityStreamRoot } from './events.ts';
 
-export type { EntityAddress } from '../pi/a2a-entries.ts';
+export type { EntityAddress } from './events.ts';
 
 export function inboxPath(entity: EntityAddress): string {
 	return `${entityStreamRoot(entity)}/inbox`;

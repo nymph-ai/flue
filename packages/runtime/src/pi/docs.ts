@@ -7,7 +7,12 @@
  * `version` with a `migrate` instead.
  */
 import type { JsonValue } from '@earendil-works/chord';
-import { defineDoc, defineDocFamily, defineEntry } from '@earendil-works/pi-durable';
+import {
+	type CheckpointInfo,
+	defineDoc,
+	defineDocFamily,
+	defineEntry,
+} from '@earendil-works/pi-durable';
 
 /** Instance identity recorded once at birth (`admitInstanceContact` semantics). */
 export type FlueInstanceState = {
@@ -228,11 +233,3 @@ export const FlueDelegation = defineDoc<FlueDelegationState>({
 export const FlueDataEntry = defineEntry<{ name: string; data: JsonValue }>('flue.data');
 /** Response metadata (`useResponseStart`/`useResponseFinish`): never model-visible. */
 export const FlueMetadataEntry = defineEntry<{ run: string; metadata: JsonValue }>('flue.metadata');
-/** A2A send recorded inside the sending tool's commit; the relay outbox fans it out. */
-export const FlueA2ASendEntry = defineEntry<{
-	target: { type: string; id: string };
-	messageId: string;
-	message: JsonValue;
-}>('flue.a2a.send');
-/** Transactional publish to this entity's public events stream. */
-export const FluePublishEntry = defineEntry<{ eventId: string; event: JsonValue }>('flue.publish');

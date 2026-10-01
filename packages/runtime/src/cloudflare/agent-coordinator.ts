@@ -1,20 +1,24 @@
 /**
  * The Cloudflare agent coordinator: one Durable Object = one agent instance
- * = one `FlueAgentInstance` over Pi Durable (PI_UPGRADE_PLAN.md §7 step 8).
+ * = one `FlueAgentInstance` over Pi Durable (docs/cloudflare-native.md).
  *
+ * - Storage (rule 1): Pi's own `SqliteStorage` over the object's SQLite
+ *   (`do-sqlite-database.ts`), with Flue's tables beside it. Pi's commits
+ *   never leave the object (rule 2); reads serve the conversation cache.
  * - Admission (`/__flue/internal/dispatch`, the agent prompt route) →
  *   `FlueAgentInstance.admit` → `FluePiHost.admit`: Flue receipts, the frozen
  *   submission id derivation, payload-conflict 409s and the uid send
  *   condition, then Pi's inbox (a busy run is steered, as Flue joined it).
- * - Every alarm-dispatched wake (`__flueWakeAgentSubmissions`) drains the Pi
- *   commit outbox, then wakes Pi (repair admissions, enforce limits, resume),
- *   then the alarm hooks run (the entity relay, scheduled wakes). Pi's own
- *   wakes — the outbox backoff, the 30 s live-task backstop, submission
- *   deadlines — are armed through the Agents SDK `schedule()`, which
- *   multiplexes them onto the single Durable Object alarm.
- * - Reads serve the Pi projection of the canonical log. The log is the
- *   configured Electric server (`streams-config.ts`), else a stream in the
- *   Durable Object's own SQLite.
+ * - Doorbell (rule 3): the `__flueWake({ stream, head })` RPC writes the
+ *   stream's high-water mark into the wake book and calls `setAlarm(now)` in
+ *   the same synchronous turn — one coalesced, atomic storage write — and
+ *   returns. It opens nothing.
+ * - Pump (rule 4): every alarm runs the Agents SDK's scheduled callbacks
+ *   first (Pi's own wakes: the live-task backstop, submission deadlines,
+ *   schedules — `schedule()` multiplexes them onto the one alarm), then, while
+ *   the wake book is behind, one bounded pump (`entity/pump.ts`), and re-arms
+ *   `setAlarm(now)` while it is still behind. The SDK re-computes the alarm
+ *   whenever it schedules; Flue re-asserts its own after each of those.
  *
  * Pi owns what this module used to: attempts, leases, reconciliation,
  * recovery, joins and settlement.
@@ -35,6 +39,8 @@ import {
 } from '../runtime/agent-submissions.ts';
 import type { AttachmentStore } from '../runtime/attachment-store.ts';
 import type { ConversationStreamStore } from '../runtime/conversation-stream-store.ts';
+import { EntityWakeBook } from '../entity/wake-book.ts';
+import { hasPiState } from '../pi/conversation-cache.ts';
 import { drainGlobalEventDeliveries } from '../runtime/events.ts';
 import { assertAgentDispatchAdmissionInput, handleAgentRequest } from '../runtime/handle-agent.ts';
 import {
@@ -43,14 +49,13 @@ import {
 	handleAgentConversationRead,
 } from '../runtime/handle-conversation-routes.ts';
 import { agentStreamPath } from '../runtime/stream-offsets.ts';
-import type { EntityWakeRequest, EntityWakeResult } from '../entity/wake-handler.ts';
+import type { EntityDoorbell } from '../entity/webhook-route.ts';
 import {
 	configuredStreams,
 	configuredStreamsLog,
 	streamsSubscriptions,
 } from '../runtime/streams-config.ts';
 import type { SqlStorage } from '../sql-storage.ts';
-import { conversationStreamStoreLog } from '../streams/store-bridge-log.ts';
 import type { Agent, DeliveredMessage } from '../types.ts';
 import { createSqlConversationStores } from './agent-execution-store.ts';
 import { doSqliteDatabase } from './do-sqlite-database.ts';
@@ -67,6 +72,7 @@ const LEGACY_ATTEMPT_FIBER = 'flue:submission-attempt';
 interface CloudflareAgentStorage {
 	sql?: SqlStorage;
 	transactionSync?<T>(closure: () => T): T;
+	setAlarm?(scheduledTime: number): Promise<void>;
 }
 
 interface CloudflareAgentInstance {
@@ -131,17 +137,20 @@ export interface CloudflareAgentRuntime {
 		inherited: () => Promise<unknown> | unknown,
 	): Promise<unknown>;
 	/**
-	 * Run the Agents SDK alarm handler inside the instance context. It
-	 * dispatches `schedule`/`scheduleEvery`/`queue` callbacks — Flue's wake
-	 * among them (`__flueWakeAgentSubmissions`): drain the Pi outbox and the
-	 * entity relay, fire due entity schedules, then wake Pi.
+	 * Run the Agents SDK alarm handler inside the instance context — it
+	 * dispatches `schedule`/`scheduleEvery`/`queue` callbacks, Flue's wake
+	 * among them (`__flueWakeAgentSubmissions`) — then pump entity events
+	 * while the wake book is behind.
 	 */
 	onAlarm(
 		instance: CloudflareAgentInstance,
 		inherited: () => Promise<unknown> | unknown,
 	): Promise<unknown>;
-	/** The `__flueWake(request)` RPC: an Electric webhook says these streams have new data. */
-	wake(instance: CloudflareAgentInstance, request: EntityWakeRequest): Promise<EntityWakeResult>;
+	/** The `__flueWake({ stream, head })` RPC: the doorbell of a verified Electric wake. */
+	wake(
+		instance: CloudflareAgentInstance,
+		doorbell: EntityDoorbell,
+	): Promise<{ readonly recorded: true }>;
 }
 
 export function createCloudflareAgentRuntime(
@@ -175,7 +184,7 @@ export function createCloudflareAgentRuntime(
 		onFiberRecovered: (instance, ctx, inherited) =>
 			coordinatorOf(instance).onFiberRecovered(ctx, inherited),
 		onAlarm: (instance, inherited) => coordinatorOf(instance).onAlarm(inherited),
-		wake: (instance, request) => coordinatorOf(instance).wakeEntity(request),
+		wake: (instance, doorbell) => coordinatorOf(instance).doorbell(doorbell),
 	};
 }
 
@@ -184,9 +193,7 @@ function isWakeReason(value: unknown): value is FlueWakeReason {
 		typeof value === 'object' &&
 		value !== null &&
 		typeof (value as { kind?: unknown }).kind === 'string' &&
-		['outbox', 'live-tasks', 'schedule', 'inbox', 'dispatch'].includes(
-			(value as { kind: string }).kind,
-		)
+		['live-tasks', 'schedule', 'pump', 'dispatch'].includes((value as { kind: string }).kind)
 	);
 }
 
@@ -195,6 +202,7 @@ class CloudflareAgentCoordinator {
 	readonly #prepared: CloudflareAgentPreparedCoordinator;
 	readonly #options: CloudflareAgentRuntimeOptions;
 	#agentInstance: FlueAgentInstance | undefined;
+	#book: EntityWakeBook | undefined;
 	/** Live MCP connections of this instance; eviction is the teardown. */
 	readonly #mcp = createMcpConnectionCache();
 
@@ -226,7 +234,7 @@ class CloudflareAgentCoordinator {
 	#core(): FlueAgentInstance {
 		if (this.#agentInstance) return this.#agentInstance;
 		const instance = this.#instance;
-		const storage = instance.ctx.storage as unknown as Parameters<typeof doSqliteDatabase>[0];
+		const storage = this.#storage();
 		const events = this.#options.createContext({
 			instance,
 			agentName: this.#agentName,
@@ -237,11 +245,7 @@ class CloudflareAgentCoordinator {
 			instanceId: instance.name,
 			agent: this.#agent(),
 			database: () => doSqliteDatabase(storage),
-			log:
-				configuredStreamsLog(instance.env) ??
-				conversationStreamStoreLog(this.#prepared.conversationStreamStore),
-			publish: 'async',
-			// Entities need a log every Durable Object reaches: Electric.
+			// Entities need streams every Durable Object reaches: Electric.
 			entities: this.#entities(),
 			attachments: this.#prepared.attachmentStore,
 			legacy: this.#prepared.conversationStreamStore,
@@ -258,11 +262,45 @@ class CloudflareAgentCoordinator {
 		return this.#agentInstance;
 	}
 
-	#entities(): { subscriptions?: ReturnType<typeof streamsSubscriptions> } | false {
+	#storage(): Parameters<typeof doSqliteDatabase>[0] {
+		return this.#instance.ctx.storage as unknown as Parameters<typeof doSqliteDatabase>[0];
+	}
+
+	#entities():
+		| {
+				log: NonNullable<ReturnType<typeof configuredStreamsLog>>;
+				subscriptions?: ReturnType<typeof streamsSubscriptions>;
+		  }
+		| false {
 		const streams = configuredStreams(this.#instance.env);
-		if (!streams) return false;
+		const log = configuredStreamsLog(this.#instance.env);
+		if (!streams || !log) return false;
 		const webhookUrl = streams.webhook?.url;
-		return webhookUrl ? { subscriptions: streamsSubscriptions(streams, webhookUrl) } : {};
+		return webhookUrl ? { log, subscriptions: streamsSubscriptions(streams, webhookUrl) } : { log };
+	}
+
+	/** The wake book in this object's SQLite (`entity/wake-book.ts`). */
+	#wakeBook(): EntityWakeBook {
+		this.#book ??= new EntityWakeBook(doSqliteDatabase(this.#storage()));
+		return this.#book;
+	}
+
+	/** Whether entity events wait to be pumped; never opens the instance. */
+	#behind(): boolean {
+		if (!configuredStreams(this.#instance.env)) return false;
+		try {
+			return this.#wakeBook().behind();
+		} catch {
+			return false;
+		}
+	}
+
+	/** `setAlarm(now)`: the alarm is the pump. */
+	#alarmNow(): Promise<void> {
+		const setAlarm = this.#instance.ctx.storage.setAlarm;
+		if (typeof setAlarm !== 'function')
+			throw new Error('[flue] This Durable Object storage has no setAlarm().');
+		return setAlarm.call(this.#instance.ctx.storage, Date.now());
 	}
 
 	/**
@@ -278,18 +316,14 @@ class CloudflareAgentCoordinator {
 		}
 		const delaySeconds = Math.max(0, Math.ceil((atMs - Date.now()) / 1000));
 		await this.#instance.schedule(delaySeconds, FLUE_WAKE_CALLBACK, reason, { idempotent: false });
+		// `schedule()` re-computed the alarm from the SDK's own rows; the pump's comes first.
+		if (this.#behind()) await this.#alarmNow();
 	}
 
 	/** Whether this Durable Object has Pi state to resume (it served an agent before). */
 	#hasPiState(): boolean {
-		const sql = this.#instance.ctx.storage.sql;
-		if (!sql) return false;
 		try {
-			return (
-				sql
-					.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'flue_pi_producer'")
-					.toArray().length > 0
-			);
+			return hasPiState(doSqliteDatabase(this.#storage()));
 		} catch {
 			return false;
 		}
@@ -301,11 +335,12 @@ class CloudflareAgentCoordinator {
 			// the (possibly extension-authored) onStart, so it is in place even if
 			// that throws.
 			if (this.#hasPiState()) await this.#armWake(Date.now(), { kind: 'live-tasks' });
+			else if (this.#behind()) await this.#alarmNow();
 			await inherited();
 		});
 	}
 
-	/** One alarm-dispatched wake: drain the outbox, wake Pi (resume), then flush event deliveries. */
+	/** One scheduled wake (Pi's backstop, a deadline, a schedule): wake Pi, pumping first. */
 	wakeFromAlarm(payload?: unknown): Promise<void> {
 		return this.#run(async () => {
 			const reason = isWakeReason(payload) ? payload : { kind: 'live-tasks' as const };
@@ -318,19 +353,48 @@ class CloudflareAgentCoordinator {
 		});
 	}
 
+	/**
+	 * The alarm: the Agents SDK's due callbacks, then one bounded pump while
+	 * the wake book is behind, re-armed `setAlarm(now)` while it still is.
+	 * Turns the pump admits run on after the handler returns; Pi's live-task
+	 * backstop resumes them if the object is evicted first.
+	 */
 	onAlarm(inherited: () => Promise<unknown> | unknown): Promise<unknown> {
-		return this.#run(async () => inherited());
-	}
-
-	/** The `__flueWake(request)` RPC body: open (reconstruct) the instance, then admit its inbox. */
-	wakeEntity(request: EntityWakeRequest): Promise<EntityWakeResult> {
 		return this.#run(async () => {
 			try {
-				return await this.#core().wakeEntity(request);
+				return await inherited();
 			} finally {
-				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+				if (this.#behind()) {
+					try {
+						await this.#core().wake({ kind: 'pump' });
+					} finally {
+						if (this.#behind()) await this.#alarmNow();
+						this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+					}
+				}
 			}
 		});
+	}
+
+	/**
+	 * The `__flueWake({ stream, head })` RPC body (rule 3): record the
+	 * high-water mark and `setAlarm(now)` in one synchronous turn — no await
+	 * between them, so they commit as one write — and resolve once that write
+	 * is durable. The webhook route acks only after this resolves.
+	 */
+	doorbell(doorbell: EntityDoorbell): Promise<{ readonly recorded: true }> {
+		if (
+			typeof doorbell?.stream !== 'string' ||
+			doorbell.stream.length === 0 ||
+			typeof doorbell.head !== 'string' ||
+			doorbell.head.length === 0
+		) {
+			return Promise.reject(
+				new InvalidRequestError({ reason: 'A doorbell needs { stream, head }.' }),
+			);
+		}
+		this.#wakeBook().ring(doorbell.stream, doorbell.head);
+		return this.#alarmNow().then(() => ({ recorded: true as const }));
 	}
 
 	/**

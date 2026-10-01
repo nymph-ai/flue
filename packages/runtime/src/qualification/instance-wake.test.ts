@@ -1,22 +1,30 @@
 /**
  * #3752 through `FlueAgentInstance` — the core both coordinators run — rather
- * than a hand-assembled host: an entity that has never been opened is woken
- * by a message from another entity, renders its agent function, and answers.
+ * than a hand-assembled host: an entity that has never been opened is rung by
+ * a message from another entity, pumped by its wake, renders its agent
+ * function, and answers.
  *
- * Regressions: the entity runtime admitted inbox messages without rendering
+ * Regression: the entity runtime admitted inbox messages without rendering
  * first, so an entity woken for the first time ran its turn with no model
- * ("No model is configured", found live on the society deployment); and an instance whose id holds `/` (every
- * spawned child) kept its Pi log at an unencoded path, not at
- * `flue/v1/{agent}/{encoded id}/pi` where every reader looks.
+ * ("No model is configured", found live on the society deployment).
  */
 import { fauxProvider, type Message } from '@earendil-works/pi-ai';
-import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { afterEach, describe, expect, it } from 'vitest';
-import { answer, readAll, TestWorld, textOf, toolCall } from '../entity/a2a-test-support.ts';
+import {
+	answer,
+	context,
+	readAll,
+	removeTempFiles,
+	tempFile,
+	TestWorld,
+	textOf,
+	toolCall,
+} from '../entity/a2a-test-support.ts';
 import { inboxPath } from '../entity/paths.ts';
 import { useModel } from '../hooks/use-model.ts';
 import { createMcpConnectionCache } from '../mcp.ts';
-import { context, removeTempFiles, tempFile } from '../pi/stream-storage-test-support.ts';
+import { openNodeSqliteDatabase } from '../node/node-sqlite-database.ts';
+import type { WakeReason } from '../pi/host.ts';
 import { FlueAgentInstance } from '../runtime/agent-instance.ts';
 import { InMemoryAttachmentStore } from '../runtime/attachment-store.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
@@ -75,38 +83,39 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 			{ messageId: 'm1' },
 			context,
 		);
-		await alice.flush();
 
 		const file = await tempFile('bob.sqlite');
+		const wakes: WakeReason[] = [];
 		const bob = new FlueAgentInstance({
 			agentName: 'bob',
 			instanceId: 'p/b1',
 			agent: Bob,
 			database: () => openNodeSqliteDatabase(file),
-			log,
-			publish: 'await',
 			attachments: new InMemoryAttachmentStore(),
-			armWake: () => {},
+			armWake: (_atMs, reason) => {
+				wakes.push(reason);
+			},
 			events: { emitEvent: () => ({}) } as never,
 			mcp: createMcpConnectionCache(),
-			entities: {},
+			entities: { log },
 		});
 		instances.push(bob);
 		const inbox = inboxPath({ type: 'bob', id: 'p/b1' });
-		const wake = await bob.wakeEntity({
-			subscriptionId: 'flue-inbox',
-			generation: 1,
-			streams: [{ path: inbox, tailOffset: (await log.head(inbox))?.nextOffset ?? '-1' }],
-		});
+		// The doorbell records the head and arms a wake; nothing is opened yet.
+		await bob.ring(inbox, (await log.head(inbox))?.nextOffset ?? '-1');
+		expect(wakes).toEqual([{ kind: 'pump' }]);
+		const wake = await bob.wake({ kind: 'pump' });
 		const submissionId = await deriveKeyedSubmissionId('bob', 'p/b1', 'm1');
 		expect(sent.submissionId).toBe(submissionId);
-		expect(wake.admitted).toEqual([submissionId]);
+		expect(wake).toMatchObject({ behind: false, pump: { admitted: [submissionId] } });
 		const settlement = await (await bob.host()).waitForSettlement(submissionId, context);
 		expect(settlement).toMatchObject({ outcome: 'completed' });
 		await bob.waitForIdle();
-		expect(bob.logPath).toBe('flue/v1/bob/p%2Fb1/pi');
-		expect(await log.head('flue/v1/bob/p%2Fb1/pi')).not.toBeNull();
-		expect(await log.head('flue/v1/bob/p/b1/pi')).toBeNull();
+		// Pi's commits never left the instance.
+		expect(await log.head('flue/v1/bob/p%2Fb1/pi')).toBeNull();
+		// The public conversation is served from the instance's own cache.
+		const head = await bob.source.head();
+		expect(head.snapshot?.messages.map((message) => message.role)).toEqual(['system', 'assistant']);
 		expect(await readAll(log, inboxPath({ type: 'alice', id: 'a1' }))).toEqual([
 			expect.objectContaining({
 				type: 'flue.a2a.message',

@@ -1,8 +1,10 @@
 /**
- * The #3752 A2A scenario against a real Durable Streams server: the relay
- * POSTs through `ElectricDurableStreamLog`, the server's webhook
+ * The #3752 A2A scenario against a real Durable Streams server: sends POST
+ * one event each through `ElectricDurableStreamLog`, the server's webhook
  * subscriptions (`createEntitySubscriptions`) sign and deliver real wakes to
- * the Worker route served over HTTP, verified against the server's JWKS.
+ * the Worker route served over HTTP, verified against the server's JWKS; the
+ * route rings each entity's doorbell and acks through the server's callback,
+ * and the entity's alarm pumps its inbox.
  *
  * Skipped unless `FLUE_DS_URL` names the server's stream root (`…/v1/stream`);
  * `scripts/test-durable-streams-server.sh` starts the Node reference server
@@ -16,12 +18,6 @@ import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import type { Message } from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'vitest';
-import {
-	openStreamStorage,
-	removeTempFiles,
-	snapshotReads,
-	tempFile,
-} from '../pi/stream-storage-test-support.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import { ElectricDurableStreamLog } from '../streams/electric-log.ts';
 import {
@@ -30,6 +26,7 @@ import {
 	eventually,
 	lastMessage,
 	readAll,
+	removeTempFiles,
 	type TestEntity,
 	TestWorld,
 	textOf,
@@ -88,6 +85,7 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 		const BOB: EntityRef = { type: `agent-${run}`, id: 'bob' };
 		const log = new ElectricDurableStreamLog({ baseUrl: root });
 		const world = new TestWorld(log);
+		world.autoAlarms = true;
 		const reports: unknown[] = [];
 		const route = await startRoute(world, root, reports);
 		const subscriptions = createEntitySubscriptions({
@@ -129,7 +127,6 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 			expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
 				'completed',
 			);
-			await alice.flush();
 
 			// Bob is asleep until the server's webhook wakes him.
 			const [ping] = await eventually(async () => {
@@ -142,7 +139,6 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				(ping as { messageId: string }).messageId,
 			);
 			expect(await settled(bob, bobSubmission)).toBe('completed');
-			await bob.flush();
 
 			const [pong] = await eventually(async () => {
 				const inbox = await readAll(log, inboxPath(ALICE));
@@ -154,7 +150,6 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				(pong as { messageId: string }).messageId,
 			);
 			expect(await settled(alice, aliceSubmission)).toBe('completed');
-			await alice.flush();
 			expect(world.woken.map((wake) => wake.entity)).toEqual(
 				expect.arrayContaining([`${ALICE.type}/bob`, `${ALICE.type}/alice`]),
 			);
@@ -167,24 +162,11 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 			for (const entity of [alice, bob]) {
 				const before = histories.get(entity) ?? [];
 				expect((await entity.entries()).slice(0, before.length)).toEqual(before);
-				await entity.flush();
-				const seq = entity.lastSeq();
-				const reads = await snapshotReads(entity.requireStorage(), seq);
-				const rebuilt = await openStreamStorage({
-					file: await tempFile(),
-					log,
-					entity: entity.ref,
-				});
-				try {
-					expect(await snapshotReads(rebuilt.storage, seq)).toEqual(reads);
-				} finally {
-					await rebuilt.storage.close(context);
-				}
 			}
 			expect(await readAll(log, inboxPath(BOB))).toHaveLength(1);
 			expect(await readAll(log, inboxPath(ALICE))).toHaveLength(1);
-			expect(alice.fences).toEqual([]);
-			expect(bob.fences).toEqual([]);
+			// Pi's commits stayed in the entities: no Pi log on the server.
+			expect(await log.head(`flue/v1/${ALICE.type}/alice/pi`)).toBeNull();
 		} finally {
 			await deleteSubscription(root, `flue-inbox-${run}`);
 			await world.closeAll().catch(() => {});
@@ -200,6 +182,7 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 		const BOB: EntityRef = { type: `observer-${run}`, id: 'bob' };
 		const log = new ElectricDurableStreamLog({ baseUrl: root });
 		const world = new TestWorld(log);
+		world.autoAlarms = true;
 		const reports: unknown[] = [];
 		const route = await startRoute(world, root, reports);
 		world.subscriptions = createEntitySubscriptions({ root, webhookUrl: route.url });
@@ -218,11 +201,7 @@ describe.skipIf(!realServer)('A2A entities against FLUE_DS_URL', () => {
 				id: 'hn-1',
 				title: 'Story 1',
 			};
-			const appended = await log.append(stream, {
-				messages: [item],
-				producer: { id: `rsshub-${run}`, epoch: 0, seq: 0 },
-			});
-			expect(appended.status).toBe('appended');
+			await log.append(stream, [item]);
 			const observed = await eventually(async () => {
 				const entries = (await alice.entries()).filter((entry) => entry.kind === 'flue.observed');
 				return entries.length > 0 ? entries : undefined;

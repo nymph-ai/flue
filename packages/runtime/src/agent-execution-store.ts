@@ -155,7 +155,7 @@ export type AgentDispatchAdmission =
  *
  * @deprecated Since the Pi Durable cutover (PI_UPGRADE_PLAN.md §7 step 8)
  * the runtime no longer reads or writes this store: submissions, attempts,
- * joins and settlements are Pi Durable records on the canonical log, and
+ * joins and settlements are Pi Durable records in each instance, and
  * receipts are Pi documents. Adapters keep implementing it for one release
  * so existing deployments stay compatible; it will be removed.
  */

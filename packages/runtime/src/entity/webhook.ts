@@ -393,11 +393,6 @@ export async function receiveWebhook(
 	}
 }
 
-/** The synchronous reply that acks every `tail_offset` of the wake (PROTOCOL §7.1). */
-export function webhookDoneResponse(): Response {
-	return Response.json({ done: true });
-}
-
 export type WakeAckResult =
 	| { readonly status: 'ok'; readonly nextWake: boolean }
 	/** 409 `FENCED`: the wake is stale (a newer generation or wake id). */

@@ -1,12 +1,25 @@
 /**
  * Test support for the A2A entity layer: a "world" of entities, each a real
- * `FluePiHost` over `StreamStorage` (node:sqlite file + a shared
- * `DurableStreamLog`) driven by pi-ai's faux provider, with its
- * `EntityRuntime`; plus an Ed25519 webhook signer that produces wakes in the
- * bare Durable Streams and the agents-server formats.
+ * `FluePiHost` over Pi's own `SqliteStorage` (a node:sqlite file per entity,
+ * through Flue's row-counting facade) driven by pi-ai's faux provider, with
+ * its `EntityRuntime`, its wake book and an alarm — what one Durable Object
+ * holds; plus an Ed25519 webhook signer that produces wakes in the bare
+ * Durable Streams and the agents-server formats.
+ *
+ * Every open of an entity is one **incarnation**. `kill()` makes the open
+ * incarnation a dead process: every later database or stream call it makes
+ * throws `CrashError("the process is dead")`, so nothing it still has in
+ * flight reaches storage, and the next `open()` is a new incarnation over the
+ * same file — what an eviction or an isolate crash leaves behind. A
+ * {@link Fault} kills an incarnation at a chosen point on its own.
  *
  * Imported only by `*.test.ts`; never part of a build entry.
  */
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Context } from '@earendil-works/chord';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import {
 	type AssistantMessage,
 	createModels,
@@ -20,24 +33,48 @@ import {
 	type EntryRecord,
 	ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable';
-import type { SqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite';
-import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
+import {
+	type SqliteDatabase,
+	type SqliteStatement,
+	SqliteStorage,
+} from '@earendil-works/pi-durable/storage/sqlite';
 import { encodeBase64 } from '../base64.ts';
-import type { FenceReason } from '../pi/commit-outbox.ts';
+import { openNodeSqliteDatabase } from '../node/node-sqlite-database.ts';
 import { createFluePiHost, type FluePiHost, type WakeReason } from '../pi/host.ts';
 import { renderedAgentFrom } from '../pi/registry-bridge.ts';
-import { context, tempFile } from '../pi/stream-storage-test-support.ts';
-import { StreamStorage } from '../pi/stream-storage.ts';
-import type { DurableStreamLog } from '../streams/log.ts';
+import type { DurableStreamLog, ReadBatch } from '../streams/log.ts';
 import { STREAM_START, type StreamOffset } from '../streams/offset.ts';
 import type { EntitySubscriptionPort } from './facet.ts';
 import { entityKey, wirePath } from './paths.ts';
+import { type PumpLimits, type PumpResult, pumpEntity } from './pump.ts';
 import { createEntityRuntime, type EntityRuntime } from './runtime.ts';
 import type { EntityRef } from './services.ts';
-import { handleEntityWake, type EntityWakeRequest, type EntityWakeResult } from './wake-handler.ts';
+import { EntityWakeBook } from './wake-book.ts';
+import type { EntityDoorbell } from './webhook-route.ts';
 import type { WebhookJwk } from './webhook.ts';
 
-export { context };
+export const context: Context = BACKGROUND_CONTEXT;
+
+const directories = new Set<string>();
+
+export async function tempFile(name = 'pi.sqlite'): Promise<string> {
+	const directory = await mkdtemp(join(tmpdir(), 'flue-entity-'));
+	directories.add(directory);
+	return join(directory, name);
+}
+
+export async function removeTempFiles(): Promise<void> {
+	for (const directory of directories) await rm(directory, { recursive: true, force: true });
+	directories.clear();
+}
+
+/** What a dead incarnation's calls throw (`vitest.config.ts` ignores its stray rejections). */
+export class CrashError extends Error {
+	constructor(message = 'the process is dead') {
+		super(message);
+		this.name = 'CrashError';
+	}
+}
 
 export type Responder = (messages: readonly Message[]) => AssistantMessage;
 
@@ -68,21 +105,186 @@ export interface WorldClock {
 	now: number;
 }
 
-/** One addressable entity: survives `close()` (sqlite file + the shared log) like an evicted DO. */
+// ─── Faults ─────────────────────────────────────────────────────────────────
+
+/**
+ * Where an incarnation dies: before or after its `after+1`-th append to an
+ * entity inbox (a send), or once it has committed `after` Pi transactions.
+ */
+export type Fault =
+	| { readonly kind: 'crash-before-send' | 'crash-after-send'; readonly after: number }
+	| { readonly kind: 'abort-after-commits'; readonly after: number };
+
+/** One process lifetime of an entity. */
+export class Incarnation {
+	dead = false;
+	fired: Fault | undefined;
+	/** Every append this incarnation made: path and outcome. */
+	readonly appends: { path: string; outcome: 'appended' | 'thrown' }[] = [];
+	#fault: Fault | undefined;
+	#sends = 0;
+	#commits = 0;
+	onDeath: (() => void) | undefined;
+
+	arm(fault: Fault): void {
+		this.#fault = fault;
+		this.#sends = 0;
+		this.#commits = 0;
+	}
+
+	alive(): void {
+		if (this.dead) throw new CrashError();
+	}
+
+	kill(fault?: Fault): void {
+		if (this.dead) return;
+		this.dead = true;
+		this.fired = fault;
+		this.#fault = undefined;
+		this.onDeath?.();
+	}
+
+	async append<T>(path: string, send: () => Promise<T>): Promise<T> {
+		this.alive();
+		const fault = this.#fault;
+		const counted = fault && fault.kind !== 'abort-after-commits' && path.endsWith('/inbox');
+		if (counted) this.#sends++;
+		if (counted && fault.kind === 'crash-before-send' && this.#sends > fault.after) {
+			this.appends.push({ path, outcome: 'thrown' });
+			this.kill(fault);
+			throw new CrashError('crash before the POST');
+		}
+		const result = await send();
+		this.appends.push({ path, outcome: 'appended' });
+		if (counted && fault.kind === 'crash-after-send' && this.#sends > fault.after) {
+			this.kill(fault);
+			throw new CrashError('crash after the POST, before its result');
+		}
+		return result;
+	}
+
+	committed(): void {
+		const fault = this.#fault;
+		if (fault?.kind !== 'abort-after-commits') return;
+		this.#commits++;
+		if (this.#commits >= fault.after) this.kill(fault);
+	}
+}
+
+class KillableLog implements DurableStreamLog {
+	constructor(
+		private readonly inner: DurableStreamLog,
+		private readonly incarnation: () => Incarnation | undefined,
+	) {}
+
+	#alive(): Incarnation | undefined {
+		const incarnation = this.incarnation();
+		incarnation?.alive();
+		return incarnation;
+	}
+
+	ensure(path: string, signal?: AbortSignal) {
+		this.#alive();
+		return this.inner.ensure(path, signal);
+	}
+
+	append(path: string, messages: readonly unknown[], signal?: AbortSignal) {
+		const incarnation = this.#alive();
+		const send = () => this.inner.append(path, messages, signal);
+		return incarnation ? incarnation.append(path, send) : send();
+	}
+
+	read(
+		path: string,
+		from: StreamOffset,
+		options?: { readonly signal?: AbortSignal },
+	): Promise<ReadBatch> {
+		this.#alive();
+		return this.inner.read(path, from, options);
+	}
+
+	head(path: string, signal?: AbortSignal) {
+		this.#alive();
+		return this.inner.head(path, signal);
+	}
+}
+
+class KillableDatabase implements SqliteDatabase {
+	constructor(
+		readonly inner: SqliteDatabase & { rows?: { rowsRead: number; rowsWritten: number } },
+		private readonly incarnation: Incarnation,
+	) {}
+
+	get rows() {
+		return this.inner.rows;
+	}
+
+	exec(sql: string): void {
+		this.incarnation.alive();
+		this.inner.exec(sql);
+	}
+
+	prepare(sql: string): SqliteStatement {
+		this.incarnation.alive();
+		const statement = this.inner.prepare(sql);
+		const incarnation = this.incarnation;
+		return {
+			run: (...params) => {
+				incarnation.alive();
+				statement.run(...params);
+			},
+			get: (...params) => {
+				incarnation.alive();
+				return statement.get(...params);
+			},
+			all: (...params) => {
+				incarnation.alive();
+				return statement.all(...params);
+			},
+		} as SqliteStatement;
+	}
+
+	transaction<T>(callback: () => T): T {
+		this.incarnation.alive();
+		const result = this.inner.transaction(() => {
+			this.incarnation.alive();
+			return callback();
+		}) as T;
+		this.incarnation.committed();
+		return result;
+	}
+
+	close(): void | Promise<void> {
+		return this.inner.close();
+	}
+}
+
+// ─── Entities ───────────────────────────────────────────────────────────────
+
+/** One addressable entity: survives `close()` and `kill()` (its SQLite file) like a Durable Object. */
 export class TestEntity {
 	readonly ref: EntityRef;
 	readonly world: TestWorld;
 	readonly respond: Responder;
 	file: string | undefined;
-	storage: StreamStorage | undefined;
 	host: FluePiHost | undefined;
 	runtime: EntityRuntime | undefined;
+	storage: SqliteStorage | undefined;
+	database: KillableDatabase | undefined;
+	incarnation: Incarnation | undefined;
+	readonly incarnations: Incarnation[] = [];
+	/** Pi's own wakes (the live-task backstop, schedules, deadlines): recorded, never auto-run. */
 	readonly wakes: { atMs: number; reason: WakeReason }[] = [];
 	readonly reports: unknown[] = [];
-	readonly fences: { epoch: number; reason: FenceReason }[] = [];
+	/** The Durable Object alarm: armed by a doorbell or a pump that left work behind. */
+	alarmArmed = false;
+	/** Pumps run, with what each did. */
+	readonly pumps: PumpResult[] = [];
 	/** Model requests across every incarnation. */
 	calls = 0;
+	#pendingFault: Fault | undefined;
 	#opening: Promise<EntityRuntime> | undefined;
+	#book: { book: EntityWakeBook; close(): Promise<void> } | undefined;
 
 	constructor(world: TestWorld, ref: EntityRef, respond: Responder) {
 		this.world = world;
@@ -92,6 +294,17 @@ export class TestEntity {
 
 	get isOpen(): boolean {
 		return this.runtime !== undefined;
+	}
+
+	async #file(): Promise<string> {
+		this.file ??= await tempFile(`${this.ref.type}-${this.ref.id.replaceAll('/', '_')}.sqlite`);
+		return this.file;
+	}
+
+	/** Arm a fault on the open incarnation, else on the next one. */
+	arm(fault: Fault): void {
+		if (this.incarnation && !this.incarnation.dead) this.incarnation.arm(fault);
+		else this.#pendingFault = fault;
 	}
 
 	/** Open (reconstruct) the entity; concurrent callers share one open. */
@@ -104,8 +317,17 @@ export class TestEntity {
 	}
 
 	async #open(): Promise<EntityRuntime> {
-		this.file ??= await tempFile(`${this.ref.type}-${this.ref.id.replaceAll('/', '_')}.sqlite`);
-		const file = this.file;
+		const incarnation = new Incarnation();
+		if (this.#pendingFault) incarnation.arm(this.#pendingFault);
+		this.#pendingFault = undefined;
+		incarnation.onDeath = () => this.#abandon();
+		this.incarnation = incarnation;
+		this.incarnations.push(incarnation);
+		const database = new KillableDatabase(
+			await openNodeSqliteDatabase(await this.#file()),
+			incarnation,
+		);
+		this.database = database;
 		const faux = fauxProvider();
 		const models = createModels();
 		models.setProvider(faux.provider);
@@ -118,24 +340,12 @@ export class TestEntity {
 		const armWake = async (atMs: number, reason: WakeReason) => {
 			this.wakes.push({ atMs, reason });
 		};
-		const log = this.world.wrapLog(this, this.world.log);
+		const log = new KillableLog(this.world.log, () => incarnation);
 		const host = createFluePiHost({
 			entity: this.ref,
 			models,
 			storage: async () => {
-				this.storage = await StreamStorage.open(
-					{
-						database: this.world.wrapDatabase(this, await openNodeSqliteDatabase(file)),
-						log,
-						entity: this.ref,
-						now: () => this.world.clock.now,
-						onFenced: (epoch, reason) => this.fences.push({ epoch, reason }),
-						onReport: (error) => this.reports.push(error),
-						armWake: (atMs) => armWake(atMs, { kind: 'outbox' }),
-						backoff: { initialMs: 60_000, maxMs: 60_000 },
-					},
-					context,
-				);
+				this.storage = await SqliteStorage.open(database);
 				return this.storage;
 			},
 			now: () => this.world.clock.now,
@@ -146,10 +356,6 @@ export class TestEntity {
 			host,
 			entity: this.ref,
 			log,
-			cursors: () => {
-				if (!this.storage) throw new Error('storage is not open');
-				return this.storage.cursors;
-			},
 			armWake,
 			now: () => this.world.clock.now,
 			onReport: (error) => this.reports.push(error),
@@ -163,40 +369,82 @@ export class TestEntity {
 		return runtime;
 	}
 
-	/** Evict: dispose everything in memory; the sqlite file and the log stay. */
+	/** Evict: dispose everything in memory; the SQLite file stays. */
 	async close(): Promise<void> {
 		await this.#opening?.catch(() => {});
 		const runtime = this.runtime;
 		const host = this.host;
 		this.runtime = undefined;
 		this.host = undefined;
+		this.storage = undefined;
+		this.database = undefined;
 		await runtime?.dispose();
 		await host?.close(context);
-		this.storage = undefined;
+		await this.#book?.close();
+		this.#book = undefined;
 	}
 
-	/**
-	 * Crash: forget the incarnation in memory, as a killed isolate does; the
-	 * next `open()` is a new one. A dead process also stops running, so the
-	 * old host and runtime are shut down in the background — against the
-	 * fault wrappers that killed them, so nothing they try reaches storage.
-	 */
-	abandon(): void {
+	/** Crash: the open incarnation dies where it stands; the next `open()` is a new one. */
+	kill(): void {
+		this.incarnation?.kill();
+	}
+
+	#abandon(): void {
 		const runtime = this.runtime;
 		const host = this.host;
 		this.runtime = undefined;
 		this.host = undefined;
 		this.storage = undefined;
+		this.database = undefined;
 		this.#opening = undefined;
 		void runtime?.dispose().catch(() => {});
 		void host?.close(context).catch(() => {});
 	}
 
-	/** The coordinator's `__flueWake`: open (reconstruct) if asleep, then handle. */
-	async wake(request: EntityWakeRequest): Promise<EntityWakeResult> {
-		this.world.woken.push({ entity: entityKey(this.ref), request });
+	/** The wake book: the open incarnation's database, else its own connection to the file. */
+	async book(): Promise<EntityWakeBook> {
+		if (this.database && this.incarnation && !this.incarnation.dead)
+			return new EntityWakeBook(this.database);
+		if (!this.#book) {
+			const database = await openNodeSqliteDatabase(await this.#file());
+			this.#book = { book: new EntityWakeBook(database), close: async () => database.close() };
+		}
+		return this.#book.book;
+	}
+
+	/**
+	 * The `__flueWake({ stream, head })` RPC: record the high-water mark and
+	 * arm the alarm. Opens nothing.
+	 */
+	async doorbell(doorbell: EntityDoorbell): Promise<{ recorded: true }> {
+		this.world.woken.push({ entity: entityKey(this.ref), doorbell });
+		(await this.book()).ring(doorbell.stream, doorbell.head);
+		this.alarmArmed = true;
+		if (this.world.autoAlarms) this.world.scheduleAlarm(this);
+		return { recorded: true };
+	}
+
+	/**
+	 * The alarm: open if asleep, pump one bounded chunk, wake Pi, and re-arm
+	 * while the pump left events behind. Returns the pump's result.
+	 */
+	async alarm(): Promise<PumpResult> {
+		this.alarmArmed = false;
 		const runtime = await this.open();
-		return handleEntityWake(runtime, request, context);
+		const database = this.database;
+		if (!database) throw new Error(`${entityKey(this.ref)} is not open`);
+		const book = new EntityWakeBook(database);
+		const result = await pumpEntity(runtime, book, context, {
+			...(this.world.pumpLimits ? { limits: this.world.pumpLimits } : {}),
+			now: () => this.world.clock.now,
+		});
+		this.pumps.push(result);
+		await runtime.wake({ kind: 'pump' }, context);
+		if (result.behind) {
+			this.alarmArmed = true;
+			if (this.world.autoAlarms) this.world.scheduleAlarm(this);
+		}
+		return result;
 	}
 
 	requireHost(): FluePiHost {
@@ -204,16 +452,9 @@ export class TestEntity {
 		return this.host;
 	}
 
-	requireStorage(): StreamStorage {
+	requireStorage(): SqliteStorage {
 		if (!this.storage) throw new Error(`${entityKey(this.ref)} is not open`);
 		return this.storage;
-	}
-
-	/** Publish the Pi log and post relay rows. */
-	async flush(): Promise<void> {
-		const storage = this.requireStorage();
-		await storage.drain();
-		await storage.drainRelay();
 	}
 
 	async entries(conversationId: ConversationId = ROOT_CONVERSATION_ID): Promise<EntryRecord[]> {
@@ -222,8 +463,11 @@ export class TestEntity {
 		return [...(page?.items ?? [])].reverse();
 	}
 
-	lastSeq(): number {
-		return (this.requireStorage() as unknown as { lastIndexedSeq(): number }).lastIndexedSeq();
+	/** Rows the open incarnation's database read and wrote. */
+	rows(): { rowsRead: number; rowsWritten: number } {
+		const rows = this.database?.rows;
+		if (!rows) throw new Error(`${entityKey(this.ref)} is not open`);
+		return { ...rows };
 	}
 }
 
@@ -231,14 +475,12 @@ export class TestWorld {
 	readonly log: DurableStreamLog;
 	readonly clock: WorldClock = { now: 1_800_000_000_000 };
 	readonly entities = new Map<string, TestEntity>();
-	readonly woken: { entity: string; request: EntityWakeRequest }[] = [];
+	readonly woken: { entity: string; doorbell: EntityDoorbell }[] = [];
 	subscriptions: EntitySubscriptionPort | undefined;
-	/** Per-incarnation fault wrappers (crash tests); identity by default. */
-	wrapLog: (entity: TestEntity, log: DurableStreamLog) => DurableStreamLog = (_entity, log) => log;
-	wrapDatabase: (entity: TestEntity, database: SqliteDatabase) => SqliteDatabase = (
-		_entity,
-		database,
-	) => database;
+	/** Fire armed alarms by themselves (real-server tests); otherwise `runAlarms()` fires them. */
+	autoAlarms = false;
+	pumpLimits: PumpLimits | undefined;
+	readonly #timers = new Set<ReturnType<typeof setTimeout>>();
 
 	constructor(log: DurableStreamLog) {
 		this.log = log;
@@ -254,11 +496,36 @@ export class TestWorld {
 		return found;
 	}
 
-	/** The route's `wake` port: `stub(idFromName(entity)).__flueWake(request)`. */
-	readonly wake = (ref: EntityRef, request: EntityWakeRequest): Promise<EntityWakeResult> =>
-		this.entity(ref).wake(request);
+	/** The route's `wake` port: `stub(idFromName(entity)).__flueWake({ stream, head })`. */
+	readonly wake = (ref: EntityRef, doorbell: EntityDoorbell): Promise<{ recorded: true }> =>
+		this.entity(ref).doorbell(doorbell);
+
+	scheduleAlarm(entity: TestEntity): void {
+		const timer = setTimeout(() => {
+			this.#timers.delete(timer);
+			if (!entity.alarmArmed) return;
+			void entity.alarm().catch((error) => entity.reports.push(error));
+		}, 0);
+		this.#timers.add(timer);
+	}
+
+	/** Fire every armed alarm until none is armed; returns how many fired. */
+	async runAlarms(limit = 100): Promise<number> {
+		let fired = 0;
+		for (let round = 0; round < limit; round++) {
+			const armed = [...this.entities.values()].filter((entity) => entity.alarmArmed);
+			if (armed.length === 0) return fired;
+			for (const entity of armed) {
+				await entity.alarm();
+				fired++;
+			}
+		}
+		throw new Error(`alarms still armed after ${limit} rounds`);
+	}
 
 	async closeAll(): Promise<void> {
+		for (const timer of this.#timers) clearTimeout(timer);
+		this.#timers.clear();
 		for (const entity of this.entities.values()) await entity.close();
 	}
 }
@@ -268,7 +535,7 @@ export async function readAll(log: DurableStreamLog, path: string): Promise<unkn
 	const messages: unknown[] = [];
 	let offset: StreamOffset = STREAM_START;
 	while (true) {
-		let batch: Awaited<ReturnType<DurableStreamLog['read']>>;
+		let batch: ReadBatch;
 		try {
 			batch = await log.read(path, offset);
 		} catch {

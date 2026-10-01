@@ -9,8 +9,8 @@
  *   stores exist before the Agents SDK constructor can schedule work, then
  *   `runtime.attach(this, prepared)` binds the coordinator to the instance.
  * - `onStart` / `onRequest` / `onFiberRecovered` / the
- *   `__flueWakeAgentSubmissions` schedule target / the `__flueWake` RPC
- *   delegate to the shared Cloudflare agent runtime; `onStart`/`onFiberRecovered` forward to an
+ *   `__flueWakeAgentSubmissions` schedule target / the `__flueWake` doorbell
+ *   RPC / the alarm delegate to the shared Cloudflare agent runtime; `onStart`/`onFiberRecovered` forward to an
  *   inherited implementation when the (possibly extended) base defines one.
  * - The module's `extend({ base, wrap })` export is resolved via
  *   `resolveCloudflareExtension`: `base` reshapes the superclass, `wrap`
@@ -76,24 +76,24 @@ export function createFlueAgentClass(options: CreateFlueAgentClassOptions): Exte
 		}
 
 		/**
-		 * Durable schedule target of every wake Pi asks for: the commit-outbox
-		 * backoff, the live-task backstop, submission deadlines, and the
-		 * zero-delay wake after a restart. The payload is the wake reason.
-		 * Dispatched from the Durable Object's alarm invocation.
+		 * Durable schedule target of every wake Pi asks for: the live-task
+		 * backstop, submission deadlines, entity schedules, and the zero-delay
+		 * wake after a restart. The payload is the wake reason. Dispatched from
+		 * the Durable Object's alarm invocation.
 		 */
 		__flueWakeAgentSubmissions(payload?: unknown) {
 			return runtime.drainSubmissions(this as unknown as CloudflareAgentInstance, payload);
 		}
 
 		/**
-		 * RPC from the Worker's Electric wake route (`entity/webhook-route.ts`):
-		 * these streams — the instance's inbox, streams it observes — have new
-		 * data. Reconstructs the instance (StreamStorage + Harness + render) and
-		 * runs the entity wake handler (`entity/wake-handler.ts`), which admits
-		 * the new messages and reports how far it processed each stream.
+		 * The doorbell RPC from the Worker's Electric wake route
+		 * (`entity/webhook-route.ts`): `stream` — the instance's inbox, or a
+		 * stream it observes — holds events through `head`. Records the
+		 * high-water mark and arms the alarm in one synchronous turn, and
+		 * returns; the alarm pumps (docs/cloudflare-native.md rules 3–4).
 		 */
-		__flueWake(request: Parameters<CloudflareAgentRuntime['wake']>[1]) {
-			return runtime.wake(this as unknown as CloudflareAgentInstance, request);
+		__flueWake(doorbell: Parameters<CloudflareAgentRuntime['wake']>[1]) {
+			return runtime.wake(this as unknown as CloudflareAgentInstance, doorbell);
 		}
 
 		onRequest(request: Request) {

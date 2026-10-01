@@ -16,8 +16,11 @@ import {
 	InvalidRequestError,
 	SubmissionConflictError,
 } from '../errors.ts';
-import type { EntityWakeRequest, EntityWakeResult } from '../entity/wake-handler.ts';
-import { createEntityWakeRoute, ENTITY_WAKE_ROUTE_PATH } from '../entity/webhook-route.ts';
+import {
+	createEntityWakeRoute,
+	type EntityDoorbell,
+	ENTITY_WAKE_ROUTE_PATH,
+} from '../entity/webhook-route.ts';
 import type { DispatchInput, DispatchQueue } from '../runtime/dispatch-queue.ts';
 import type { CloudflareRuntime } from '../runtime/flue-app.ts';
 import {
@@ -49,13 +52,13 @@ export interface CreateCloudflareWorkerConfigOptions {
 	/** Route one request to the named instance of an agent DO binding. */
 	fetchAgent: (binding: unknown, instanceId: string, request: Request) => Promise<Response>;
 	/**
-	 * The named instance's Durable Object stub, for the `__flueWake` RPC of
-	 * entity wakes. Absent: the Worker serves no wake route.
+	 * The named instance's Durable Object stub, for the `__flueWake` doorbell
+	 * RPC of entity wakes. Absent: the Worker serves no wake route.
 	 */
 	agentStub?: (
 		binding: unknown,
 		instanceId: string,
-	) => Promise<{ __flueWake(request: EntityWakeRequest): Promise<EntityWakeResult> }>;
+	) => Promise<{ __flueWake(doorbell: EntityDoorbell): Promise<unknown> }>;
 }
 
 /** The Cloudflare-target seams the generated entry passes to `configureFlueRuntime`. */
@@ -174,10 +177,10 @@ export function createCloudflareWorkerConfig(
 		if (url.pathname !== ENTITY_WAKE_ROUTE_PATH || request.method !== 'POST') return null;
 		wakeRoute ??= createEntityWakeRoute({
 			keys: streamsWebhookKeys(streams),
-			wake: async (entity, wakeRequest) => {
+			wake: async (entity, doorbell) => {
 				const binding = lookupBinding(entity.type, bindingEnv);
 				if (!binding) throw new Error(`[flue] Entity wake for unknown agent "${entity.type}".`);
-				return (await agentStub(binding, entity.id)).__flueWake(wakeRequest);
+				return (await agentStub(binding, entity.id)).__flueWake(doorbell);
 			},
 			...(streams.fetch
 				? {

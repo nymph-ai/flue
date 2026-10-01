@@ -230,7 +230,10 @@ class FakeDurableStreamsServer {
 		return stream.messages.filter((message) => message.offset > offset);
 	}
 
-	private waitForAppend(path: string, signal: AbortSignal | undefined): Promise<'data' | 'timeout'> {
+	private waitForAppend(
+		path: string,
+		signal: AbortSignal | undefined,
+	): Promise<'data' | 'timeout'> {
 		return new Promise((resolve, reject) => {
 			if (signal?.aborted) {
 				reject(abortError());
@@ -270,7 +273,12 @@ class FakeDurableStreamsServer {
 			return text(400, `${live === 'sse' ? 'SSE' : 'Long-poll'} requires offset parameter`);
 		}
 		if (live === 'sse') {
-			return this.sse(path, stream, offset === 'now' ? stream.currentOffset : (offset as string), signal);
+			return this.sse(
+				path,
+				stream,
+				offset === 'now' ? stream.currentOffset : (offset as string),
+				signal,
+			);
 		}
 		const effective = offset === 'now' ? stream.currentOffset : offset;
 		if (offset === 'now' && live !== 'long-poll') {
@@ -331,7 +339,14 @@ class FakeDurableStreamsServer {
 					if (messages.length > 0) {
 						// Pretty-printed across lines, as a multi-line `data:` event.
 						controller.enqueue(
-							frame('data', JSON.stringify(messages.flatMap((message) => message.values), null, 1)),
+							frame(
+								'data',
+								JSON.stringify(
+									messages.flatMap((message) => message.values),
+									null,
+									1,
+								),
+							),
 						);
 						current = messages.at(-1)?.offset as string;
 					}
@@ -364,7 +379,10 @@ class FakeDurableStreamsServer {
 defineDurableStreamLogContractTests('ElectricDurableStreamLog (Node reference server paths)', {
 	create: () => {
 		const server = new FakeDurableStreamsServer();
-		return new ElectricDurableStreamLog({ baseUrl: `${server.origin}/v1/stream`, fetch: server.fetch });
+		return new ElectricDurableStreamLog({
+			baseUrl: `${server.origin}/v1/stream`,
+			fetch: server.fetch,
+		});
 	},
 });
 
@@ -402,11 +420,7 @@ describe.skipIf(!realServer)('ElectricDurableStreamLog against FLUE_DS_URL', () 
 			const log = new ElectricDurableStreamLog({ baseUrl: root });
 			const inbox = `${prefix}/inbox`;
 			await log.ensure(inbox);
-			const appended = await log.append(inbox, {
-				messages: [{ from: 'alice', text: 'hi' }],
-				producer: { id: 'alice->inbox', epoch: 0, seq: 0 },
-			});
-			if (appended.status !== 'appended') throw new Error(`append: ${appended.status}`);
+			const appended = await log.append(inbox, [{ from: 'alice', text: 'hi' }]);
 
 			let captured: { header: string | null; body: string } | undefined;
 			for (let attempt = 0; attempt < 100 && !captured; attempt++) {
@@ -444,9 +458,10 @@ describe.skipIf(!realServer)('ElectricDurableStreamLog against FLUE_DS_URL', () 
 
 // ─── Mapping ────────────────────────────────────────────────────────────────
 
-function canned(
-	respond: (request: Request) => Response | Promise<Response>,
-): { log: ElectricDurableStreamLog; seen: Request[] } {
+function canned(respond: (request: Request) => Response | Promise<Response>): {
+	log: ElectricDurableStreamLog;
+	seen: Request[];
+} {
 	const seen: Request[] = [];
 	const log = new ElectricDurableStreamLog({
 		baseUrl: 'https://ds.test/v1/stream/',
@@ -460,110 +475,70 @@ function canned(
 	return { log, seen };
 }
 
-const claim = { id: 'agent/instance/pi', epoch: 3, seq: 7 };
-
 describe('ElectricDurableStreamLog request shape', () => {
-	it('POSTs a JSON array with the producer and Stream-Seq headers', async () => {
+	it('POSTs a plain JSON array, with no producer headers', async () => {
 		const { log, seen } = canned(() =>
 			empty(200, { 'Stream-Next-Offset': '0000000000000000_0000000000000042' }),
 		);
-		const outcome = await log.append('flue/v1/a b/i/pi', {
-			messages: [{ type: 'pi.commit', seq: 9 }],
-			producer: claim,
-			streamSeq: '0000000000000009',
-		});
-		expect(outcome).toEqual({
-			status: 'appended',
-			nextOffset: '0000000000000000_0000000000000042',
-		});
+		const outcome = await log.append('flue/v1/a b/i/inbox', [{ type: 'flue.a2a.message' }]);
+		expect(outcome).toEqual({ nextOffset: '0000000000000000_0000000000000042' });
 		const request = seen[0] as Request;
 		expect(request.method).toBe('POST');
-		expect(request.url).toBe('https://ds.test/v1/stream/flue/v1/a%20b/i/pi');
+		expect(request.url).toBe('https://ds.test/v1/stream/flue/v1/a%20b/i/inbox');
 		expect(request.headers.get('content-type')).toBe('application/json');
-		expect(request.headers.get('producer-id')).toBe('agent/instance/pi');
-		expect(request.headers.get('producer-epoch')).toBe('3');
-		expect(request.headers.get('producer-seq')).toBe('7');
-		expect(request.headers.get('stream-seq')).toBe('0000000000000009');
+		expect(request.headers.get('producer-id')).toBeNull();
+		expect(request.headers.get('stream-seq')).toBeNull();
 		expect(request.headers.get('authorization')).toBe('Bearer secret');
-		expect(await request.json()).toEqual([{ type: 'pi.commit', seq: 9 }]);
+		expect(await request.json()).toEqual([{ type: 'flue.a2a.message' }]);
 	});
 
-	it('reads with offset, live and cursor query parameters', async () => {
+	it('reads with only the offset query parameter', async () => {
 		const { log, seen } = canned(
 			() =>
 				new Response('[{"a":1}]', {
-					headers: {
-						'Stream-Next-Offset': 'x_2',
-						'Stream-Up-To-Date': 'TRUE',
-						'Stream-Cursor': '77',
-					},
+					headers: { 'Stream-Next-Offset': 'x_2', 'Stream-Up-To-Date': 'TRUE' },
 				}),
 		);
-		const batch = await log.read('s', asStreamOffset('x_1'), { live: 'long-poll', cursor: '76' });
+		const batch = await log.read('s', asStreamOffset('x_1'));
 		expect(batch).toEqual({
 			messages: [{ a: 1 }],
 			nextOffset: 'x_2',
 			upToDate: true,
 			closed: false,
-			cursor: '77',
 		});
 		const url = new URL((seen[0] as Request).url);
-		expect(Object.fromEntries(url.searchParams)).toEqual({
-			offset: 'x_1',
-			live: 'long-poll',
-			cursor: '76',
-		});
+		expect(Object.fromEntries(url.searchParams)).toEqual({ offset: 'x_1' });
 	});
 });
 
 describe('ElectricDurableStreamLog status mapping', () => {
-	const append = (response: () => Response) =>
-		canned(response).log.append('s', { messages: [1], producer: claim });
+	const append = (response: () => Response) => canned(response).log.append('s', [1]);
 
-	it('maps the Rust server variants that carry Stream-Next-Offset', async () => {
-		expect(
-			await append(() =>
-				empty(204, { 'Stream-Next-Offset': 'o_9', 'Producer-Epoch': '3', 'Producer-Seq': '7' }),
-			),
-		).toEqual({ status: 'duplicate', nextOffset: 'o_9' });
-		expect(
-			await append(() => text(409, 'Sequence conflict', { 'Stream-Next-Offset': 'o_9' })),
-		).toEqual({ status: 'stream-seq-conflict', nextOffset: 'o_9' });
-		expect(
-			await append(() =>
-				text(403, 'stale producer epoch', { 'Producer-Epoch': '4', 'Stream-Next-Offset': 'o_9' }),
-			),
-		).toEqual({ status: 'fenced', currentEpoch: 4 });
-		expect(
-			await append(() =>
-				text(409, 'producer sequence gap', {
-					'Producer-Expected-Seq': '5',
-					'Producer-Received-Seq': '7',
-				}),
-			),
-		).toEqual({ status: 'producer-gap', expectedSeq: 5 });
-	});
-
-	it('maps the Node server duplicate without an offset', async () => {
-		expect(await append(() => empty(204, { 'Producer-Epoch': '3', 'Producer-Seq': '9' }))).toEqual({
-			status: 'duplicate',
+	it('accepts both success statuses', async () => {
+		expect(await append(() => empty(204, { 'Stream-Next-Offset': 'o_9' }))).toEqual({
+			nextOffset: 'o_9',
+		});
+		expect(await append(() => empty(200, { 'Stream-Next-Offset': 'o_9' }))).toEqual({
+			nextOffset: 'o_9',
 		});
 	});
 
-	it('treats transport failures, 429 and 5xx as retryable', async () => {
+	it('maps transport failures, 429 and 5xx to retryable errors', async () => {
 		for (const status of [429, 500, 502, 503]) {
-			const outcome = await append(() => text(status, 'busy'));
-			expect(outcome.status).toBe('retryable');
+			const error = await append(() => text(status, 'busy')).catch((caught: unknown) => caught);
+			expect((error as DurableStreamLogError).retryable).toBe(true);
 		}
 		const { log } = canned(() => {
 			throw new TypeError('fetch failed');
 		});
-		expect((await log.append('s', { messages: [1], producer: claim })).status).toBe('retryable');
+		await expect(log.append('s', [1])).rejects.toMatchObject({ code: 'unavailable' });
 	});
 
 	it('throws typed errors for closed, conflicting, oversized and missing streams', async () => {
 		await expect(
-			append(() => text(409, 'Stream is closed', { 'Stream-Closed': 'true', 'Stream-Next-Offset': 'o' })),
+			append(() =>
+				text(409, 'Stream is closed', { 'Stream-Closed': 'true', 'Stream-Next-Offset': 'o' }),
+			),
 		).rejects.toMatchObject({ code: 'closed' });
 		await expect(append(() => text(409, 'Content-type mismatch'))).rejects.toMatchObject({
 			code: 'conflict',
@@ -575,11 +550,8 @@ describe('ElectricDurableStreamLog status mapping', () => {
 			code: 'not-found',
 		});
 		await expect(append(() => text(410, 'Stream is gone'))).rejects.toMatchObject({ code: 'gone' });
-		await expect(
-			append(() => text(400, 'New epoch must start with sequence 0')),
-		).rejects.toMatchObject({ code: 'bad-request' });
-		await expect(append(() => text(403, 'Stale producer epoch'))).rejects.toMatchObject({
-			code: 'protocol',
+		await expect(append(() => text(400, 'Empty body'))).rejects.toMatchObject({
+			code: 'bad-request',
 		});
 		await expect(append(() => empty(200, {}))).rejects.toMatchObject({ code: 'protocol' });
 	});
@@ -597,21 +569,7 @@ describe('ElectricDurableStreamLog status mapping', () => {
 		expect((created.seen[0] as Request).headers.get('content-type')).toBe('application/json');
 	});
 
-	it('maps a long-poll timeout, HEAD and missing streams', async () => {
-		const timeout = canned(() =>
-			empty(204, {
-				'Stream-Next-Offset': 'o_5',
-				'Stream-Up-To-Date': 'true',
-				'Stream-Cursor': '12',
-			}),
-		);
-		expect(await timeout.log.read('s', asStreamOffset('o_5'), { live: 'long-poll' })).toEqual({
-			messages: [],
-			nextOffset: 'o_5',
-			upToDate: true,
-			closed: false,
-			cursor: '12',
-		});
+	it('maps HEAD and missing streams', async () => {
 		const closed = canned(() =>
 			empty(200, { 'Stream-Next-Offset': 'o_5', 'Stream-Closed': 'true' }),
 		);
@@ -620,69 +578,6 @@ describe('ElectricDurableStreamLog status mapping', () => {
 		expect(await missing.log.head('s')).toBeNull();
 		await expect(missing.log.read('s', STREAM_START)).rejects.toMatchObject({
 			code: 'not-found',
-		});
-	});
-});
-
-describe('ElectricDurableStreamLog SSE', () => {
-	function sseResponse(frames: string[]): Response {
-		const encoder = new TextEncoder();
-		let index = 0;
-		const body = new ReadableStream<Uint8Array>({
-			pull(controller) {
-				const frame = frames[index++];
-				if (frame === undefined) controller.close();
-				else controller.enqueue(encoder.encode(frame));
-			},
-		});
-		return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
-	}
-
-	it('skips data-less controls and returns the first data batch', async () => {
-		const { log } = canned(() =>
-			sseResponse([
-				'event: control\ndata:{"streamNextOffset":"o_1","streamCursor":"5","upToDate":true}\n\n',
-				': keep-alive comment\n\nevent: data\ndata: [\ndata:{"k":"v"},\r\n',
-				'data:{"k":"w"}\ndata:]\n\nevent: control\ndata:{"streamNextOffset":"o_2","streamCursor":"6"}\n\n',
-				'event: data\ndata:[{"never":"read"}]\n\n',
-			]),
-		);
-		expect(await log.read('s', asStreamOffset('o_1'), { live: 'sse' })).toEqual({
-			messages: [{ k: 'v' }, { k: 'w' }],
-			nextOffset: 'o_2',
-			upToDate: false,
-			closed: false,
-			cursor: '6',
-		});
-	});
-
-	it('ends at a closing control event', async () => {
-		const { log } = canned(() =>
-			sseResponse(['event: control\ndata:{"streamNextOffset":"o_9","streamClosed":true}\n\n']),
-		);
-		expect(await log.read('s', asStreamOffset('o_9'), { live: 'sse' })).toEqual({
-			messages: [],
-			nextOffset: 'o_9',
-			upToDate: true,
-			closed: true,
-		});
-	});
-
-	it('reads SSE from the reference server paths', async () => {
-		const server = new FakeDurableStreamsServer();
-		const log = new ElectricDurableStreamLog({ baseUrl: server.origin, fetch: server.fetch });
-		const { nextOffset } = await log.ensure('s');
-		const pending = log.read('s', nextOffset, { live: 'sse' });
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		const appended = await log.append('s', {
-			messages: [{ n: 1 }, { n: 2 }],
-			producer: { id: 'p', epoch: 0, seq: 0 },
-		});
-		expect(await pending).toMatchObject({
-			messages: [{ n: 1 }, { n: 2 }],
-			nextOffset: appended.status === 'appended' ? appended.nextOffset : 'unexpected',
-			upToDate: true,
-			cursor: '1000',
 		});
 	});
 });

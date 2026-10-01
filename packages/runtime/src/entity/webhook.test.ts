@@ -12,7 +12,6 @@ import {
 	staticWebhookKeys,
 	verifyWebhookSignature,
 	type WebhookJwk,
-	webhookDoneResponse,
 	webhookJwksUrl,
 } from './webhook.ts';
 
@@ -224,7 +223,6 @@ describe('webhook bodies', () => {
 		const received = await receiveWebhook(request, { keys, now: clock });
 		if (!received.ok) throw new Error(`expected a verified wake, got ${received.reason}`);
 		expect(received.webhook.streams[0]?.tail_offset).toBe('0000000000000000_0000000000000084');
-		expect(await webhookDoneResponse().json()).toEqual({ done: true });
 
 		const unsigned = await receiveWebhook(
 			new Request('https://worker.test/', { method: 'POST', body: wakeBody }),

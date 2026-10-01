@@ -1,8 +1,8 @@
 /**
  * Where the public conversation wire is projected from (PI_UPGRADE_PLAN.md
  * §4). The HTTP read routes and the in-process observers speak only this
- * interface, so they serve the Pi projection of the canonical log
- * (`pi/projection-host.ts`) and, for one release, a pre-upgrade record
+ * interface, so they serve the Pi projection cached over Pi storage
+ * (`pi/conversation-cache.ts`) and, for one release, a pre-upgrade record
  * stream (`legacy/conversation-source.ts`) with the same protocol.
  *
  * Offsets are the source's own opaque tokens (PROTOCOL §8): a client resumes

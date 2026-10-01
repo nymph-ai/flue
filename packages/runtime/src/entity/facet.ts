@@ -1,17 +1,18 @@
 /**
- * The entity facet (PI_UPGRADE_PLAN.md §2.5): Chord providers of
+ * The entity facet (docs/cloudflare-native.md rule 5): Chord providers of
  * `EntityMessaging`, `EntityObservation` and `EntityLifecycle` over one
- * `FluePiHost` and the `DurableStreamLog`.
+ * `FluePiHost` and the entity streams.
  *
- * Every effect is a Pi commit, so it is canonical and replays with the log:
+ * Effects are idempotent, not co-committed:
  *
- * - `send`/`publish`/`spawn`/remote `schedule` commit a `flue.a2a.send` or
- *   `flue.publish` entry; `StreamStorage` writes the relay row in the same
- *   SQLite transaction and the relay drainer posts it once the commit is on
- *   the log. Inside a tool call (the {@link ENTITY_TOOL_CALL} context value)
- *   the entry is committed through the tool's own `api.commit`, and a
- *   `flue.a2a.relayed` doc keyed by the message id makes a `replay: "safe"`
- *   rerun commit nothing new.
+ * - `send`/`publish`/`spawn`/remote `schedule` append ONE event directly to
+ *   the target's inbox (or this entity's events stream) — a plain POST, no
+ *   outbox around Pi's commit. The event id is deterministic: inside a tool
+ *   call (the {@link ENTITY_TOOL_CALL} context value) it is
+ *   `{self}/{taskId}/{callId}`, which a `replay: "safe"` rerun after a crash
+ *   derives again, so the rerun appends the same event and the receiver,
+ *   which admits it under `deriveKeyedSubmissionId(target, eventId)`,
+ *   deduplicates it. Spawns and schedules use ids derived from their key.
  * - self-`schedule` and `observe` keep their state in Pi docs
  *   (`schedules.ts`, `observations.ts`).
  */
@@ -20,26 +21,14 @@ import {
 	type ContextKey,
 	defineFacet,
 	type Facet,
-	type JsonValue,
 	type MutableReplicatedState,
 } from '@earendil-works/chord';
 import { createContextKey } from '@earendil-works/chord/context';
-import {
-	type ConversationId,
-	ROOT_CONVERSATION_ID,
-	type ToolExecutionApi,
-	type Tx,
-} from '@earendil-works/pi-durable';
-import {
-	A2A_SEND_ENTRY_KIND,
-	type A2aDirective,
-	type A2aSendEntryData,
-	PUBLISH_ENTRY_KIND,
-} from '../pi/a2a-entries.ts';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { FluePiHost } from '../pi/host.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
-import type { DurableStreamLog } from '../streams/log.ts';
-import { FlueRelayed } from './docs.ts';
+import { type DurableStreamLog, DurableStreamLogError } from '../streams/log.ts';
+import type { A2aDirective, A2aInboxMessage, PublishedEvent } from './events.ts';
 import { deliveredFromSchedule, entityMessageJson, parseEntityMessage } from './messages.ts';
 import type { ObservationBook } from './observations.ts';
 import { entityKey, eventsPath, inboxPath, sameEntity } from './paths.ts';
@@ -111,23 +100,29 @@ export async function spawnedUid(child: EntityRef): Promise<string> {
 	return `inst_sp_${hex.slice(0, 26)}`;
 }
 
+/** Append to `path`, creating the stream first when it does not exist yet (one PUT, once). */
+async function appendCreating(
+	log: DurableStreamLog,
+	path: string,
+	message: unknown,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	try {
+		await log.append(path, [message], signal);
+	} catch (error) {
+		if (!(error instanceof DurableStreamLogError) || error.code !== 'not-found') throw error;
+		await log.ensure(path, signal);
+		await log.append(path, [message], signal);
+	}
+}
+
 /** Message id of a relayed directive: one per (sender, purpose, id), so repeats deduplicate. */
 function directiveMessageId(self: EntityRef, purpose: string, id: string): string {
 	return `${purpose}:${entityKey(self)}/${id}`;
 }
 
 export function createEntityFacet(options: EntityFacetOptions): Facet {
-	const { host, entity: self, log, observations, schedules, subscriptions } = options;
-
-	/** Commit `change` through the tool call's own commit when inside one. */
-	function commit<T>(
-		context: Context,
-		change: (tx: Tx, conversationId: ConversationId) => Promise<T>,
-	): Promise<T> {
-		const call = context.value(ENTITY_TOOL_CALL);
-		if (call) return call.commit((tx) => change(tx, call.conversationId), context);
-		return host.harness.commit((tx) => change(tx, ROOT_CONVERSATION_ID), context);
-	}
+	const { entity: self, log, observations, schedules, subscriptions } = options;
 
 	function defaultId(context: Context, what: string): string {
 		const call = context.value(ENTITY_TOOL_CALL);
@@ -135,45 +130,25 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 		return `${entityKey(self)}/${call.taskId}/${call.callId}`;
 	}
 
-	/** Commit one relayed entry unless `dedupKey` was committed before; `true` when it was. */
-	function commitRelayed(
-		context: Context,
-		dedupKey: string,
-		kind: string,
-		data: JsonValue,
-	): Promise<boolean> {
-		return commit(context, async (tx, conversationId) => {
-			const relayed = await tx.doc(FlueRelayed, dedupKey, null);
-			if (relayed.committed) return true;
-			relayed.committed = true;
-			await tx.appendEntry(conversationId, { kind, data });
-			return false;
-		});
-	}
-
-	async function relaySend(
+	/** Append one event to `target`'s inbox. A repeat appends the same event; the target admits it once. */
+	async function sendEvent(
 		target: EntityRef,
 		messageId: string,
 		message: EntityMessage,
 		directive: A2aDirective | undefined,
 		context: Context,
 	): Promise<SendReceipt> {
-		const data: A2aSendEntryData = {
-			target: { type: target.type, id: target.id },
+		const event: A2aInboxMessage = {
+			type: 'flue.a2a.message',
+			from: { type: self.type, id: self.id },
 			messageId,
 			message: entityMessageJson(message),
 			...(directive === undefined ? {} : { directive }),
 		};
-		const deduplicated = await commitRelayed(
-			context,
-			`send:${messageId}`,
-			A2A_SEND_ENTRY_KIND,
-			data as unknown as JsonValue,
-		);
+		await appendCreating(log, inboxPath(target), event, context.abortSignal);
 		return {
 			messageId,
 			submissionId: await deriveKeyedSubmissionId(target.type, target.id, messageId),
-			deduplicated,
 		};
 	}
 
@@ -182,11 +157,17 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			assertEntity(target, 'A send target');
 			const parsed = parseEntityMessage(message);
 			const messageId = sendOptions.messageId ?? defaultId(context, 'send');
-			return relaySend(target, messageId, parsed, undefined, context);
+			return sendEvent(target, messageId, parsed, undefined, context);
 		},
 		async publish(event, publishOptions, context) {
 			const eventId = publishOptions.eventId ?? defaultId(context, 'publish');
-			await commitRelayed(context, `publish:${eventId}`, PUBLISH_ENTRY_KIND, { eventId, event });
+			const published: PublishedEvent = {
+				type: 'flue.event',
+				from: { type: self.type, id: self.id },
+				eventId,
+				event,
+			};
+			await appendCreating(log, eventsPath(self), published, context.abortSignal);
 			return { eventId };
 		},
 	};
@@ -204,7 +185,7 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			const message = args.message
 				? parseEntityMessage(args.message)
 				: { text: `You were spawned by ${self.type} "${self.id}" as "${args.key}".` };
-			await relaySend(
+			await sendEvent(
 				child,
 				directiveMessageId(self, 'spawn', args.key),
 				message,
@@ -228,7 +209,7 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			if (sameEntity(target, self)) {
 				await schedules.arm(scheduleId, atMs, deliveredFromSchedule(scheduleId, parsed), context);
 			} else {
-				await relaySend(
+				await sendEvent(
 					target,
 					directiveMessageId(self, `sched@${atMs}`, scheduleId),
 					parsed,
@@ -244,14 +225,14 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			// One cancel per call: a later re-schedule and cancel must not deduplicate against this one.
 			const call = context.value(ENTITY_TOOL_CALL);
 			const attempt = call ? `${call.taskId}/${call.callId}` : String(Date.now());
-			const receipt = await relaySend(
+			await sendEvent(
 				target,
 				directiveMessageId(self, `unsched@${attempt}`, scheduleId),
 				{ text: '' },
 				{ kind: 'cancel-schedule', scheduleId },
 				context,
 			);
-			return !receipt.deduplicated;
+			return true;
 		},
 	};
 

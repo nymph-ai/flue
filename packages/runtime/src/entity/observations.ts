@@ -1,15 +1,18 @@
 /**
- * Observation (PI_UPGRADE_PLAN.md §2.5 "observe"): read another stream past a
- * cursor and record each item in this entity's own history as a Pi **write**
- * submission of entry kind `flue.observed`, with
- * `requestId = "obs:{key}@{offset}:{index}"` — `offset` is where the read
- * started and `index` the item's position in what it returned. Reads never
- * split an append and always restart from the committed cursor, so a re-poll
- * after a crash re-derives the same ids and Pi's `submissionByRequest` admits
- * each item once.
+ * Observation (docs/cloudflare-native.md rules 4–5): read another stream past
+ * a cursor and record each item in this entity's own history as a Pi
+ * **write** submission of entry kind `flue.observed`. The request id is the
+ * item's event id when it is another entity's published event
+ * (`obs:{key}#{publisher}/{eventId}`) — a publisher's replayed tool call may
+ * append the same event twice, and it is recorded once — and otherwise its
+ * position, `obs:{key}@{offset}:{index}`: `offset` is where the read started
+ * and `index` the item's place in what it returned. Reads never split an
+ * append and always restart from the committed cursor, so a re-poll after a
+ * crash re-derives the same ids and Pi's `submissionByRequest` admits each
+ * item once.
  *
- * Cursors live in the `flue.observations` doc (canonical, replayable);
- * `flue.observation-index` maps keys to stream paths for wakes.
+ * Cursors live in the `flue.observations` doc; `flue.observation-index` maps
+ * keys to stream paths for wakes.
  */
 import type { Context, JsonValue } from '@earendil-works/chord';
 import { FlueObservations } from '../pi/docs.ts';
@@ -17,7 +20,7 @@ import type { FluePiHost } from '../pi/host.ts';
 import { DurableStreamLogError, type DurableStreamLog } from '../streams/log.ts';
 import { asStreamOffset, isResumeOffset, STREAM_START } from '../streams/offset.ts';
 import { FlueObservationIndex, FlueObservedEntry } from './docs.ts';
-import { eventsPath } from './paths.ts';
+import { entityKey, eventsPath } from './paths.ts';
 import type { ObservedBatch, ObservationCursors, ObserveSource } from './services.ts';
 
 export interface ObservationBookOptions {
@@ -29,8 +32,24 @@ export interface ObservationBookOptions {
 /** What `flue.observations[key].source` holds. */
 export type ObservationSourceState = { path: string; entity?: { type: string; id: string } };
 
-/** The request id an observed item is admitted with. */
-export function observedRequestId(key: string, offset: string, index: number): string {
+/** The request id an observed item is admitted with: its event id if it has one, else its position. */
+export function observedRequestId(
+	key: string,
+	offset: string,
+	index: number,
+	item?: unknown,
+): string {
+	const event = item as { type?: unknown; from?: unknown; eventId?: unknown } | null | undefined;
+	if (
+		event?.type === 'flue.event' &&
+		typeof event.eventId === 'string' &&
+		typeof event.from === 'object' &&
+		event.from !== null &&
+		typeof (event.from as { type?: unknown }).type === 'string' &&
+		typeof (event.from as { id?: unknown }).id === 'string'
+	) {
+		return `obs:${key}#${entityKey(event.from as { type: string; id: string })}/${event.eventId}`;
+	}
 	return `obs:${key}@${offset}:${index}`;
 }
 
@@ -151,7 +170,7 @@ export class ObservationBook {
 				await root.submit(
 					{
 						type: 'write',
-						requestId: observedRequestId(key, offset, index),
+						requestId: observedRequestId(key, offset, index, value),
 						entry: {
 							kind: FlueObservedEntry.kind,
 							data: { key, stream: observation.path, offset, index, item: value },

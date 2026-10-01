@@ -20,7 +20,7 @@
  * running a callback and recording it reruns it on recovery.
  *
  * `beforeRequest` also rehydrates `flue-attachment:<id>` placeholders in user
- * content, so attachment bytes never enter the canonical log.
+ * content, so attachment bytes never enter Pi storage.
  */
 import type { Context, JsonValue } from '@earendil-works/chord';
 import type {

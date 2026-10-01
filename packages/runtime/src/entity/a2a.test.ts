@@ -1,7 +1,9 @@
 /**
  * The A2A entity layer end to end, in process: InMemoryDurableStreamLog +
- * node:sqlite StreamStorage + real FluePiHosts on pi-ai's faux provider, with
- * wakes delivered as Ed25519-signed webhooks through the Worker route.
+ * Pi's SqliteStorage on node:sqlite + real FluePiHosts on pi-ai's faux
+ * provider, with wakes delivered as Ed25519-signed webhooks through the
+ * Worker route, rung as doorbells, and pumped by alarms
+ * (docs/cloudflare-native.md rules 2–5).
  *
  * The first test is the #3752 acceptance scenario.
  */
@@ -9,27 +11,17 @@ import type { Message } from '@earendil-works/pi-ai';
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FlueInstance } from '../pi/docs.ts';
-import { A2A_SEND_ENTRY_KIND } from '../pi/a2a-entries.ts';
-import {
-	CrashError,
-	openStreamStorage,
-	removeTempFiles,
-	snapshotReads,
-	tempFile,
-} from '../pi/stream-storage-test-support.ts';
-import type { StreamStorage } from '../pi/stream-storage.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
-import type { AppendOutcome, DurableStreamLog, ProducerClaim, ReadBatch } from '../streams/log.ts';
+import type { DurableStreamLog } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
-import type { StreamOffset } from '../streams/offset.ts';
 import {
 	agentsServerWakeBody,
 	answer,
 	context,
 	durableStreamsWakeBody,
-	eventually,
 	lastMessage,
 	readAll,
+	removeTempFiles,
 	type TestEntity,
 	TestWorld,
 	textOf,
@@ -132,6 +124,14 @@ async function tail(log: DurableStreamLog, path: string): Promise<string> {
 	return head.nextOffset;
 }
 
+function inboxWake(generation: number, entity: EntityRef, tailOffset: string): string {
+	return durableStreamsWakeBody({
+		subscriptionId: INBOX_SUBSCRIPTION_ID,
+		generation,
+		streams: [{ path: inboxPath(entity), tailOffset }],
+	});
+}
+
 afterEach(async () => {
 	for (const world of worlds) await world.closeAll().catch(() => {});
 	worlds.length = 0;
@@ -139,8 +139,8 @@ afterEach(async () => {
 });
 
 describe('A2A entities (#3752 acceptance)', () => {
-	it('Alice messages sleeping Bob; Bob wakes, replies; both histories survive eviction and redeploy', async () => {
-		const { log, world, deliver } = await setup();
+	it('Alice messages sleeping Bob; the doorbell and the alarm wake him; both histories survive eviction', async () => {
+		const { log, world, deliver, callbacks } = await setup();
 		const alice = world.entity(ALICE, aliceResponder);
 		const bob = world.entity(BOB, bobResponder);
 		await alice.open();
@@ -151,7 +151,7 @@ describe('A2A entities (#3752 acceptance)', () => {
 			expect.arrayContaining([...ENTITY_TOOL_NAMES]),
 		);
 
-		// 1. Alice sends Bob a durable message; Bob has never been opened.
+		// 1. Alice's send_message appends one event straight to Bob's inbox; Bob has never been opened.
 		await alice.requireHost().admit(
 			{
 				submissionId: 'sub_ask',
@@ -165,7 +165,6 @@ describe('A2A entities (#3752 acceptance)', () => {
 		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
 			'completed',
 		);
-		await alice.flush();
 		expect(bob.isOpen).toBe(false);
 		const bobInbox = await readAll(log, inboxPath(BOB));
 		expect(bobInbox).toEqual([
@@ -178,65 +177,51 @@ describe('A2A entities (#3752 acceptance)', () => {
 		]);
 		const ping = bobInbox[0] as { messageId: string };
 
-		// 2. The wake: a signed webhook on the inbox subscription.
-		const wakeBob = await deliver(
-			durableStreamsWakeBody({
-				subscriptionId: INBOX_SUBSCRIPTION_ID,
-				generation: 1,
-				streams: [{ path: inboxPath(BOB), tailOffset: await tail(log, inboxPath(BOB)) }],
-			}),
-		);
-		expect(wakeBob).toEqual({
+		// 2. The signed webhook rings Bob's doorbell. Nothing is processed and Bob stays asleep;
+		//    the wake is acked through its callback once the head is recorded.
+		const bobTail = await tail(log, inboxPath(BOB));
+		expect(await deliver(inboxWake(1, BOB, bobTail))).toEqual({
 			status: 200,
-			json: { done: true, entities: ['agent/bob'], acked: 'done-reply' },
+			json: { ok: true, entities: ['agent/bob'], acked: 'callback' },
+		});
+		expect(bob.isOpen).toBe(false);
+		expect(bob.alarmArmed).toBe(true);
+		expect(callbacks.at(-1)?.body).toMatchObject({
+			acks: [{ stream: wirePath(inboxPath(BOB)), offset: bobTail }],
+			done: true,
 		});
 
-		// 3. Bob reconstructed, ran Pi on the message, and replied with send_message.
-		expect(bob.isOpen).toBe(true);
+		// 3. The alarm pumps: Bob is reconstructed, admits the event under its id, and replies.
+		await world.runAlarms();
 		const bobSubmission = await deriveKeyedSubmissionId(BOB.type, BOB.id, ping.messageId);
 		expect((await bob.requireHost().waitForSettlement(bobSubmission, context)).outcome).toBe(
 			'completed',
 		);
-		await bob.flush();
 		const aliceInbox = await readAll(log, inboxPath(ALICE));
 		expect(aliceInbox).toEqual([
 			expect.objectContaining({ type: 'flue.a2a.message', from: BOB, message: { text: 'pong' } }),
 		]);
 		const pong = aliceInbox[0] as { messageId: string };
 
-		// 4. Alice is woken and receives it.
-		const wakeAlice = await deliver(
-			durableStreamsWakeBody({
-				subscriptionId: INBOX_SUBSCRIPTION_ID,
-				generation: 2,
-				streams: [
-					{ path: inboxPath(ALICE), tailOffset: await tail(log, inboxPath(ALICE)) },
-					{ path: inboxPath(BOB), tailOffset: await tail(log, inboxPath(BOB)), pending: false },
-				],
-			}),
-		);
-		expect(wakeAlice.json).toMatchObject({ done: true, entities: ['agent/alice'] });
+		// 4. Alice is rung and pumped the same way.
+		await deliver(inboxWake(2, ALICE, await tail(log, inboxPath(ALICE))));
+		await world.runAlarms();
 		const aliceSubmission = await deriveKeyedSubmissionId(ALICE.type, ALICE.id, pong.messageId);
 		expect((await alice.requireHost().waitForSettlement(aliceSubmission, context)).outcome).toBe(
 			'completed',
 		);
-		await alice.flush();
-		await bob.flush();
 
 		const histories = { alice: await transcript(alice), bob: await transcript(bob) };
 		expect(histories.alice.map((entry) => entry.text)).toEqual(
 			expect.arrayContaining(['Asked Bob.', 'Bob answered pong.']),
 		);
-		expect(histories.alice.some((entry) => entry.kind === A2A_SEND_ENTRY_KIND)).toBe(true);
-		expect(histories.bob.some((entry) => entry.kind === A2A_SEND_ENTRY_KIND)).toBe(true);
 		expect(histories.bob.map((entry) => entry.text)).toEqual(
 			expect.arrayContaining(['Replied to Alice.']),
 		);
 		const calls = { alice: alice.calls, bob: bob.calls };
 
-		// 5. Eviction: everything in memory goes; the sqlite files and the log stay.
+		// 5. Eviction, then a redeploy: fresh hosts over the same SQLite files.
 		await world.closeAll();
-		// Redeploy: fresh hosts reconstruct from their databases.
 		await alice.open();
 		await bob.open();
 		for (const [name, entity] of [
@@ -250,286 +235,157 @@ describe('A2A entities (#3752 acceptance)', () => {
 		expect({ alice: alice.calls, bob: bob.calls }).toEqual(calls);
 		expect(await readAll(log, inboxPath(BOB))).toHaveLength(1);
 		expect(await readAll(log, inboxPath(ALICE))).toHaveLength(1);
-
-		// 6. Both histories replay from the log alone, identically.
-		for (const entity of [alice, bob]) {
-			await entity.flush();
-			const seq = entity.lastSeq();
-			const reads = await snapshotReads(entity.requireStorage(), seq);
-			const rebuilt = await openStreamStorage({ file: await tempFile(), log, entity: entity.ref });
-			try {
-				expect(rebuilt.fences).toEqual([]);
-				expect(await snapshotReads(rebuilt.storage, seq)).toEqual(reads);
-			} finally {
-				await rebuilt.storage.close(context);
-			}
-		}
-		expect(alice.fences).toEqual([]);
-		expect(bob.fences).toEqual([]);
+		// Pi's commits never left the entities: the only streams are the two inboxes.
+		expect(await log.head(`flue/v1/agent/alice/pi`)).toBeNull();
 	});
 });
 
-// ─── Relay: exactly once ────────────────────────────────────────────────────
+// ─── Doorbells and the pump ─────────────────────────────────────────────────
 
-/** A log that fails appends to chosen paths. */
-class RoutedFaultLog implements DurableStreamLog {
-	readonly inner: DurableStreamLog;
-	readonly appends: { path: string; producer: ProducerClaim; outcome: string }[] = [];
-	readonly blocked = new Set<string>();
-	#crash: { path: string; point: 'before-append' | 'drop-ack' } | undefined;
-
-	constructor(inner: DurableStreamLog) {
-		this.inner = inner;
-	}
-
-	crashOnce(path: string, point: 'before-append' | 'drop-ack'): void {
-		this.#crash = { path, point };
-	}
-
-	ensure(path: string, signal?: AbortSignal) {
-		return this.inner.ensure(path, signal);
-	}
-
-	async append(
-		path: string,
-		input: {
-			readonly messages: readonly unknown[];
-			readonly producer: ProducerClaim;
-			readonly streamSeq?: string;
-		},
-		signal?: AbortSignal,
-	): Promise<AppendOutcome> {
-		if (this.blocked.has(path)) {
-			this.appends.push({ path, producer: input.producer, outcome: 'blocked' });
-			return { status: 'retryable', error: new Error('blocked') };
-		}
-		const crash = this.#crash?.path === path ? this.#crash : undefined;
-		if (crash) this.#crash = undefined;
-		if (crash?.point === 'before-append') throw new CrashError('crash before the POST');
-		const outcome = await this.inner.append(path, input, signal);
-		this.appends.push({ path, producer: input.producer, outcome: outcome.status });
-		if (crash?.point === 'drop-ack') throw new CrashError('crash after the append, before the ack');
-		return outcome;
-	}
-
-	read(
-		path: string,
-		from: StreamOffset,
-		options?: {
-			readonly live?: false | 'long-poll' | 'sse';
-			readonly cursor?: string;
-			readonly signal?: AbortSignal;
-		},
-	): Promise<ReadBatch> {
-		return this.inner.read(path, from, options);
-	}
-
-	head(path: string, signal?: AbortSignal) {
-		return this.inner.head(path, signal);
-	}
-}
-
-let entryId = 1000;
-
-async function openAlice(file: string, log: DurableStreamLog) {
-	// `await`: a commit returns once its envelope is published and its relay rows were tried,
-	// so each injected fault is consumed by the commit that caused it.
-	return openStreamStorage({
-		file,
-		log,
-		entity: ALICE,
-		relay: true,
-		publish: 'await',
-		publishTimeoutMs: 100,
-	});
-}
-
-async function commitSend(
-	storage: StreamStorage,
-	messageId: string,
-	target: EntityRef = BOB,
-): Promise<number> {
-	return storage.commit(
-		[
-			{
-				type: 'entry',
-				value: {
-					id: entryId++,
-					conversationId: 1,
-					kind: A2A_SEND_ENTRY_KIND,
-					data: { target, messageId, message: { text: messageId } },
-				},
-			},
-		] as never,
-		context,
-	);
-}
-
-async function inboxIds(log: DurableStreamLog, entity: EntityRef = BOB): Promise<string[]> {
-	return (await readAll(log, inboxPath(entity))).map(
-		(message) => (message as { messageId: string }).messageId,
-	);
-}
-
-describe('relay drainer', () => {
-	const opened: StreamStorage[] = [];
-	afterEach(async () => {
-		for (const storage of opened) await storage.close(context).catch(() => {});
-		opened.length = 0;
-	});
-
-	async function open(file: string, log: DurableStreamLog) {
-		const result = await openAlice(file, log);
-		opened.push(result.storage);
-		return result;
-	}
-
-	it('crash before the POST: the row survives and reopening delivers it once', async () => {
-		const log = new InMemoryDurableStreamLog();
-		const faulty = new RoutedFaultLog(log);
-		const file = await tempFile();
-		const first = await open(file, faulty);
-		await first.storage.commit([{ type: 'conversation', value: { id: 1 } }] as never, context);
-		faulty.crashOnce(inboxPath(BOB), 'before-append');
-		await commitSend(first.storage, 'm-1');
-		expect(first.storage.relay.pending()).toBe(1);
-		expect(await inboxIds(log)).toEqual([]);
-		await first.storage.close(context);
-
-		const second = await open(file, log);
-		await second.storage.drain();
-		expect(second.storage.relay.pending()).toBe(0);
-		expect(await inboxIds(log)).toEqual(['m-1']);
-	});
-
-	it('crash after the append, before the ack: the retry is an in-epoch duplicate', async () => {
-		const log = new InMemoryDurableStreamLog();
-		const faulty = new RoutedFaultLog(log);
-		const file = await tempFile();
-		const first = await open(file, faulty);
-		await first.storage.commit([{ type: 'conversation', value: { id: 1 } }] as never, context);
-		// The inbox exists, so the crashing POST is the one that lands.
-		await log.ensure(inboxPath(BOB));
-		faulty.crashOnce(inboxPath(BOB), 'drop-ack');
-		await commitSend(first.storage, 'm-1');
-		expect(first.storage.relay.pending()).toBe(1);
-		expect(await inboxIds(log)).toEqual(['m-1']);
-		await first.storage.close(context);
-
-		const recording = new RoutedFaultLog(log);
-		const second = await open(file, recording);
-		await second.storage.drain();
-		expect(second.storage.relay.pending()).toBe(0);
-		expect(recording.appends.filter((append) => append.path === inboxPath(BOB))).toEqual([
-			{
-				path: inboxPath(BOB),
-				producer: { id: 'agent/alice->inbox', epoch: 0, seq: 0 },
-				outcome: 'duplicate',
-			},
-		]);
-		expect(second.storage.relay.pending()).toBe(0);
-		await commitSend(second.storage, 'm-2');
-		await second.storage.drain();
-		expect(await inboxIds(log)).toEqual(['m-1', 'm-2']);
-	});
-
-	it('never posts a relay row before its Pi commit is on the log', async () => {
-		const log = new InMemoryDurableStreamLog();
-		const faulty = new RoutedFaultLog(log);
-		const first = await open(await tempFile(), faulty);
-		await first.storage.commit([{ type: 'conversation', value: { id: 1 } }] as never, context);
-		faulty.blocked.add(first.storage.path);
-		await commitSend(first.storage, 'm-1');
-		expect(await first.storage.drainRelay()).toEqual({ status: 'gated' });
-		expect(await inboxIds(log)).toEqual([]);
-		faulty.blocked.clear();
-		await first.storage.drain();
-		expect(await inboxIds(log)).toEqual(['m-1']);
-	});
-
-	/**
-	 * The relay-epoch gap: an epoch bump that publishes no Pi envelope but
-	 * delivers relay messages, then a fresh rebuild that reuses that epoch.
-	 */
-	async function epochGapScenario(options: { readonly ungatedPost: boolean }) {
-		const log = new InMemoryDurableStreamLog();
-		const faulty = new RoutedFaultLog(log);
-		const first = await open(await tempFile(), faulty);
-		await first.storage.commit([{ type: 'conversation', value: { id: 1 } }] as never, context);
-		await commitSend(first.storage, 'm-1');
-		expect(await inboxIds(log)).toEqual(['m-1']);
-
-		// An epoch bump (here an in-place rebuild) …
-		await first.storage.rebuild(context);
-		expect(first.storage.outbox.requireProducer().epoch).toBe(1);
-		// … whose Pi envelopes never reach the log.
-		faulty.blocked.add(first.storage.path);
-		await commitSend(first.storage, 'm-2');
-		expect(await first.storage.drainRelay()).toEqual({ status: 'gated' });
-		const [row] = first.storage.relay.pendingRows();
-		expect(row).toMatchObject({ producerEpoch: 1, producerSeq: 0 });
-		if (options.ungatedPost && row) {
-			// What a drainer without the gate would do: deliver m-2 under epoch 1.
-			const outcome = await log.append(row.target, {
-				messages: [JSON.parse(row.body)],
-				producer: { id: row.producerId, epoch: row.producerEpoch, seq: row.producerSeq },
-			});
-			expect(outcome.status).toBe('appended');
-		}
-		// The DO is lost with its database: m-2 was never on Alice's log.
-		await first.storage.close(context);
-
-		const recording = new RoutedFaultLog(log);
-		const fresh = await open(await tempFile(), recording);
-		// Rebuilt from the log alone: the log's highest epoch is 0, so it reuses epoch 1.
-		expect(fresh.storage.outbox.requireProducer().epoch).toBe(1);
-		await commitSend(fresh.storage, 'm-3');
-		expect(fresh.storage.relay.pending()).toBe(0);
-		const [posted, ...more] = recording.appends.filter((append) => append.path === inboxPath(BOB));
-		expect(more).toEqual([]);
-		expect(posted?.producer).toEqual({ id: 'agent/alice->inbox', epoch: 1, seq: 0 });
-		return { inbox: await inboxIds(log), outcome: posted?.outcome };
-	}
-
-	it('relay-epoch gap: without the publish gate, a fresh rebuild loses the next message as a duplicate', async () => {
-		// m-2 reached Bob although Alice's history never held it, and m-3 —
-		// sent under the same (epoch 1, seq 0) claim — is dropped as a duplicate.
-		expect(await epochGapScenario({ ungatedPost: true })).toEqual({
-			inbox: ['m-1', 'm-2'],
-			outcome: 'duplicate',
-		});
-	});
-
-	it('relay-epoch gap: the publish gate keeps every relay epoch on the log, so the rebuild loses nothing', async () => {
-		expect(await epochGapScenario({ ungatedPost: false })).toEqual({
-			inbox: ['m-1', 'm-3'],
-			outcome: 'appended',
-		});
-	});
-});
-
-// ─── Wakes ──────────────────────────────────────────────────────────────────
-
-describe('webhook wakes', () => {
+describe('doorbells and the alarm pump', () => {
 	async function messageBob(h: Harness, messageId: string, text = 'hello') {
-		const alice = h.world.entity(ALICE);
-		const runtime = await alice.open();
-		const receipt = await runtime.messaging.send(BOB, { text }, { messageId }, context);
-		await alice.flush();
-		return receipt;
+		const runtime = await h.world.entity(ALICE).open();
+		return runtime.messaging.send(BOB, { text }, { messageId }, context);
 	}
 
 	async function bobSubmissions(bob: TestEntity): Promise<number> {
 		return (await bob.requireStorage().scanSubmissions({}, 1000, undefined, context)).items.length;
 	}
 
+	it('the doorbell is durable: a crash after the high-water write, before the alarm, still processes the events', async () => {
+		const h = await setup();
+		const receipt = await messageBob(h, 'm-crash');
+		const bob = h.world.entity(BOB);
+		await bob.open();
+		await h.deliver(inboxWake(1, BOB, await tail(h.log, inboxPath(BOB))));
+		// The isolate dies before the alarm handler runs: nothing in memory survives.
+		bob.kill();
+		expect(bob.isOpen).toBe(false);
+		// The alarm is durable; it fires against a new incarnation that pumps from the book.
+		expect(bob.alarmArmed).toBe(true);
+		await h.world.runAlarms();
+		expect(bob.incarnations).toHaveLength(2);
+		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
+			'completed',
+		);
+	});
+
+	it('duplicate and stale webhooks are idempotent', async () => {
+		const h = await setup();
+		const receipt = await messageBob(h, 'm-dup');
+		const bob = h.world.entity(BOB);
+		const head = await tail(h.log, inboxPath(BOB));
+		expect((await h.deliver(inboxWake(5, BOB, head))).json).toMatchObject({ acked: 'callback' });
+		await h.world.runAlarms();
+		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
+			'completed',
+		);
+		await bob.requireHost().harness.waitForIdle(context);
+		const submissions = await bobSubmissions(bob);
+		const calls = bob.calls;
+
+		// The same wake again, and a stale one with an older generation and head:
+		// each is rung and acked; the pump finds the cursor already at the head.
+		expect((await h.deliver(inboxWake(5, BOB, head))).json).toMatchObject({ acked: 'callback' });
+		expect(
+			(await h.deliver(inboxWake(4, BOB, '0000000000000000_0000000000000001'))).json,
+		).toMatchObject({ acked: 'callback' });
+		await h.world.runAlarms();
+		expect(bob.pumps.at(-1)).toMatchObject({ events: 0, reads: 0, behind: false });
+		// And after the cursor was lost entirely: admission deduplicates by event id.
+		const book = await bob.book();
+		bob.database?.inner.exec("UPDATE flue_entity_streams SET cursor = '-1'");
+		expect(book.behind()).toBe(true);
+		bob.alarmArmed = true;
+		await h.world.runAlarms();
+		await bob.requireHost().harness.waitForIdle(context);
+		expect(await bobSubmissions(bob)).toBe(submissions);
+		expect(bob.calls).toBe(calls);
+	});
+
+	it('the bounded pump re-arms while it is behind', async () => {
+		const h = await setup(new InMemoryDurableStreamLog({ maxReadMessages: 2 }));
+		h.world.pumpLimits = { reads: 1, events: 2, wallMs: 60_000 };
+		const alice = h.world.entity(ALICE);
+		const runtime = await alice.open();
+		const sent = [];
+		for (let n = 0; n < 5; n++)
+			sent.push(
+				await runtime.messaging.send(BOB, { text: `m${n}` }, { messageId: `m${n}` }, context),
+			);
+		const bob = h.world.entity(BOB);
+		await h.deliver(inboxWake(1, BOB, await tail(h.log, inboxPath(BOB))));
+		const first = await bob.alarm();
+		expect(first).toMatchObject({ behind: true, reads: 1 });
+		expect(bob.alarmArmed).toBe(true);
+		await h.world.runAlarms();
+		expect(bob.pumps.length).toBeGreaterThanOrEqual(3);
+		expect(bob.pumps.at(-1)?.behind).toBe(false);
+		for (const receipt of sent) {
+			expect(
+				(await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome,
+			).toBe('completed');
+		}
+	});
+
+	it('a crash during a send, then the replay: exactly one admission at the receiver', async () => {
+		const h = await setup();
+		const alice = h.world.entity(ALICE, aliceResponder);
+		const bob = h.world.entity(BOB, bobResponder);
+		await alice.open();
+		// Alice dies right after her send_message POST landed, before its result committed.
+		alice.arm({ kind: 'crash-after-send', after: 0 });
+		const first = alice.incarnation;
+		await alice.requireHost().admit(
+			{
+				submissionId: 'sub_ask',
+				kind: 'dispatch',
+				message: { kind: 'user', body: 'please ask bob' },
+				acceptedAt: new Date(h.world.clock.now).toISOString(),
+				whenBusy: 'followUp',
+			},
+			context,
+		);
+		await new Promise<void>((resolve, reject) => {
+			const started = Date.now();
+			const poll = () => {
+				if (first?.dead) resolve();
+				else if (Date.now() - started > 10_000) reject(new Error('the fault never fired'));
+				else setTimeout(poll, 10);
+			};
+			poll();
+		});
+		// Reopen: Pi Durable replays the replay-safe tool call, which sends the same event again.
+		await alice.open();
+		await alice.requireHost().wake({ kind: 'live-tasks' }, context);
+		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
+			'completed',
+		);
+		const inbox = (await readAll(h.log, inboxPath(BOB))) as { messageId: string }[];
+		expect(inbox).toHaveLength(2);
+		expect(inbox[1]?.messageId).toBe(inbox[0]?.messageId);
+
+		await h.deliver(inboxWake(1, BOB, await tail(h.log, inboxPath(BOB))));
+		await h.world.runAlarms();
+		const submissionId = await deriveKeyedSubmissionId(BOB.type, BOB.id, inbox[0]?.messageId ?? '');
+		expect((await bob.requireHost().waitForSettlement(submissionId, context)).outcome).toBe(
+			'completed',
+		);
+		await bob.requireHost().harness.waitForIdle(context);
+		const inputs = (
+			await bob.requireStorage().scanSubmissions({}, 1000, undefined, context)
+		).items.filter((submission) => submission.type === 'input');
+		expect(inputs.map((submission) => submission.requestId)).toEqual([submissionId]);
+		expect(bob.calls).toBe(2);
+	});
+});
+
+// ─── The wake route ─────────────────────────────────────────────────────────
+
+describe('webhook wakes', () => {
 	it('rejects unsigned, forged and expired wakes', async () => {
 		const h = await setup();
-		const body = durableStreamsWakeBody({
-			subscriptionId: INBOX_SUBSCRIPTION_ID,
-			generation: 1,
-			streams: [{ path: inboxPath(BOB), tailOffset: '0000000000000000_0000000000000010' }],
-		});
+		const body = inboxWake(1, BOB, '0000000000000000_0000000000000010');
 		const route = createEntityWakeRoute({
 			keys: staticWebhookKeys({ keys: [h.signer.jwk] }),
 			wake: h.world.wake,
@@ -549,67 +405,12 @@ describe('webhook wakes', () => {
 		expect(h.world.woken).toEqual([]);
 	});
 
-	it('duplicate deliveries admit nothing twice, even with a lost cursor', async () => {
-		const h = await setup();
-		const receipt = await messageBob(h, 'm-dup');
-		const bob = h.world.entity(BOB);
-		const body = durableStreamsWakeBody({
-			subscriptionId: INBOX_SUBSCRIPTION_ID,
-			generation: 5,
-			streams: [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }],
-		});
-		expect((await h.deliver(body)).json).toMatchObject({ done: true });
-		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
-			'completed',
-		);
-		const submissions = await bobSubmissions(bob);
-		const calls = bob.calls;
-
-		// The same wake again: the cursor is past it.
-		expect((await h.deliver(body)).json).toMatchObject({ done: true });
-		// And again after the cursor was lost: admission deduplicates by request id.
-		const runtime = await bob.open();
-		await bob.requireStorage().cursors.delete(runtime.inbox.cursorKey);
-		expect((await h.deliver(body)).json).toMatchObject({ done: true });
-		await bob.requireHost().harness.waitForIdle(context);
-		expect(await bobSubmissions(bob)).toBe(submissions);
-		expect(bob.calls).toBe(calls);
-		expect(h.world.woken.map((wake) => wake.entity)).toEqual([
-			'agent/bob',
-			'agent/bob',
-			'agent/bob',
-		]);
-	});
-
-	it('a stale generation is processed idempotently but never acked', async () => {
-		const h = await setup();
-		await messageBob(h, 'm-1');
-		const streams = [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }];
-		expect(
-			(
-				await h.deliver(
-					durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 7, streams }),
-				)
-			).json,
-		).toMatchObject({ done: true });
-		const stale = await h.deliver(
-			durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 6, streams }),
-		);
-		expect(stale).toEqual({
-			status: 200,
-			json: { ok: true, entities: ['agent/bob'], acked: 'stale' },
-		});
-		const staleProxied = await h.deliver(
-			agentsServerWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 3, streams }),
-		);
-		expect(staleProxied.json).toMatchObject({ acked: 'stale' });
-		expect(h.callbacks).toEqual([]);
-	});
-
 	it('acks an agents-server wake through its callback, never with {done:true}', async () => {
 		const h = await setup();
-		const receipt = await messageBob(h, 'm-proxied');
-		const bob = h.world.entity(BOB);
+		await h.world.entity(ALICE).open();
+		await (
+			await h.world.entity(ALICE).open()
+		).messaging.send(BOB, { text: 'hi' }, { messageId: 'm-proxied' }, context);
 		const offset = await tail(h.log, inboxPath(BOB));
 		const proxied = await h.deliver(
 			agentsServerWakeBody({
@@ -637,11 +438,11 @@ describe('webhook wakes', () => {
 				},
 			},
 		]);
-		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
-			'completed',
-		);
+		expect(h.world.woken).toEqual([
+			{ entity: 'agent/bob', doorbell: { stream: inboxPath(BOB), head: offset } },
+		]);
 
-		// A FENCED callback (a newer wake took over) is fine: the work is admitted.
+		// A FENCED callback (a newer wake took over) is fine: the head is recorded.
 		h.callbackResponse = () =>
 			Response.json({ error: { code: 'FENCED', message: 'stale' } }, { status: 409 });
 		const fenced = await h.deliver(
@@ -654,28 +455,28 @@ describe('webhook wakes', () => {
 		expect(fenced.json).toMatchObject({ acked: 'fenced' });
 	});
 
-	it('redelivers when an entity wake fails', async () => {
+	it('answers 503 and acks nothing when a doorbell fails', async () => {
 		const h = await setup();
-		await messageBob(h, 'm-1');
 		const route = createEntityWakeRoute({
 			keys: staticWebhookKeys({ keys: [h.signer.jwk] }),
 			wake: async () => {
 				throw new Error('DO unavailable');
+			},
+			fetch: async (url, init) => {
+				h.callbacks.push({ url, headers: {}, body: init?.body });
+				return Response.json({ ok: true });
 			},
 			now: () => h.world.clock.now,
 		});
 		const response = await route.fetch(
 			await h.signer.request(
 				WAKE_URL,
-				durableStreamsWakeBody({
-					subscriptionId: INBOX_SUBSCRIPTION_ID,
-					generation: 1,
-					streams: [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }],
-				}),
+				inboxWake(1, BOB, '0000000000000000_0000000000000010'),
 				h.world.clock.now,
 			),
 		);
 		expect(response.status).toBe(503);
+		expect(h.callbacks).toEqual([]);
 	});
 });
 
@@ -694,30 +495,27 @@ describe('entity lifecycle', () => {
 			context,
 		);
 		expect(first).toEqual({ ...child, uid });
+		// A repeat appends the same event again; the child admits it once.
 		expect(
 			await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context),
 		).toEqual(first);
-		await alice.flush();
 		const inbox = await readAll(h.log, inboxPath(child));
-		expect(inbox).toEqual([
+		expect(inbox).toHaveLength(2);
+		expect(inbox[0]).toEqual(
 			expect.objectContaining({
 				from: ALICE,
 				directive: { kind: 'spawn', uid, initialData: { n: 1 } },
 			}),
-		]);
+		);
+		expect(inbox[1]).toEqual(inbox[0]);
 		// The child's streams exist before anything was sent to them.
 		expect(
 			await h.log.head(`flue/v1/worker/${encodeURIComponent('alice/w1')}/events`),
 		).not.toBeNull();
 
-		const woken = await h.deliver(
-			durableStreamsWakeBody({
-				subscriptionId: INBOX_SUBSCRIPTION_ID,
-				generation: 1,
-				streams: [{ path: inboxPath(child), tailOffset: await tail(h.log, inboxPath(child)) }],
-			}),
-		);
-		expect(woken.json).toMatchObject({ done: true, entities: [entityKey(child)] });
+		const woken = await h.deliver(inboxWake(1, child, await tail(h.log, inboxPath(child))));
+		expect(woken.json).toMatchObject({ entities: [entityKey(child)] });
+		await h.world.runAlarms();
 		const worker = h.world.entity(child);
 		const submissionId = await deriveKeyedSubmissionId(
 			child.type,
@@ -729,13 +527,8 @@ describe('entity lifecycle', () => {
 		);
 		const instance = await worker.requireHost().harness.snapshot(FlueInstance, context);
 		expect(instance).toMatchObject({ uid, initialData: { value: { n: 1 } } });
-
-		// Spawning the same key again after birth sends nothing.
-		expect(
-			await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context),
-		).toEqual(first);
-		await alice.flush();
-		expect(await readAll(h.log, inboxPath(child))).toHaveLength(1);
+		await worker.requireHost().harness.waitForIdle(context);
+		expect(worker.calls).toBe(1);
 	});
 
 	it('a self-schedule fires once, across a reopen', async () => {
@@ -780,14 +573,8 @@ describe('entity lifecycle', () => {
 		const runtime = await alice.open();
 		const at = h.world.clock.now + 5_000;
 		await runtime.lifecycle.schedule(BOB, at, { text: 'standup' }, { scheduleId: 's1' }, context);
-		await alice.flush();
-		await h.deliver(
-			durableStreamsWakeBody({
-				subscriptionId: INBOX_SUBSCRIPTION_ID,
-				generation: 1,
-				streams: [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }],
-			}),
-		);
+		await h.deliver(inboxWake(1, BOB, await tail(h.log, inboxPath(BOB))));
+		await h.world.runAlarms();
 		const bob = h.world.entity(BOB);
 		const key = relayedScheduleKey(ALICE, 's1');
 		expect(bob.wakes).toContainEqual({ atMs: at, reason: { kind: 'schedule', scheduleId: key } });
@@ -818,16 +605,8 @@ describe('entity lifecycle', () => {
 			id: `hn-${n}`,
 			title: `Story ${n}`,
 		});
-		let seq = 0;
-		const publish = async (n: number) => {
-			const outcome = await h.log.append(world, {
-				messages: [item(n)],
-				producer: { id: 'rsshub', epoch: 0, seq: seq++ },
-			});
-			expect(outcome.status).toBe('appended');
-		};
-		await publish(1);
-		await publish(2);
+		await h.log.append(world, [item(1)]);
+		await h.log.append(world, [item(2)]);
 
 		const alice = h.world.entity(ALICE);
 		const bob = h.world.entity(BOB);
@@ -835,10 +614,7 @@ describe('entity lifecycle', () => {
 		await bob.open();
 		expect(
 			await runtime.observation.observe({ stream: world }, { key: 'hn', wake: true }, context),
-		).toEqual({
-			key: 'hn',
-			offset: '-1',
-		});
+		).toEqual({ key: 'hn', offset: '-1' });
 		expect(observedCalls).toEqual([{ entity: 'agent/alice', streams: [world] }]);
 
 		const wake = (generation: number, tailOffset: string) =>
@@ -850,19 +626,14 @@ describe('entity lifecycle', () => {
 				}),
 			);
 		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({
-			done: true,
 			entities: ['agent/alice'],
 		});
+		await h.world.runAlarms();
 		const observed = async (entity: TestEntity) =>
 			(await entity.entries())
 				.filter((entry) => entry.kind === 'flue.observed')
 				.map((entry) => entry.data);
-		// Write submissions are placed by the Pi inbox; wait for them.
-		const observedCount = (entity: TestEntity, count: number) =>
-			eventually(async () => ((await observed(entity)).length >= count ? true : undefined), {
-				what: `${count} observed entries`,
-			});
-		await observedCount(alice, 2);
+		await alice.requireHost().harness.waitForIdle(context);
 		expect(await observed(alice)).toEqual([
 			expect.objectContaining({ key: 'hn', stream: world, index: 0, item: item(1) }),
 			expect.objectContaining({ key: 'hn', stream: world, index: 1, item: item(2) }),
@@ -871,15 +642,16 @@ describe('entity lifecycle', () => {
 		expect(runtime.observation.cursors.value?.hn?.offset).toBe(await tail(h.log, world));
 
 		// A duplicate wake records nothing new; a new item is recorded once.
-		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({ done: true });
-		await publish(3);
-		expect((await wake(2, await tail(h.log, world))).json).toMatchObject({ done: true });
-		await observedCount(alice, 3);
+		await wake(1, await tail(h.log, world));
+		await h.log.append(world, [item(3)]);
+		await wake(2, await tail(h.log, world));
+		await h.world.runAlarms();
+		await alice.requireHost().harness.waitForIdle(context);
 		expect(
 			(await observed(alice)).map((data) => (data as { item: { id: string } }).item.id),
 		).toEqual(['hn-1', 'hn-2', 'hn-3']);
 
-		// The same stream on the inbox subscription is nobody's inbox: it wakes no one.
+		// The same stream on the inbox subscription is nobody's inbox: it rings no one.
 		const before = h.world.woken.length;
 		const unowned = await h.deliver(
 			durableStreamsWakeBody({
@@ -888,8 +660,26 @@ describe('entity lifecycle', () => {
 				streams: [{ path: world, tailOffset: await tail(h.log, world) }],
 			}),
 		);
-		expect(unowned.json).toMatchObject({ done: true, entities: [] });
+		expect(unowned.json).toMatchObject({ entities: [] });
 		expect(h.world.woken.length).toBe(before);
-		expect(h.world.woken.every((woken) => woken.entity === 'agent/alice')).toBe(true);
+	});
+
+	it('a published event an observer reads twice (a replayed publish) is recorded once', async () => {
+		const h = await setup();
+		const alice = h.world.entity(ALICE);
+		const bob = h.world.entity(BOB);
+		const aliceRuntime = await alice.open();
+		const bobRuntime = await bob.open();
+		await bobRuntime.observation.observe(
+			{ entity: ALICE, channel: 'events' },
+			{ key: 'alice', wake: false },
+			context,
+		);
+		await aliceRuntime.messaging.publish({ n: 1 }, { eventId: 'e1' }, context);
+		await aliceRuntime.messaging.publish({ n: 1 }, { eventId: 'e1' }, context);
+		await bobRuntime.observation.poll('alice', {}, context);
+		await bob.requireHost().harness.waitForIdle(context);
+		const observed = (await bob.entries()).filter((entry) => entry.kind === 'flue.observed');
+		expect(observed).toHaveLength(1);
 	});
 });

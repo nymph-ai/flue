@@ -1,13 +1,16 @@
 /**
- * One agent instance on Pi Durable (PI_UPGRADE_PLAN.md §7 step 8): the
+ * One agent instance on Pi Durable (docs/cloudflare-native.md): the
  * platform-neutral core both coordinators drive. It owns the instance's
- * `StreamStorage` and `FluePiHost`, renders the agent function onto the
- * host, admits deliveries, wakes Pi, and serves the public conversation from
- * the canonical log.
+ * database — Durable Object SQLite on Cloudflare, `node:sqlite` on Node —
+ * holding Pi's own `SqliteStorage` (the instance's record) and Flue's tables
+ * beside it: the conversation cache the public wire is served from
+ * (`pi/conversation-cache.ts`) and the entity wake book
+ * (`entity/wake-book.ts`). It renders the agent function onto its
+ * `FluePiHost`, admits deliveries, pumps entity events and wakes Pi.
  *
- * Open sequence: `StreamStorage.open` → `createFluePiHost` → `host.open` →
- * the one-time legacy import → render (`renderedAgentFrom`) →
- * `host.applyRender`. Re-renders run at admission (the delivery cursor
+ * Open sequence: `SqliteStorage.open` → `createFluePiHost` → `host.open`
+ * (the cache attaches to Pi's commits) → the one-time legacy import → render
+ * (`renderedAgentFrom`) → `host.applyRender`. Re-renders run at admission (the delivery cursor
  * moved) and at every tool-round boundary (`afterTools`), so state written
  * by tools reaches the next request. Pi owns everything else: the loop,
  * compaction, retries, recovery, the inbox, ownership and abort cascades.
@@ -21,7 +24,7 @@ import {
 	type Tx,
 } from '@earendil-works/pi-durable';
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
-import type { SqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite';
+import { type SqliteDatabase, SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { decodeBase64, encodeBase64 } from '../base64.ts';
 import type { FlueContextInternal } from '../client.ts';
 import { discoverWorkspace } from '../context.ts';
@@ -32,15 +35,11 @@ import type { RenderStateContext } from '../hooks/frame.ts';
 import { renderAgentFunctionWithStructure } from '../hooks/render.ts';
 import type { EntitySubscriptionPort } from '../entity/facet.ts';
 import { createEntityRuntime, type EntityRuntime } from '../entity/runtime.ts';
-import {
-	type EntityWakeRequest,
-	type EntityWakeResult,
-	handleEntityWake,
-} from '../entity/wake-handler.ts';
+import { type PumpLimits, type PumpResult, pumpEntity } from '../entity/pump.ts';
+import { EntityWakeBook } from '../entity/wake-book.ts';
 import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
-import { entityStreamRoot } from '../pi/a2a-entries.ts';
 import { FlueInstance, FlueState } from '../pi/docs.ts';
 import { executionEnvFromSandbox } from '../pi/execution-env.ts';
 import type { FlueAttachmentPort } from '../pi/hooks.ts';
@@ -51,8 +50,7 @@ import {
 	type WakeReason,
 } from '../pi/host.ts';
 import { renderedAgentFrom } from '../pi/registry-bridge.ts';
-import { piConversationSource } from '../pi/projection-host.ts';
-import { StreamStorage } from '../pi/stream-storage.ts';
+import { hasPiState, PiConversationCache } from '../pi/conversation-cache.ts';
 import { PiTelemetry } from '../pi/telemetry.ts';
 import { agentToolRegistration, type FlueToolDeps, flueToolRegistration } from '../pi/tools.ts';
 import { createCwdSandbox } from '../sandbox.ts';
@@ -77,26 +75,12 @@ import { ATTACHMENT_CONVERSATION_SCOPE } from './handle-conversation-routes.ts';
 import { getRuntimeModels, resolveModel } from './providers.ts';
 import { agentStreamPath } from './stream-offsets.ts';
 
-/**
- * The log path of an instance's canonical Pi log: `flue/v1/{agent}/{id}/pi`,
- * each segment encoded like every other entity stream (`entityStreamRoot`),
- * so an id holding `/` (every spawned child, `{parent}/{key}`) stays one
- * segment and the log is where readers, rebuilds and the relay look for it.
- */
-function piLogPath(agentName: string, instanceId: string): string {
-	return `${entityStreamRoot({ type: agentName, id: instanceId })}/pi`;
-}
-
 export interface FlueAgentInstanceOptions {
 	readonly agentName: string;
 	readonly instanceId: string;
 	readonly agent: Agent;
-	/** The Pi index database: DO SQLite on Cloudflare, `node:sqlite` on Node. */
+	/** The instance's database: DO SQLite on Cloudflare, `node:sqlite` on Node. Opened once. */
 	readonly database: () => SqliteDatabase | Promise<SqliteDatabase>;
-	/** The canonical log (Electric, or the persistence adapter's stream store). */
-	readonly log: DurableStreamLog;
-	/** `await` publishes each commit before it resolves (Node); `async` drains in the background (DO). */
-	readonly publish?: 'async' | 'await';
 	readonly attachments: AttachmentStore;
 	/** The pre-upgrade record store holding this instance's legacy stream, if any. */
 	readonly legacy?: ConversationStreamStore;
@@ -107,10 +91,17 @@ export interface FlueAgentInstanceOptions {
 	readonly mcp: McpConnectionResolver;
 	/**
 	 * A2A entities (`entity/*`): send/publish/observe/spawn/schedule tools and
-	 * the inbox. Enable it where the log reaches every entity — an Electric
-	 * server, or one process's shared store (Node).
+	 * the inbox, over `log` — the entity streams every instance reaches (an
+	 * Electric server, or one Node process's own store).
 	 */
-	readonly entities?: { readonly subscriptions?: EntitySubscriptionPort } | false;
+	readonly entities?:
+		| {
+				readonly log: DurableStreamLog;
+				readonly subscriptions?: EntitySubscriptionPort;
+				/** Pump chunk limits (`entity/pump.ts`); the defaults are designed for Cloudflare. */
+				readonly pump?: PumpLimits;
+		  }
+		| false;
 	readonly now?: () => number;
 	readonly onReport?: (error: unknown) => void;
 }
@@ -139,7 +130,7 @@ function isSandboxFactory(value: unknown): value is SandboxFactory {
 }
 
 interface Opened {
-	readonly storage: StreamStorage;
+	readonly database: SqliteDatabase;
 	readonly host: FluePiHost;
 	readonly telemetry: PiTelemetry;
 	readonly entity: EntityRuntime | undefined;
@@ -155,14 +146,17 @@ interface PendingWrites {
 export class FlueAgentInstance {
 	readonly agentName: string;
 	readonly instanceId: string;
-	/** The public conversation, projected from the canonical log. */
+	/** The public conversation, served from the cache over Pi storage. */
 	readonly source: ConversationProjectionSource;
+	/** Names the conversation in HEAD errors (the pre-upgrade stream path). */
 	readonly logPath: string;
 	readonly #options: FlueAgentInstanceOptions;
 	readonly #now: () => number;
+	#database: Promise<SqliteDatabase> | undefined;
+	#cache: PiConversationCache | undefined;
+	#book: EntityWakeBook | undefined;
 	#opened: Promise<Opened> | undefined;
 	#closed = false;
-	#fenced: Error | undefined;
 	/** The latest delivered message: what `useDelivery()` reads. */
 	#delivery: DeliveredMessage | undefined;
 	#pending: PendingWrites = { state: new Map(), data: [] };
@@ -189,8 +183,13 @@ export class FlueAgentInstance {
 		this.agentName = options.agentName;
 		this.instanceId = options.instanceId;
 		this.#now = options.now ?? Date.now;
-		this.logPath = piLogPath(options.agentName, options.instanceId);
-		this.source = piConversationSource(options.log, this.logPath);
+		this.logPath = agentStreamPath(options.agentName, options.instanceId);
+		const cache = () => this.#conversationCache();
+		this.source = {
+			meta: async (signal) => (await cache()).meta(signal),
+			head: async (signal) => (await cache()).head(signal),
+			read: async (from, readOptions) => (await cache()).read(from, readOptions),
+		};
 		const current = (): Sandbox => {
 			const sandbox = this.#sandbox.current;
 			if (!sandbox) throw new Error(NO_SANDBOX);
@@ -260,6 +259,31 @@ export class FlueAgentInstance {
 
 	// ─── Opening ────────────────────────────────────────────────────────────
 
+	/** The instance's database, opened once. */
+	#db(): Promise<SqliteDatabase> {
+		this.#database ??= Promise.resolve(this.#options.database());
+		return this.#database;
+	}
+
+	async #conversationCache(): Promise<PiConversationCache> {
+		if (this.#cache) return this.#cache;
+		const database = await this.#db();
+		this.#cache ??= new PiConversationCache({
+			database,
+			open: async () => {
+				await this.#open();
+			},
+			now: this.#now,
+			onReport: (error) => this.#report(error),
+		});
+		return this.#cache;
+	}
+
+	async #wakeBook(): Promise<EntityWakeBook> {
+		this.#book ??= new EntityWakeBook(await this.#db());
+		return this.#book;
+	}
+
 	/** The open host; opens storage, the Harness, and renders on first use. */
 	async host(): Promise<FluePiHost> {
 		return (await this.#open()).host;
@@ -278,25 +302,9 @@ export class FlueAgentInstance {
 	async #openNow(): Promise<Opened> {
 		const context = BACKGROUND_CONTEXT;
 		const options = this.#options;
-		const storage = await StreamStorage.open(
-			{
-				database: await options.database(),
-				log: options.log,
-				entity: { type: this.agentName, id: this.instanceId },
-				path: this.logPath,
-				publish: options.publish ?? 'async',
-				onFenced: (epoch, reason) => {
-					this.#fenced = new Error(
-						`[flue] Agent instance ${this.agentName}/${this.instanceId} lost its log to another writer (${reason}, epoch ${epoch}).`,
-					);
-					this.#report(this.#fenced);
-				},
-				onReport: (error) => this.#report(error),
-				armWake: (atMs) => options.armWake(atMs, { kind: 'outbox' }),
-				now: this.#now,
-			},
-			context,
-		);
+		const database = await this.#db();
+		const cache = await this.#conversationCache();
+		const storage = await SqliteStorage.open(database);
 		const telemetry = new PiTelemetry({
 			emit: (event, observation) => this.#emit(event, observation),
 			executionContext: (fields) => this.#executionContext(fields),
@@ -343,6 +351,7 @@ export class FlueAgentInstance {
 			entity: { type: this.agentName, id: this.instanceId },
 			models: telemetry.models(getRuntimeModels()),
 			storage: async () => storage,
+			onOpened: (harness, opened, openContext) => cache.attach(harness, opened, openContext),
 			sandbox: this.#sandboxProxy,
 			env: this.#envProxy,
 			now: this.#now,
@@ -396,8 +405,7 @@ export class FlueAgentInstance {
 			? await createEntityRuntime({
 					host: this.#renderingBeforeAdmission(host),
 					entity: { type: this.agentName, id: this.instanceId },
-					log: options.log,
-					cursors: () => storage.cursors,
+					log: options.entities.log,
 					armWake: async (atMs, reason) => {
 						await options.armWake(atMs, reason);
 					},
@@ -422,7 +430,7 @@ export class FlueAgentInstance {
 		if (instance?.uid)
 			await this.#render(host, undefined, context).catch((error) => this.#report(error));
 		await entity?.refreshCursors(context).catch((error) => this.#report(error));
-		return { storage, host, telemetry, entity, detach };
+		return { database, host, telemetry, entity, detach };
 	}
 
 	// ─── Rendering ──────────────────────────────────────────────────────────
@@ -680,13 +688,12 @@ export class FlueAgentInstance {
 	/**
 	 * Admit one delivery: render with it as the delivery cursor (and, for a
 	 * creating send, its creation data), then the two-commit Pi admission.
-	 * Returns the receipt and the log offset to follow it from.
+	 * Returns the receipt and the conversation offset to follow it from.
 	 */
 	async admit(input: FlueInstanceAdmission): Promise<{ receipt: DispatchReceipt; offset: string }> {
-		if (this.#fenced) throw this.#fenced;
 		const { host, telemetry } = await this.#open();
 		const context = BACKGROUND_CONTEXT;
-		const offset = (await this.#options.log.head(this.logPath))?.nextOffset ?? '-1';
+		const offset = (await this.source.meta())?.nextOffset ?? '-1';
 		this.#delivery = input.message;
 		const instance = await host.harness.snapshot(FlueInstance, context);
 		let override: { value: unknown } | undefined;
@@ -714,28 +721,41 @@ export class FlueAgentInstance {
 	}
 
 	/**
-	 * Wake Pi (an alarm, a timer): publish the outbox and post the relay rows,
-	 * fire due entity schedules, then repair admissions, enforce limits and
-	 * resume.
+	 * Ring the doorbell: `stream` holds events through `head`. Records the
+	 * high-water mark in the wake book, then arms a wake now; the wake pumps.
+	 * (The Cloudflare coordinator rings the book itself, synchronously with
+	 * `setAlarm`, without opening the instance.)
 	 */
-	async wake(reason: WakeReason): Promise<void> {
-		if (this.#fenced) return;
-		const opened = await this.#open();
-		const context = BACKGROUND_CONTEXT;
-		await opened.storage.drain().catch((error) => this.#report(error));
-		if (opened.entity) await opened.entity.wake(reason, context);
-		else await opened.host.wake(reason, context);
+	async ring(stream: string, head: string): Promise<void> {
+		(await this.#wakeBook()).ring(stream, head);
+		await this.#options.armWake(this.#now(), { kind: 'pump' });
 	}
 
-	/** An Electric webhook (or a local relay) says these streams have new data: the `__flueWake` body. */
-	async wakeEntity(request: EntityWakeRequest): Promise<EntityWakeResult> {
+	/**
+	 * Wake (an alarm, a timer): pump entity events from their cursors in one
+	 * bounded chunk, fire due schedules, then repair admissions, enforce
+	 * limits and resume Pi. `behind` says the pump left events for the next
+	 * wake; the caller re-arms while it is set.
+	 */
+	async wake(
+		reason: WakeReason,
+	): Promise<{ readonly behind: boolean; readonly pump?: PumpResult }> {
 		const opened = await this.#open();
-		if (!opened.entity) {
-			throw new Error(
-				`[flue] Agent instance ${this.agentName}/${this.instanceId} has no entity runtime: configure Electric streams to receive entity wakes.`,
-			);
+		const context = BACKGROUND_CONTEXT;
+		let pump: PumpResult | undefined;
+		if (opened.entity && this.#options.entities) {
+			const book = await this.#wakeBook();
+			if (book.behind()) {
+				pump = await pumpEntity(opened.entity, book, context, {
+					...(this.#options.entities.pump ? { limits: this.#options.entities.pump } : {}),
+					now: this.#now,
+				});
+			}
+			await opened.entity.wake(reason, context);
+		} else {
+			await opened.host.wake(reason, context);
 		}
-		return handleEntityWake(opened.entity, request, BACKGROUND_CONTEXT);
+		return { behind: pump?.behind ?? false, ...(pump ? { pump } : {}) };
 	}
 
 	/** Abort every session's work. `true` when there was work to abort. */
@@ -754,7 +774,7 @@ export class FlueAgentInstance {
 
 	/** Existence and uid, without opening (or creating) anything for an unknown instance. */
 	async info(): Promise<{ exists: boolean; uid?: string }> {
-		if (!this.#opened && !(await this.#options.log.head(this.logPath))) {
+		if (!this.#opened && !hasPiState(await this.#db())) {
 			if (
 				!this.#options.legacy ||
 				!(await this.#options.legacy.getMeta(agentStreamPath(this.agentName, this.instanceId)))
@@ -772,24 +792,28 @@ export class FlueAgentInstance {
 		return host.settlement(submissionId, BACKGROUND_CONTEXT);
 	}
 
-	/** Whether Pi holds no live work and the outbox is drained. */
+	/** Whether Pi holds no live work and no entity event waits to be pumped. */
 	async idle(): Promise<boolean> {
 		if (!this.#opened) return true;
-		const { host, storage } = await this.#open();
+		const { host } = await this.#open();
 		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
-		return (
-			inspection.tasks.length === 0 &&
-			inspection.submissions.length === 0 &&
-			storage.outbox.pending() === 0
-		);
+		const behind = this.#options.entities ? (await this.#wakeBook()).behind() : false;
+		return inspection.tasks.length === 0 && inspection.submissions.length === 0 && !behind;
 	}
 
 	/** Resolve when every conversation's ordinary work is idle. */
 	async waitForIdle(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		if (!this.#opened) return;
-		const { host, storage } = await this.#open();
+		const { host } = await this.#open();
 		await host.harness.waitForIdle(context);
-		await storage.drain().catch(() => {});
+	}
+
+	/** Rows this instance's database read and wrote so far (the counting facades only). */
+	async rows(): Promise<{ rowsRead: number; rowsWritten: number } | undefined> {
+		const database = (await this.#db()) as SqliteDatabase & {
+			rows?: { rowsRead: number; rowsWritten: number };
+		};
+		return database.rows ? { ...database.rows } : undefined;
 	}
 
 	async close(): Promise<void> {
@@ -800,6 +824,7 @@ export class FlueAgentInstance {
 		const done = await opened.catch(() => undefined);
 		if (!done) return;
 		done.detach();
+		this.#cache?.detach();
 		await done.entity?.dispose().catch(() => {});
 		await done.host.close(BACKGROUND_CONTEXT);
 	}

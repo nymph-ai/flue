@@ -1,7 +1,7 @@
 /**
  * The public conversation wire (`history` snapshots and `updates` chunks),
- * wire-compatible with `@flue/sdk`. Projected from the canonical Pi log by
- * `pi/projection.ts`; pre-upgrade record streams project through
+ * wire-compatible with `@flue/sdk`. Projected from Pi's commits by
+ * `pi/projection.ts` and cached in the instance (`pi/conversation-cache.ts`); pre-upgrade record streams project through
  * `legacy/conversation-projection.ts`.
  */
 import type { ConversationUiMessage } from './conversation-projections.ts';

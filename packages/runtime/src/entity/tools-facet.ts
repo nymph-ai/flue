@@ -2,11 +2,11 @@
  * The entity tools facet (PI_UPGRADE_PLAN.md §2.5): `use()`s the three entity
  * services and registers the Pi `ToolRegistration`s `send_message`,
  * `publish_event`, `observe`, `spawn_agent` and `schedule_wake`. Pi sees five
- * ordinary tools; Electric, Cloudflare and the relay stay behind the services.
+ * ordinary tools; Electric and Cloudflare stay behind the services.
  *
  * Every tool is `replay: "safe"`: a rerun after recovery derives the same
- * message/event/schedule ids from `{self}/{taskId}/{callId}`, and the
- * provider commits nothing new for an id it already committed. Times relative
+ * message/event/schedule ids from `{self}/{taskId}/{callId}`, appends the
+ * same event again, and the receiver admits it once (rule 5). Times relative
  * to now (`delay_ms`) are fixed through `api.memo` on first execution.
  */
 import { type Context, defineFacet, type Facet, type JsonValue } from '@earendil-works/chord';
@@ -119,10 +119,7 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 							messageId === undefined ? {} : { messageId },
 							callScoped(api, context),
 						);
-						return text(
-							`Message ${receipt.messageId} ${receipt.deduplicated ? 'was already sent' : 'sent'} to ${entityKey(target)}.`,
-							receipt,
-						);
+						return text(`Message ${receipt.messageId} sent to ${entityKey(target)}.`, receipt);
 					} catch (error) {
 						return failure(error);
 					}

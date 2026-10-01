@@ -19,9 +19,8 @@ import type { SqlStorage } from './sql-storage.ts';
  * with an unknown or newer version are rejected and must be cleared.
  *
  * - 1: the pre-Pi runtime (submission rows, canonical conversation records).
- * - 2: Pi Durable (PI_UPGRADE_PLAN.md §7 step 8): every agent instance's
- *   canonical log is a stream of Pi commit envelopes; submissions are Pi
- *   records. A format-1 store stays readable: its conversation streams are
+ * - 2: Pi Durable: every agent instance's state is Pi's own SQLite storage
+ *   in the instance; submissions are Pi records. A format-1 store stays readable: its conversation streams are
  *   imported into Pi on each instance's first open, and SQL stores are
  *   relabelled 2 as they migrate.
  */

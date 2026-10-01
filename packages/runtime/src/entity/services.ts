@@ -4,7 +4,7 @@
  * Every member is JSON in, JSON out, `Context` last, so all three satisfy
  * Chord's `RemoteServiceContract` and could be exported to a remote facet
  * later. Pi never sees what is behind them: `entity/facet.ts` provides them
- * over `FluePiHost` + `DurableStreamLog`, and `entity/tools-facet.ts` turns
+ * over `FluePiHost` and the entity streams, and `entity/tools-facet.ts` turns
  * them into Pi tools.
  */
 
@@ -29,13 +29,10 @@ export type SendReceipt = {
 	readonly messageId: string;
 	/** The receiver's submission id: `deriveKeyedSubmissionId(target.type, target.id, messageId)`. */
 	readonly submissionId: string;
-	/** This entity already recorded a send with this message id; nothing new was committed. */
-	readonly deduplicated: boolean;
 };
 
 export type ObserveSource =
-	| { readonly entity: EntityRef; readonly channel: 'events' }
-	| { readonly stream: string };
+	{ readonly entity: EntityRef; readonly channel: 'events' } | { readonly stream: string };
 
 export type ObservedBatch = {
 	readonly items: readonly JsonValue[];
@@ -49,11 +46,10 @@ export type ObservationCursors = {
 
 export interface EntityMessagingService {
 	/**
-	 * Durable send: commits a `flue.a2a.send` entry; the relay outbox lands it
-	 * in the target's inbox, exactly once; the target admits it with
-	 * `requestId = submissionId`. The default `messageId` is
-	 * `{self}/{taskId}/{callId}` inside a tool call (stable across
-	 * `replay: "safe"` reruns) and is required outside one.
+	 * Send: appends one event to the target's inbox; the target admits it
+	 * with `requestId = submissionId`, once however often it is appended. The
+	 * default `messageId` is `{self}/{taskId}/{callId}` inside a tool call
+	 * (stable across `replay: "safe"` reruns) and is required outside one.
 	 */
 	send(
 		target: EntityRef,
@@ -61,7 +57,7 @@ export interface EntityMessagingService {
 		options: { readonly messageId?: string },
 		context: Context,
 	): Promise<SendReceipt>;
-	/** Transactional publish to this entity's public events stream. */
+	/** Append one event to this entity's public events stream (same id rules as `send`). */
 	publish(
 		event: JsonValue,
 		options: { readonly eventId?: string },

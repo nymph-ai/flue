@@ -98,7 +98,7 @@ export interface ReceiptTarget {
 export interface AdmissionOptions {
 	/** Validate and parse creation data (the agent's `initialData` schema). Default: identity. */
 	readonly parseInitialData?: (initialData: unknown) => unknown;
-	/** Moves attachment bytes out of the canonical log; absent keeps them inline. */
+	/** Moves attachment bytes out of Pi storage; absent keeps them inline. */
 	readonly attachments?: FlueAttachmentPort;
 }
 

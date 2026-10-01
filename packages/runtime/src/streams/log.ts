@@ -1,54 +1,31 @@
 /**
- * The canonical log port (PI_UPGRADE_PLAN.md §2.2): one Durable Streams
- * `application/json` stream per path, written through an idempotent producer.
+ * The entity stream port (docs/cloudflare-native.md rule 2): one Durable
+ * Streams `application/json` stream per path. Electric carries only entity
+ * events — an entity's inbox (`flue/v1/{type}/{id}/inbox`), what it publishes
+ * (`…/events`), and the world streams entities observe. Pi's commits never
+ * reach it.
  *
  * Implementations:
- * - `memory-log.ts` — `InMemoryDurableStreamLog`, the protocol-exact test double.
- * - `store-bridge-log.ts` — `conversationStreamStoreLog(store)`, over any
- *   `ConversationStreamStore` (SQL, Redis, MongoDB, ...).
  * - `electric-log.ts` — `ElectricDurableStreamLog`, the Durable Streams HTTP
- *   protocol (fetch only, so it runs on workerd).
+ *   protocol (fetch only, so it runs on workerd);
+ * - `memory-log.ts` — `InMemoryDurableStreamLog`, the protocol-exact test
+ *   double;
+ * - `store-bridge-log.ts` — `conversationStreamStoreLog(store)`, entity
+ *   streams in a Node app's own persistence adapter.
  *
- * Semantics every implementation follows (PROTOCOL.md §5.2, §5.2.1, §8, §9.1),
- * pinned by `test-utils/define-durable-stream-log-contract-tests.ts`:
+ * An append is a plain POST: one atomic unit of messages under one offset.
+ * There are no producer epochs. Every message carries a deterministic id
+ * (`{self}/{taskId}/{callId}` for a tool call's send or publish) and the
+ * receiver deduplicates on it (rule 5), so a retried POST that already landed
+ * only appends a duplicate the receiver ignores. Durable Streams'
+ * idempotent-producer headers would dedupe that retry at the server, but only
+ * against a producer sequence the sender keeps durably — the outbox and
+ * epochs this design removed — so they are not used.
  *
- * - One `append` is atomic: all of `messages` land under one offset or none
- *   do, and a read never splits them.
- * - Producer fencing, per `(path, producer.id)`: an epoch below the stream's
- *   is `fenced` (with the current epoch); a higher epoch must start at seq 0
- *   (anything else is a {@link DurableStreamLogError} `bad-request`); within an
- *   epoch, `seq <= lastSeq` is a `duplicate`, `lastSeq + 1` appends, and
- *   anything higher is a `producer-gap` naming the expected seq. A producer
- *   the stream has never seen must start at seq 0 (`producer-gap`,
- *   `expectedSeq: 0`, otherwise).
- * - `streamSeq` (`Stream-Seq`) is per stream and compared byte-wise
- *   lexicographically: a value at or below the last accepted one is a
- *   `stream-seq-conflict`. It is checked AFTER producer dedup, so an in-epoch
- *   retry is still a `duplicate`; and a `stream-seq-conflict` consumes nothing —
- *   neither the producer seq nor the stream seq advance (both reference servers
- *   commit producer state only after the Stream-Seq check passes).
+ * Reads are plain catch-up reads: nothing holds a connection open (rule 8).
  */
 
 import type { StreamOffset } from './offset.ts';
-
-export interface ProducerClaim {
-	readonly id: string;
-	readonly epoch: number;
-	readonly seq: number;
-}
-
-export type AppendOutcome =
-	| { readonly status: 'appended'; readonly nextOffset: StreamOffset }
-	/** 204: an in-epoch retry of an append that already landed. */
-	| { readonly status: 'duplicate'; readonly nextOffset?: StreamOffset }
-	/** 409 "Sequence conflict": `streamSeq` at or below the stream's last; typically already appended under an earlier epoch. */
-	| { readonly status: 'stream-seq-conflict'; readonly nextOffset?: StreamOffset }
-	/** 403: another writer holds a higher epoch. */
-	| { readonly status: 'fenced'; readonly currentEpoch: number }
-	/** 409 + `Producer-Expected-Seq`. */
-	| { readonly status: 'producer-gap'; readonly expectedSeq: number }
-	/** Network failure, 5xx, 429: nothing is known to have been appended; retry the same claim. */
-	| { readonly status: 'retryable'; readonly error: unknown };
 
 export interface ReadBatch {
 	/** JSON messages (application/json streams), in stream order. */
@@ -57,41 +34,28 @@ export interface ReadBatch {
 	readonly nextOffset: StreamOffset;
 	readonly upToDate: boolean;
 	readonly closed: boolean;
-	/** `Stream-Cursor` (live reads); echo it on the next live read. */
-	readonly cursor?: string;
 }
 
 export interface DurableStreamLog {
 	/** PUT: create the stream if absent (idempotent). */
 	ensure(path: string, signal?: AbortSignal): Promise<{ readonly nextOffset: StreamOffset }>;
+	/** POST: append `messages` (non-empty) atomically under one offset. */
 	append(
 		path: string,
-		input: {
-			/** One append ⇒ atomic; each element becomes one message. Must be non-empty. */
-			readonly messages: readonly unknown[];
-			readonly producer: ProducerClaim;
-			/** `Stream-Seq`, e.g. a zero-padded Pi seq. */
-			readonly streamSeq?: string;
-		},
+		messages: readonly unknown[],
 		signal?: AbortSignal,
-	): Promise<AppendOutcome>;
-	/** Messages strictly after `from`. `STREAM_START` reads from the beginning; `STREAM_NOW` from the tail. */
+	): Promise<{ readonly nextOffset: StreamOffset }>;
+	/** Messages strictly after `from`; `STREAM_START` reads from the beginning. */
 	read(
 		path: string,
 		from: StreamOffset,
-		options?: {
-			readonly live?: false | 'long-poll' | 'sse';
-			readonly cursor?: string;
-			readonly signal?: AbortSignal;
-		},
+		options?: { readonly signal?: AbortSignal },
 	): Promise<ReadBatch>;
 	/** HEAD: `null` when the stream does not exist. */
 	head(
 		path: string,
 		signal?: AbortSignal,
 	): Promise<{ readonly nextOffset: StreamOffset; readonly closed: boolean } | null>;
-	/** In-process wakeups (memory/SQL); remote logs wake through webhooks instead. */
-	subscribe?(path: string, listener: () => void): () => void;
 }
 
 export type DurableStreamLogErrorCode =
@@ -103,16 +67,16 @@ export type DurableStreamLogErrorCode =
 	| 'closed'
 	/** 409 for any other reason: PUT config mismatch, content-type mismatch. */
 	| 'conflict'
-	/** 400: malformed request, e.g. a new epoch not starting at seq 0, an empty append. */
+	/** 400: malformed request, e.g. an empty append. */
 	| 'bad-request'
-	/** 413: the append is larger than the server accepts; split it. */
+	/** 413: the append is larger than the server accepts. */
 	| 'payload-too-large'
-	/** Network failure, 5xx or 429 on an operation without a retryable outcome. */
+	/** Network failure, 5xx or 429: retrying the identical request may succeed. */
 	| 'unavailable'
 	/** The server answered outside the protocol (missing headers, unparseable body). */
 	| 'protocol';
 
-/** A non-outcome failure of a {@link DurableStreamLog} operation. */
+/** A failure of a {@link DurableStreamLog} operation. */
 export class DurableStreamLogError extends Error {
 	readonly code: DurableStreamLogErrorCode;
 	readonly path: string;
@@ -139,4 +103,17 @@ export class DurableStreamLogError extends Error {
 	get retryable(): boolean {
 		return this.code === 'unavailable';
 	}
+}
+
+/** The JSON body of one append: a non-empty array, flattened one level into messages (PROTOCOL §9.1.2). */
+export function serializeMessages(path: string, messages: readonly unknown[]): string {
+	if (!Array.isArray(messages) || messages.length === 0) {
+		throw new DurableStreamLogError({
+			code: 'bad-request',
+			path,
+			status: 400,
+			message: 'An append needs at least one message.',
+		});
+	}
+	return JSON.stringify(messages);
 }

@@ -1,12 +1,15 @@
 /**
  * The Node agent coordinator: a process-wide set of `FlueAgentInstance`s over
- * Pi Durable (PI_UPGRADE_PLAN.md §7 step 8), the same shape as the
- * Cloudflare coordinator. Each instance keeps its Pi index in an in-memory
- * `node:sqlite` database rebuilt from the canonical log on open; the log is
- * the configured Electric server (`streams-config.ts`), else a stream in the
- * persistence adapter's conversation stream store, written with
- * `publish: "await"` so a commit is on the durable log before it resolves.
+ * Pi Durable, the same shape as the Cloudflare coordinator
+ * (docs/cloudflare-native.md). Each instance keeps Pi's own `SqliteStorage`
+ * and Flue's tables in one `node:sqlite` database: a file per instance under
+ * `FLUE_PI_DIR` when that is set, else in memory for the process lifetime.
  * Wakes are process timers.
+ *
+ * Entities: their inbox and events streams live on the configured Electric
+ * server (`streams-config.ts`), else in the persistence adapter's stream
+ * store. One process holds every local entity, so an append to an instance's
+ * inbox rings its doorbell directly; the timer it arms is the pump.
  *
  * Pi owns what this module used to: claims, leases, heartbeats,
  * reconciliation, joins and settlement. An instance that a previous process
@@ -36,6 +39,7 @@ import { configuredStreamsLog } from '../runtime/streams-config.ts';
 import { entityOfInboxPath } from '../entity/paths.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { conversationStreamStoreLog } from '../streams/store-bridge-log.ts';
+import { join } from 'node:path';
 import type { Agent, DeliveredMessage, DispatchReceipt } from '../types.ts';
 import { openNodeSqliteDatabase } from './node-sqlite-database.ts';
 
@@ -66,30 +70,26 @@ export interface NodeAgentCoordinator {
 	shutdown(timeoutMs?: number): Promise<void>;
 }
 
-/** `log`, calling `wake` after every successful append to an entity inbox. */
-function wakeInboxesLocally(
+/** `log`, ringing `ring` after every append to an entity inbox. */
+function ringInboxesLocally(
 	log: DurableStreamLog,
-	wake: (entity: { type: string; id: string }, path: string) => void,
+	ring: (entity: { type: string; id: string }, path: string, head: string) => void,
 ): DurableStreamLog {
 	return {
 		ensure: (path, signal) => log.ensure(path, signal),
-		async append(path, input, signal) {
-			const outcome = await log.append(path, input, signal);
-			if (outcome.status === 'appended') {
-				const entity = entityOfInboxPath(path);
-				if (entity) wake(entity, path);
-			}
-			return outcome;
+		async append(path, messages, signal) {
+			const appended = await log.append(path, messages, signal);
+			const entity = entityOfInboxPath(path);
+			if (entity) ring(entity, path, appended.nextOffset);
+			return appended;
 		},
 		read: (path, from, options) => log.read(path, from, options),
 		head: (path, signal) => log.head(path, signal),
-		...(log.subscribe
-			? {
-					subscribe: (path: string, listener: () => void) =>
-						log.subscribe?.(path, listener) ?? (() => {}),
-				}
-			: {}),
 	};
+}
+
+function instanceFile(directory: string, agentName: string, instanceId: string): string {
+	return join(directory, encodeURIComponent(agentName), `${encodeURIComponent(instanceId)}.sqlite`);
 }
 
 /** A `DispatchQueue` backed by a {@link NodeAgentCoordinator}: durable admission, asynchronous processing. */
@@ -109,20 +109,17 @@ export function createNodeAgentCoordinator(options: {
 	const { agents, createContext, conversationStreamStore, attachmentStore, activityGate } = options;
 	const env = options.env ?? {};
 	const instances = new Map<string, FlueAgentInstance>();
-	let wakeGeneration = 0;
-	// One process holds every local entity: a relay post into an instance's
-	// inbox wakes it directly (Cloudflare wakes through Electric webhooks).
-	const log = wakeInboxesLocally(
+	const piDirectory =
+		typeof env.FLUE_PI_DIR === 'string' && env.FLUE_PI_DIR !== '' ? env.FLUE_PI_DIR : undefined;
+	// One process holds every local entity: an append to an instance's inbox
+	// rings its doorbell directly (Cloudflare rings through Electric webhooks).
+	const log = ringInboxesLocally(
 		configuredStreamsLog(env) ?? conversationStreamStoreLog(conversationStreamStore),
-		(entity, path) => {
+		(entity, path, head) => {
 			if (stopping || !agents.some((record) => record.name === entity.type)) return;
 			void instanceOf(entity.type, entity.id)
-				.wakeEntity({
-					subscriptionId: 'flue-node',
-					generation: ++wakeGeneration,
-					streams: [{ path }],
-				})
-				.catch((error) => console.error('[flue:pi] entity wake failed', error));
+				.ring(path, head)
+				.catch((error) => console.error('[flue:pi] entity doorbell failed', error));
 		},
 	);
 	const mcpCaches = new Map<string, McpConnectionCache>();
@@ -146,33 +143,39 @@ export function createNodeAgentCoordinator(options: {
 			agentName,
 			request: new Request('https://flue.invalid/_instance', { method: 'POST' }),
 		});
+		const armWake = (atMs: number, reason: WakeReason): void => {
+			if (stopping) return;
+			const timer = setTimeout(
+				() => {
+					timers.delete(timer);
+					if (stopping) return;
+					void created
+						.wake(reason)
+						.then(({ behind }) => {
+							// The pump left events behind: the next chunk, at once.
+							if (behind) armWake(Date.now(), { kind: 'pump' });
+						})
+						.catch((error) => console.error('[flue:pi] wake failed', error));
+				},
+				Math.max(0, atMs - Date.now()),
+			);
+			timer.unref?.();
+			timers.add(timer);
+		};
 		const created: FlueAgentInstance = new FlueAgentInstance({
 			agentName,
 			instanceId,
 			agent: agentOf(agentName),
-			database: () => openNodeSqliteDatabase(':memory:'),
-			log,
-			publish: 'await',
+			database: () =>
+				openNodeSqliteDatabase(
+					piDirectory ? instanceFile(piDirectory, agentName, instanceId) : ':memory:',
+				),
 			attachments: attachmentStore,
 			legacy: conversationStreamStore,
-			armWake: (atMs: number, reason: WakeReason) => {
-				if (stopping) return;
-				const timer = setTimeout(
-					() => {
-						timers.delete(timer);
-						if (stopping) return;
-						void created
-							.wake(reason)
-							.catch((error) => console.error('[flue:pi] wake failed', error));
-					},
-					Math.max(0, atMs - Date.now()),
-				);
-				timer.unref?.();
-				timers.add(timer);
-			},
+			armWake: (atMs: number, reason: WakeReason) => armWake(atMs, reason),
 			events,
 			mcp,
-			entities: {},
+			entities: { log },
 			onReport: (error) => console.error('[flue:pi]', { agentName, instanceId }, error),
 		});
 		instance = created;

@@ -58,10 +58,10 @@ export type { RenderedAgent } from './registry-bridge.ts';
 export type FluePiEntity = { readonly type: string; readonly id: string };
 
 export type WakeReason =
-	| { readonly kind: 'outbox' }
 	| { readonly kind: 'live-tasks' }
 	| { readonly kind: 'schedule'; readonly scheduleId: string }
-	| { readonly kind: 'inbox'; readonly stream: string; readonly tailOffset: string }
+	/** A doorbell recorded new entity events: drain them (`entity/pump.ts`). */
+	| { readonly kind: 'pump' }
 	| { readonly kind: 'dispatch' };
 
 /** Backstop wake while Pi has live tasks, so an evicted instance resumes them (§2.5). */
@@ -71,8 +71,13 @@ export interface FluePiHostOptions {
 	readonly entity: FluePiEntity;
 	/** pi-ai model access (`runtime/providers.ts`). */
 	readonly models: Models;
-	/** Opens the Pi storage: `StreamStorage` in production, any Pi `Storage` in tests. */
+	/** Opens the Pi storage: Pi's `SqliteStorage` over the instance's database, any Pi `Storage` in tests. */
 	readonly storage: () => Promise<Storage>;
+	/**
+	 * Runs once the Harness is open, before the root conversation is ensured:
+	 * where the conversation cache subscribes to Pi's commits.
+	 */
+	readonly onOpened?: (harness: Harness, storage: Storage, context: Context) => Promise<void>;
 	/** The instance sandbox: Flue's `grep`/`glob` run over it; `env` defaults to it. */
 	readonly sandbox?: Sandbox;
 	/** Pi execution environment for `read`/`write`/`edit`/`bash`. Default: `executionEnvFromSandbox(sandbox)`. */
@@ -87,7 +92,7 @@ export interface FluePiHostOptions {
 	readonly tools?: FlueToolDeps;
 	/** Resolves `useMcpConnection` declarations (lane-mcp). */
 	readonly mcp?: McpToolResolver;
-	/** Keeps attachment bytes out of the canonical log. */
+	/** Keeps attachment bytes out of Pi storage. */
 	readonly attachments?: FlueAttachmentPort;
 	/** `ctx.harness` for lifecycle callbacks. */
 	readonly lifecycleHarness?: (conversationId: ConversationId, context: Context) => FlueHarness;
@@ -211,6 +216,7 @@ class PiHost implements FluePiHost {
 			},
 			context,
 		);
+		await this.#options.onOpened?.(this.#harness, storage, context);
 		await this.#harness.root(context);
 		await countAttempts(this.#harness, context);
 	}

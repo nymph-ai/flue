@@ -1,13 +1,12 @@
 /**
- * Where the canonical Pi log lives (PI_UPGRADE_PLAN.md §2.2, §7 step 8).
+ * Where entity streams live (docs/cloudflare-native.md rule 2): Electric
+ * carries entity events only — each instance's inbox
+ * (`flue/v1/{type}/{id}/inbox`), what it publishes (`…/events`), and the
+ * world streams it observes. Pi's commits stay in the instance's own SQLite.
  *
- * By default each agent instance's log is a stream in the app's own
- * persistence — the Durable Object's SQLite on Cloudflare, the `db.ts`
- * adapter's conversation stream store on Node — through
- * `conversationStreamStoreLog`, so every existing adapter (postgres, mysql,
- * libsql, redis, mongodb) keeps working unchanged. An app opts into an
- * Electric server (the agents-server, or a bare Durable Streams server)
- * instead, either in code — the same way it registers providers in `app.ts`:
+ * An app opts into an Electric server (the agents-server, or a bare Durable
+ * Streams server) either in code — the same way it registers providers in
+ * `app.ts`:
  *
  * ```ts
  * import { env } from 'cloudflare:workers';
@@ -40,7 +39,7 @@
  *
  * With Electric configured, agent instances are addressable entities
  * (`entity/*`): they message, publish to, observe, spawn and schedule each
- * other, and the Worker serves the wake route that admits their inbox.
+ * other, and the Worker serves the wake route that rings their doorbells.
  */
 import { createEntitySubscriptions, type EntitySubscriptions } from '../entity/subscriptions.ts';
 import { jwksWebhookKeys, type WebhookKeyResolver, webhookJwksUrl } from '../entity/webhook.ts';
@@ -50,10 +49,10 @@ import type { DurableStreamLog } from '../streams/log.ts';
 type FetchLike = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
 type HeaderRecord = Record<string, string>;
 
-/** An Electric (Durable Streams HTTP) server holding every instance's canonical log. */
+/** An Electric (Durable Streams HTTP) server holding every instance's entity streams. */
 export interface ElectricStreamsConfig {
 	readonly kind: 'electric';
-	/** The stream root; an instance's log is `${baseUrl}/flue/v1/{agent}/{id}/pi`. */
+	/** The stream root; an instance's inbox is `${baseUrl}/flue/v1/{agent}/{id}/inbox`. */
 	readonly baseUrl: string;
 	/** How requests reach the server: a service binding's `fetch`, or the global one. */
 	readonly fetch?: FetchLike;
@@ -83,9 +82,9 @@ export function electricStreams(
 let configured: FlueStreamsConfig | undefined;
 
 /**
- * Write every agent instance's canonical log to `config` instead of the
- * app's own persistence. Call it at module scope (e.g. in `app.ts`), before
- * the first request; `undefined` restores the default.
+ * Keep entity streams on `config`, which makes agent instances addressable
+ * entities. Call it at module scope (e.g. in `app.ts`), before the first
+ * request; `undefined` restores the default.
  */
 export function setStreams(config: FlueStreamsConfig | undefined): void {
 	if (config !== undefined && config.kind !== 'electric') {
@@ -131,10 +130,7 @@ export function configuredStreams(
 
 const logs = new WeakMap<object, DurableStreamLog>();
 
-/**
- * The remote log configured for this runtime, or `undefined` to keep the log
- * in the app's own persistence.
- */
+/** The Electric entity streams configured for this runtime, if any. */
 export function configuredStreamsLog(
 	env: Record<string, unknown> | undefined,
 ): DurableStreamLog | undefined {

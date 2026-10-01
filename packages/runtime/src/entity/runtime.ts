@@ -1,7 +1,8 @@
 /**
  * One entity's A2A runtime: the Chord facet host that provides the entity
  * services and registers the entity tools on a `FluePiHost`, plus the inbox
- * consumer, schedule book and observation book a wake drives.
+ * consumer, schedule book and observation book the alarm pump drives
+ * (`pump.ts`).
  *
  * Construct it right after `createFluePiHost` and before the first
  * `applyRender`, so the entity tools are registered when the render picks a
@@ -10,7 +11,6 @@
  */
 import { type Context, createFacetHost, type FacetHost } from '@earendil-works/chord';
 import type { FluePiHost, WakeReason } from '../pi/host.ts';
-import type { EntityCursorStore } from '../pi/stream-storage.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { createEntityFacet, type EntitySubscriptionPort } from './facet.ts';
 import { InboxConsumer } from './inbox.ts';
@@ -31,8 +31,6 @@ export interface EntityRuntimeOptions {
 	readonly host: FluePiHost;
 	readonly entity: EntityRef;
 	readonly log: DurableStreamLog;
-	/** The open storage's cursor store (`StreamStorage.cursors`). */
-	readonly cursors: () => EntityCursorStore;
 	/** Arm a wake at `atMs` (the DO alarm / a Node timer); the same port the host has. */
 	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	/** Electric subscription management for `observe({ wake: true })` (`subscriptions.ts`). */
@@ -51,8 +49,6 @@ export interface EntityRuntime {
 	readonly schedules: ScheduleBook;
 	readonly observations: ObservationBook;
 	readonly facets: FacetHost;
-	/** The cursor store of the open storage. */
-	cursors(): EntityCursorStore;
 	/**
 	 * The alarm/backstop entry point: fire due schedules, then `host.wake`
 	 * (admission repair, timeouts, resume, live-task backstop).
@@ -73,7 +69,6 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 		host,
 		entity,
 		log,
-		cursors: options.cursors,
 		schedules,
 		now,
 		onReport,
@@ -104,7 +99,6 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 		schedules,
 		observations,
 		facets,
-		cursors: options.cursors,
 		async wake(reason, context) {
 			await schedules.fireDue(context);
 			await host.wake(reason, context);

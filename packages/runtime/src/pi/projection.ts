@@ -1,13 +1,15 @@
 /**
  * The public conversation wire as a pure projection of Pi commits
- * (PI_UPGRADE_PLAN.md §4, §7 step 7).
+ * (docs/cloudflare-native.md rule 2).
  *
- * `projectPiCommit(state, envelope)` folds one canonical `PiCommitEnvelope`
- * into a projection state and returns the `ConversationStreamChunk`s it
- * produced; `projectPiSnapshot(state)` materializes the
- * `AgentConversationSnapshot`. Both reproduce Flue's existing wire exactly —
- * `@flue/sdk` reads it unchanged — so the Pi internals (numeric ids, task
- * records, Chord delta ops, tool memos) never cross the public contract.
+ * `projectPiCommitInPlace(state, commit)` folds one Pi commit — what
+ * `Session.subscribeCommits` publishes, reduced by {@link projectionCommitOf}
+ * to the changes the projection reads — into a projection state and returns
+ * the `ConversationStreamChunk`s it produced; `projectPiSnapshot(state)`
+ * materializes the `AgentConversationSnapshot`. Both reproduce Flue's
+ * existing wire exactly — `@flue/sdk` reads it unchanged — so the Pi
+ * internals (numeric ids, task records, Chord delta ops, tool memos) never
+ * cross the public contract.
  *
  * Only the root conversation (Flue's default session) is projected, as
  * before. The mapping:
@@ -25,14 +27,14 @@
  * Every assistant step of one Pi run folds into one response message keyed
  * by the run's first input, exactly as the legacy projection folded every
  * step of a submission into its first assistant message. Chunk positions are
- * `{ batch: envelope.seq, index }`.
+ * `{ batch: commit.seq, index }`.
  *
- * The state is plain JSON: the fold host clones it once per advance and folds
- * a window in place (`projectPiCommitInPlace`).
+ * The state is plain JSON: the cache (`conversation-cache.ts`) checkpoints it
+ * and folds the commits after the checkpoint in place.
  */
 import type { JsonValue } from '@earendil-works/chord';
 import { applyImmutable, type Op } from '@earendil-works/chord/delta';
-import type { StorageWrite } from '@earendil-works/pi-durable';
+import type { CommitChange, CommitPublication } from '@earendil-works/pi-durable';
 import type { AgentConversationSnapshot, ConversationStreamChunk } from '../conversation-public.ts';
 import type { ConversationUiMessage } from '../conversation-projections.ts';
 import {
@@ -42,7 +44,6 @@ import {
 } from '../errors.ts';
 import { toolResultOutput, toolResultText } from '../message-rendering.ts';
 import { serializeSubmissionError } from '../runtime/submission-errors.ts';
-import type { PiCommitEnvelope } from './commit-envelope.ts';
 
 /** Pi's reserved root conversation id. */
 const ROOT = 1;
@@ -134,9 +135,9 @@ interface ToolCallState {
 
 export interface PiProjectionState {
 	readonly v: 1;
-	/** Storage incarnation (every envelope of one log carries it). */
+	/** Identity of the projected conversation (minted by the cache, kept across checkpoints). */
 	storage?: string;
-	/** Seq of the last folded envelope. */
+	/** Pi seq of the last folded commit. */
 	seq: number;
 	rootCreated: boolean;
 	docs: { [documentId: string]: DocSlot };
@@ -242,8 +243,7 @@ function receiptOf(
 
 function startMetadataOf(state: PiProjectionState, runKey: string): JsonValue | undefined {
 	const runs = rootDoc(state, KIND_RUNS) as
-		| { runs?: { [key: string]: { metadata?: JsonValue } } }
-		| undefined;
+		{ runs?: { [key: string]: { metadata?: JsonValue } } } | undefined;
 	const metadata = runs?.runs?.[runKey]?.metadata;
 	if (
 		metadata &&
@@ -290,56 +290,175 @@ function metadataDelta(
 
 // ─── Folding ────────────────────────────────────────────────────────────────
 
-function scopeOf(record: { scope?: { kind?: string; conversationId?: number } }): DocSlot['scope'] {
-	if (record.scope?.kind === 'session') return 'session';
-	if (record.scope?.kind === 'conversation' && record.scope.conversationId === ROOT) return 'root';
-	return 'other';
+/** Root-conversation documents the projection reads. */
+const ROOT_KINDS: ReadonlySet<string> = new Set([KIND_LIVE, KIND_RUNS]);
+/** Session documents the projection reads. */
+const SESSION_KINDS: ReadonlySet<string> = new Set([KIND_RECEIPTS]);
+
+/**
+ * One change the projection folds: a root-conversation record, or a document
+ * it reads, as a value (`null` retires it) or as Chord ops over the value it
+ * already holds. Plain JSON, so a commit can be journaled and refolded.
+ */
+export type ProjectionChange =
+	| { readonly type: 'conversation'; readonly value: { readonly id: number } }
+	| {
+			readonly type: 'entry';
+			readonly value: { readonly id: number; readonly kind: string } & JsonObjectish;
+	  }
+	| { readonly type: 'submission'; readonly value: SubmissionValue }
+	| {
+			readonly type: 'doc';
+			readonly id: string;
+			readonly kind: string;
+			readonly key?: string;
+			readonly scope: 'root' | 'session';
+			readonly value?: JsonValue | null;
+			readonly ops?: readonly Op[];
+	  }
+	| {
+			readonly type: 'doc.copy';
+			readonly id: string;
+			readonly kind: string;
+			readonly key?: string;
+			readonly scope: 'root' | 'session';
+			readonly source: string;
+	  };
+
+type JsonObjectish = { readonly [key: string]: unknown };
+
+interface SubmissionValue {
+	readonly id: number;
+	readonly type: 'input' | 'write';
+	readonly conversationId: number;
+	readonly requestId?: string;
+	readonly status: string;
+	readonly entry?: number;
+	readonly answer?: number;
+	readonly reason?: string;
+	readonly detail?: JsonValue;
 }
 
-function foldDocuments(state: PiProjectionState, writes: readonly StorageWrite[]): void {
-	for (const write of writes) {
-		switch (write.type) {
-			case 'document.create': {
-				const record = write.record as { id: number; kind: string; key?: string };
-				placeDoc(state, String(record.id), {
-					kind: record.kind,
-					...(record.key !== undefined ? { key: record.key } : {}),
-					scope: scopeOf(write.record as never),
-					value: structuredClone(write.content.value) as JsonValue,
+/** One Pi commit, reduced to what the projection reads. */
+export interface ProjectionCommit {
+	readonly seq: number;
+	/** When the commit was observed (ms). */
+	readonly at: number;
+	readonly changes: readonly ProjectionChange[];
+}
+
+function docScope(record: {
+	readonly kind: string;
+	readonly scope?: unknown;
+}): 'root' | 'session' | undefined {
+	const scope = record.scope as { kind?: string; conversationId?: number } | undefined;
+	if (
+		scope?.kind === 'conversation' &&
+		scope.conversationId === ROOT &&
+		ROOT_KINDS.has(record.kind)
+	)
+		return 'root';
+	if (scope?.kind === 'session' && SESSION_KINDS.has(record.kind)) return 'session';
+	return undefined;
+}
+
+/**
+ * Reduce one `subscribeCommits` publication to the changes the projection
+ * reads, or `undefined` when it touches none of them (most of Pi's commits:
+ * task checkpoints, other conversations, usage, the inbox).
+ */
+export function projectionCommitOf(
+	state: PiProjectionState,
+	publication: CommitPublication,
+	at: number,
+): ProjectionCommit | undefined {
+	const changes: ProjectionChange[] = [];
+	for (const change of publication.changes as readonly CommitChange[]) {
+		switch (change.type) {
+			case 'conversation':
+				if (change.value.id === ROOT) changes.push({ type: 'conversation', value: { id: ROOT } });
+				break;
+			case 'entry':
+				if (change.value.conversationId === ROOT)
+					changes.push({ type: 'entry', value: change.value as never });
+				break;
+			case 'submission':
+				if (change.value.conversationId === ROOT)
+					changes.push({ type: 'submission', value: change.value as never });
+				break;
+			case 'document': {
+				const scope = docScope(change.record);
+				if (!scope) break;
+				const id = String(change.record.id);
+				const key = (change.record as { key?: string }).key;
+				const known = state.docs[id] !== undefined;
+				changes.push({
+					type: 'doc',
+					id,
+					kind: change.record.kind,
+					...(key !== undefined ? { key } : {}),
+					scope,
+					// Ops are what changed; a value only where the projection holds none yet.
+					...(change.value !== null && known && change.ops.length > 0
+						? { ops: change.ops }
+						: { value: change.value as JsonValue | null }),
 				});
 				break;
 			}
 			case 'document.copy': {
-				const record = write.record as { id: number; kind: string; key?: string };
-				const source = state.docs[String(write.source.id)];
-				placeDoc(state, String(record.id), {
-					kind: record.kind,
-					...(record.key !== undefined ? { key: record.key } : {}),
-					scope: scopeOf(write.record as never),
-					value: source ? structuredClone(source.value) : null,
+				const scope = docScope(change.record);
+				if (!scope) break;
+				const key = (change.record as { key?: string }).key;
+				changes.push({
+					type: 'doc.copy',
+					id: String(change.record.id),
+					kind: change.record.kind,
+					...(key !== undefined ? { key } : {}),
+					scope,
+					source: String(change.source.id),
 				});
-				break;
-			}
-			case 'document.change': {
-				const slot = state.docs[String(write.id)];
-				if (!slot) break;
-				slot.value =
-					write.content.kind === 'base'
-						? (structuredClone(write.content.value) as JsonValue)
-						: (applyImmutable(slot.value ?? {}, write.content.ops as readonly Op[]) as JsonValue);
-				break;
-			}
-			case 'document.retire': {
-				const slot = state.docs[String(write.id)];
-				if (!slot) break;
-				delete state.docs[String(write.id)];
-				const address = addressOf(slot.scope, slot.kind, slot.key);
-				if (state.addresses[address] === String(write.id)) delete state.addresses[address];
 				break;
 			}
 			default:
 				break;
 		}
+	}
+	return changes.length > 0 ? { seq: publication.seq, at, changes } : undefined;
+}
+
+function foldDocuments(state: PiProjectionState, changes: readonly ProjectionChange[]): void {
+	for (const change of changes) {
+		if (change.type === 'doc.copy') {
+			const source = state.docs[change.source];
+			placeDoc(state, change.id, {
+				kind: change.kind,
+				...(change.key !== undefined ? { key: change.key } : {}),
+				scope: change.scope,
+				value: source ? structuredClone(source.value) : null,
+			});
+			continue;
+		}
+		if (change.type !== 'doc') continue;
+		const slot = state.docs[change.id];
+		if (change.ops !== undefined) {
+			if (slot) slot.value = applyImmutable(slot.value ?? {}, change.ops) as JsonValue;
+			continue;
+		}
+		if (change.value === null || change.value === undefined) {
+			if (!slot) continue;
+			delete state.docs[change.id];
+			const address = addressOf(slot.scope, slot.kind, slot.key);
+			if (state.addresses[address] === change.id) delete state.addresses[address];
+			continue;
+		}
+		if (slot) slot.value = change.value;
+		else
+			placeDoc(state, change.id, {
+				kind: change.kind,
+				...(change.key !== undefined ? { key: change.key } : {}),
+				scope: change.scope,
+				value: change.value,
+			});
 	}
 }
 
@@ -955,17 +1074,16 @@ function onSettled(
 	}
 }
 
-/** Fold one envelope into `state` (mutated) and return its chunks. */
+/** Fold one commit into `state` (mutated) and return its chunks. */
 export function projectPiCommitInPlace(
 	state: PiProjectionState,
-	envelope: PiCommitEnvelope,
+	commit: ProjectionCommit,
 ): ConversationStreamChunk[] {
-	state.storage ??= envelope.storage;
-	state.seq = envelope.seq;
-	const at = envelope.at;
+	state.seq = commit.seq;
+	const at = commit.at;
 	const out: Emitter = { chunks: [], reset: false };
 	const before = liveOf(state);
-	foldDocuments(state, envelope.writes);
+	foldDocuments(state, commit.changes);
 	const after = liveOf(state);
 
 	let created = false;
@@ -977,7 +1095,7 @@ export function projectPiCommitInPlace(
 		byTaskId?: number;
 	}[] = [];
 	const settledIds: string[] = [];
-	for (const write of envelope.writes) {
+	for (const write of commit.changes) {
 		if (write.type === 'conversation' && write.value.id === ROOT && !state.rootCreated) {
 			state.rootCreated = true;
 			created = true;
@@ -1063,24 +1181,24 @@ export function projectPiCommitInPlace(
 						type: 'conversation-reset',
 						conversationId: snapshot.conversationId,
 						snapshot,
-						position: { batch: envelope.seq, index: 0 },
+						position: { batch: commit.seq, index: 0 },
 					},
 				]
 			: [];
 	}
 	return out.chunks.map(
 		(chunk, index) =>
-			({ ...chunk, position: { batch: envelope.seq, index } }) as ConversationStreamChunk,
+			({ ...chunk, position: { batch: commit.seq, index } }) as ConversationStreamChunk,
 	);
 }
 
-/** Fold one envelope into a copy of `state`. */
+/** Fold one commit into a copy of `state`. */
 export function projectPiCommit(
 	state: PiProjectionState,
-	envelope: PiCommitEnvelope,
+	commit: ProjectionCommit,
 ): { state: PiProjectionState; chunks: ConversationStreamChunk[] } {
 	const next = cloneProjectionState(state);
-	const chunks = projectPiCommitInPlace(next, envelope);
+	const chunks = projectPiCommitInPlace(next, commit);
 	return { state: next, chunks };
 }
 
@@ -1097,6 +1215,11 @@ export function projectPiSnapshot(
 		messages: structuredClone(state.messages),
 		settlements: structuredClone(state.settlements),
 	};
+}
+
+/** Whether a generation is streaming its answer into `pi.live` right now. */
+export function projectPiStreaming(state: PiProjectionState): boolean {
+	return liveOf(state).generation?.message !== undefined;
 }
 
 /**

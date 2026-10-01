@@ -1,7 +1,7 @@
 /**
  * The agent conversation read routes (`history` and `updates` views, HEAD,
  * attachment bytes) over a {@link ConversationProjectionSource}: the Pi
- * projection of the canonical log (`pi/projection-host.ts`), or a
+ * projection cached over Pi storage (`pi/conversation-cache.ts`), or a
  * pre-upgrade record stream (`legacy/conversation-source.ts`). The wire is
  * the one `@flue/sdk` speaks, unchanged.
  */

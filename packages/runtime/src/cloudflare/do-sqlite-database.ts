@@ -1,8 +1,11 @@
 /**
  * Pi's `SqliteDatabase` facade over Durable Object SQLite
- * (`ctx.storage.sql` + `ctx.storage.transactionSync`), so `StreamStorage`
- * (and Pi's `SqliteStorage` index inside it) run on a DO with the index, the
- * outbox and the relay rows in one DO SQLite transaction.
+ * (`ctx.storage.sql` + `ctx.storage.transactionSync`), so Pi Durable runs on
+ * its own `SqliteStorage` inside the Durable Object, and Flue's own tables
+ * (stream cursors, the wake high-water, the conversation cache) share the
+ * same database (docs/cloudflare-native.md rule 1). This is the documented
+ * adapter of pi-durable 0.99.2 `storage/sqlite/database.ts`; nothing here
+ * depends on how `SqliteStorage` shapes its transactions.
  *
  * DO SQL has no prepared-statement handle in its public API, so a statement is
  * its SQL text, executed with `sql.exec` on each call. Bindings are mapped to
@@ -11,6 +14,10 @@
  * back as `Uint8Array`. `transactionSync` rolls back and rethrows when the
  * callback throws, which is exactly the facade's contract. `close()` is a
  * no-op: the Durable Object owns the database.
+ *
+ * Every `sql.exec` cursor's `rowsRead`/`rowsWritten` — what Cloudflare bills
+ * and charts per namespace — accumulate in {@link DoSqliteDatabase.rows}, so
+ * tests and the qualification build can measure what a scenario costs.
  */
 
 import type {
@@ -21,12 +28,30 @@ import type {
 
 type DoSqlValue = ArrayBuffer | string | number | null;
 
+/** What one `sql.exec` returns: its rows, and (on workerd) what it cost. */
+export interface DurableObjectSqlCursor {
+	toArray(): Record<string, unknown>[];
+	readonly rowsRead?: number;
+	readonly rowsWritten?: number;
+}
+
 /** The slice of `DurableObjectStorage` this facade uses. */
 export interface DurableObjectSqliteStorage {
 	readonly sql: {
-		exec(query: string, ...bindings: DoSqlValue[]): { toArray(): Record<string, unknown>[] };
+		exec(query: string, ...bindings: DoSqlValue[]): DurableObjectSqlCursor;
 	};
 	transactionSync<T>(closure: () => T): T;
+}
+
+/** Rows read and written through one database facade since it was created (or reset). */
+export interface SqliteRowCounters {
+	rowsRead: number;
+	rowsWritten: number;
+}
+
+/** A database facade that counts the rows its statements read and write. */
+export interface CountingSqliteDatabase extends SqliteDatabase {
+	readonly rows: SqliteRowCounters;
 }
 
 function toBinding(value: SqliteValue): DoSqlValue {
@@ -54,45 +79,40 @@ function fromRow<T>(row: Record<string, unknown>): T {
 	return (converted ?? row) as T;
 }
 
-class DoSqliteStatement implements SqliteStatement {
-	private readonly storage: DurableObjectSqliteStorage;
-	private readonly sql: string;
-
-	constructor(storage: DurableObjectSqliteStorage, sql: string) {
-		this.storage = storage;
-		this.sql = sql;
-	}
-
-	run(...params: SqliteValue[]): void {
-		this.storage.sql.exec(this.sql, ...params.map(toBinding)).toArray();
-	}
-
-	get<T extends object>(...params: SqliteValue[]): T | undefined {
-		const row = this.storage.sql.exec(this.sql, ...params.map(toBinding)).toArray()[0];
-		return row === undefined ? undefined : fromRow<T>(row);
-	}
-
-	all<T extends object>(...params: SqliteValue[]): T[] {
-		return this.storage.sql
-			.exec(this.sql, ...params.map(toBinding))
-			.toArray()
-			.map((row) => fromRow<T>(row));
-	}
-}
-
-export class DoSqliteDatabase implements SqliteDatabase {
+export class DoSqliteDatabase implements CountingSqliteDatabase {
+	readonly rows: SqliteRowCounters = { rowsRead: 0, rowsWritten: 0 };
 	private readonly storage: DurableObjectSqliteStorage;
 
 	constructor(storage: DurableObjectSqliteStorage) {
 		this.storage = storage;
 	}
 
+	/** Run one statement to completion and count what it cost. */
+	run(sql: string, params: readonly SqliteValue[]): Record<string, unknown>[] {
+		const cursor = this.storage.sql.exec(sql, ...params.map(toBinding));
+		const rows = cursor.toArray();
+		this.rows.rowsRead += cursor.rowsRead ?? 0;
+		this.rows.rowsWritten += cursor.rowsWritten ?? 0;
+		return rows;
+	}
+
 	exec(sql: string): void {
-		this.storage.sql.exec(sql).toArray();
+		this.run(sql, []);
 	}
 
 	prepare(sql: string): SqliteStatement {
-		return new DoSqliteStatement(this.storage, sql);
+		const run = (params: readonly SqliteValue[]) => this.run(sql, params);
+		return {
+			run: (...params) => {
+				run(params);
+			},
+			get: <T extends object>(...params: SqliteValue[]) => {
+				const row = run(params)[0];
+				return row === undefined ? undefined : fromRow<T>(row);
+			},
+			all: <T extends object>(...params: SqliteValue[]) =>
+				run(params).map((row) => fromRow<T>(row)),
+		};
 	}
 
 	transaction<T>(callback: () => T): T {
@@ -112,7 +132,18 @@ export class DoSqliteDatabase implements SqliteDatabase {
 	close(): void {}
 }
 
-/** Pi `SqliteDatabase` over a Durable Object's SQLite storage (`ctx.storage`). */
+const databases = new WeakMap<DurableObjectSqliteStorage, DoSqliteDatabase>();
+
+/**
+ * Pi `SqliteDatabase` over a Durable Object's SQLite storage (`ctx.storage`).
+ * One facade per storage, so every user of the object's database shares one
+ * set of row counters.
+ */
 export function doSqliteDatabase(storage: DurableObjectSqliteStorage): DoSqliteDatabase {
-	return new DoSqliteDatabase(storage);
+	let database = databases.get(storage);
+	if (!database) {
+		database = new DoSqliteDatabase(storage);
+		databases.set(storage, database);
+	}
+	return database;
 }
