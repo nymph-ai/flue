@@ -394,7 +394,9 @@ export function recordedBatches(): Promise<StorageWrite[][]> {
 
 // ─── Snapshot of every Pi read ──────────────────────────────────────────────
 
-export { snapshotReads } from './read-snapshot.ts';
+import { snapshotReads } from './read-snapshot.ts';
+
+export { snapshotReads };
 
 // ─── The crash/replay suite ─────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ sleeping instance with a signed webhook to `/__flue/streams/wake`.
 - `scripted` (default): a deterministic provider over pi-ai's faux model
   (`src/scripted.ts`). Only the model's choices are scripted; every turn still
   runs Pi Durable end to end. A prompt is a list of commands (`send bob/b1
-  ping`, `spawn bob kid 50`, `observe <stream> <key> <from>`, `chain 3`, …).
+ping`, `spawn bob kid 50`, `observe <stream> <key> <from>`, `chain 3`, …).
 - `workers-ai`: Workers AI through the `AI` binding (`WORKERS_AI_MODEL`).
 
 ## Qualification build

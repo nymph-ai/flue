@@ -51,7 +51,11 @@ export interface QualifiedInstance {
 
 const instances = new Map<string, QualifiedInstance>();
 
-export function registerInstance(key: string, ctx: DurableObjectState, boot: string): QualifiedInstance {
+export function registerInstance(
+	key: string,
+	ctx: DurableObjectState,
+	boot: string,
+): QualifiedInstance {
 	const existing = instances.get(key);
 	if (existing && existing.ctx === ctx) return existing;
 	const instance: QualifiedInstance = {
@@ -87,14 +91,20 @@ export function piLogOwner(pathname: string): string | undefined {
 
 function readPlan(ctx: DurableObjectState): FaultPlan | undefined {
 	try {
-		const row = ctx.storage.sql.exec('SELECT kind, after FROM qual_faults WHERE one = 1').toArray()[0];
+		const row = ctx.storage.sql
+			.exec('SELECT kind, after FROM qual_faults WHERE one = 1')
+			.toArray()[0];
 		return row ? { kind: row.kind as FaultKind, after: Number(row.after) } : undefined;
 	} catch {
 		return undefined;
 	}
 }
 
-async function fire(instance: QualifiedInstance, plan: FaultPlan, detail: Record<string, unknown>): Promise<never> {
+async function fire(
+	instance: QualifiedInstance,
+	plan: FaultPlan,
+	detail: Record<string, unknown>,
+): Promise<never> {
 	const { ctx } = instance;
 	ctx.storage.sql.exec('DELETE FROM qual_faults WHERE one = 1');
 	ctx.storage.sql.exec(
@@ -116,7 +126,9 @@ type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Resp
 /** Wrap the streams `fetch` with the armed fault plans of the instances in this isolate. */
 export function faultInjectingFetch(inner: Fetch): Fetch {
 	return async (input, init) => {
-		const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+		const method = (
+			init?.method ?? (input instanceof Request ? input.method : 'GET')
+		).toUpperCase();
 		if (method !== 'POST') return inner(input, init);
 		const url = new URL(input instanceof Request ? input.url : String(input));
 		const owner = piLogOwner(url.pathname);
@@ -124,7 +136,11 @@ export function faultInjectingFetch(inner: Fetch): Fetch {
 		const plan = instance ? readPlan(instance.ctx) : undefined;
 		if (!instance || !plan) return inner(input, init);
 		instance.attempts++;
-		const detail = { path: url.pathname, attempt: instance.attempts, seq: init?.headers ? new Headers(init.headers).get('stream-seq') : null };
+		const detail = {
+			path: url.pathname,
+			attempt: instance.attempts,
+			seq: init?.headers ? new Headers(init.headers).get('stream-seq') : null,
+		};
 		if (plan.kind === 'crash-before-post' && instance.attempts > plan.after) {
 			return fire(instance, plan, detail);
 		}
@@ -132,7 +148,10 @@ export function faultInjectingFetch(inner: Fetch): Fetch {
 		if (plan.kind === 'crash-after-post' && instance.attempts > plan.after) {
 			return fire(instance, plan, { ...detail, status: response.status });
 		}
-		if (plan.kind === 'abort-after-commits' && (response.status === 200 || response.status === 204)) {
+		if (
+			plan.kind === 'abort-after-commits' &&
+			(response.status === 200 || response.status === 204)
+		) {
 			instance.acknowledged++;
 			if (instance.acknowledged >= plan.after) {
 				return fire(instance, plan, { ...detail, status: response.status });

@@ -210,8 +210,7 @@ export function qualifiedWrap<T extends new (...args: any[]) => any>(Final: T): 
 	};
 	wrap('__flueWake', 'wake', (args) => {
 		const request = args[0] as
-			| { subscriptionId?: string; generation?: number; streams?: { path: string }[] }
-			| undefined;
+			{ subscriptionId?: string; generation?: number; streams?: { path: string }[] } | undefined;
 		return {
 			subscription: request?.subscriptionId,
 			generation: request?.generation,
@@ -225,4 +224,3 @@ export function qualifiedWrap<T extends new (...args: any[]) => any>(Final: T): 
 	});
 	return Final;
 }
-

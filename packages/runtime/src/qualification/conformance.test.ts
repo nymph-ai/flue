@@ -34,7 +34,12 @@ import {
 import { entityKey, eventsPath, inboxPath, INBOX_SUBSCRIPTION_ID } from '../entity/paths.ts';
 import type { EntityRef } from '../entity/services.ts';
 import { piConversationSource } from '../pi/projection-host.ts';
-import { openStreamStorage, removeTempFiles, snapshotReads, tempFile } from '../pi/stream-storage-test-support.ts';
+import {
+	openStreamStorage,
+	removeTempFiles,
+	snapshotReads,
+	tempFile,
+} from '../pi/stream-storage-test-support.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import {
@@ -54,6 +59,11 @@ import {
 } from './conformance-support.ts';
 
 const TIMEOUT = 60_000;
+
+/** `QUAL_TRACE=1`: progress on stderr, outside vitest's buffering (a run that dies leaves its trail). */
+function trace(message: string): void {
+	if (process.env.QUAL_TRACE) process.stderr.write(`[conformance] ${message}\n`);
+}
 const worlds: TestWorld[] = [];
 
 afterEach(async () => {
@@ -128,20 +138,27 @@ async function expectEachCommitOnce(qw: QualWorld, entity: TestEntity): Promise<
 
 /** Crash an entity's turn with `fault`, reopen it, and let Pi finish the work. */
 async function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
+	trace(`${qw.backend.name}: ${fault.kind} after ${fault.after} on ${fault.stream}, "${body}"`);
 	const alice = qw.world.entity(qw.ref('agent', 'alice'), societyResponder);
 	qw.arm(alice, fault);
 	await alice.open();
 	const first = qw.incarnation(alice);
 	const submissionId = await prompt(alice, body);
-	await eventually(() => first.dead, { what: `the ${fault.kind} fault to fire`, timeoutMs: 20_000 });
+	await eventually(() => first.dead, {
+		what: `the ${fault.kind} fault to fire`,
+		timeoutMs: 20_000,
+	});
 	expect(first.fired).toEqual(fault);
+	trace(`fired after ${first.appends.length} appends, ${alice.calls} model calls; reopening`);
 	alice.abandon();
 
 	await alice.open();
 	const second = qw.incarnation(alice);
 	expect(second.dead).toBe(false);
 	await alice.requireHost().wake({ kind: 'live-tasks' }, context);
+	trace('reopened; waiting for the settlement');
 	const settlement = await alice.requireHost().waitForSettlement(submissionId, context);
+	trace(`settled ${settlement.outcome} after ${alice.calls} model calls`);
 	await alice.flush();
 	return { alice, first, second, submissionId, settlement };
 }
@@ -334,7 +351,12 @@ describe.each(backends())('conformance over $name', (backend) => {
 					durableStreamsWakeBody({
 						subscriptionId: INBOX_SUBSCRIPTION_ID,
 						generation: 1,
-						streams: [{ path: inboxPath(bob.ref), tailOffset: (await qw.log.head(inboxPath(bob.ref)))?.nextOffset ?? '-1' }],
+						streams: [
+							{
+								path: inboxPath(bob.ref),
+								tailOffset: (await qw.log.head(inboxPath(bob.ref)))?.nextOffset ?? '-1',
+							},
+						],
 					}),
 				);
 				expect(wakeBob.status).toBe(200);
@@ -414,7 +436,12 @@ describe.each(backends())('conformance over $name', (backend) => {
 				);
 				const runtime = await alice.open();
 				for (const target of [crowd[3], crowd[9]] as TestEntity[]) {
-					await runtime.messaging.send(target.ref, { text: 'hello' }, { messageId: `to-${target.ref.id}` }, context);
+					await runtime.messaging.send(
+						target.ref,
+						{ text: 'hello' },
+						{ messageId: `to-${target.ref.id}` },
+						context,
+					);
 				}
 				await alice.flush();
 				for (const entity of crowd) await qw.log.ensure(inboxPath(entity.ref));
@@ -427,7 +454,11 @@ describe.each(backends())('conformance over $name', (backend) => {
 						pending: entity === crowd[3] || entity === crowd[9],
 					})),
 				);
-				const body = durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 1, streams });
+				const body = durableStreamsWakeBody({
+					subscriptionId: INBOX_SUBSCRIPTION_ID,
+					generation: 1,
+					streams,
+				});
 				expect((await qw.deliver(body)).json).toMatchObject({ done: true });
 				const woken = () =>
 					qw.world.woken.reduce<Record<string, number>>((counts, wake) => {
@@ -435,16 +466,21 @@ describe.each(backends())('conformance over $name', (backend) => {
 						return counts;
 					}, {});
 				const targets = [crowd[3], crowd[9]] as TestEntity[];
-				expect(woken()).toEqual(Object.fromEntries(targets.map((entity) => [entityKey(entity.ref), 1])));
+				expect(woken()).toEqual(
+					Object.fromEntries(targets.map((entity) => [entityKey(entity.ref), 1])),
+				);
 				expect(crowd.filter((entity) => entity.isOpen)).toEqual(targets);
 
 				// A redelivery wakes the same two again and admits nothing new.
 				const submissions = async (entity: TestEntity) =>
-					(await entity.requireStorage().scanSubmissions({}, 1000, undefined, context)).items.length;
+					(await entity.requireStorage().scanSubmissions({}, 1000, undefined, context)).items
+						.length;
 				for (const entity of targets) await entity.requireHost().harness.waitForIdle(context);
 				const counts = await Promise.all(targets.map(submissions));
 				expect((await qw.deliver(body)).json).toMatchObject({ done: true });
-				expect(woken()).toEqual(Object.fromEntries(targets.map((entity) => [entityKey(entity.ref), 2])));
+				expect(woken()).toEqual(
+					Object.fromEntries(targets.map((entity) => [entityKey(entity.ref), 2])),
+				);
 				for (const entity of targets) await entity.requireHost().harness.waitForIdle(context);
 				expect(await Promise.all(targets.map(submissions))).toEqual(counts);
 				expect(crowd.filter((entity) => entity.isOpen)).toEqual(targets);
@@ -461,16 +497,25 @@ describe('j. backend swap', () => {
 		const alice = qw.world.entity(qw.ref('agent', 'alice'), societyResponder);
 		const bob = qw.world.entity(qw.ref('agent', 'bob'), societyResponder);
 		await alice.open();
-		const turns = [await prompt(alice, 'chain 2'), await prompt(alice, `send agent/${bob.ref.id} ping`)];
+		const turns = [
+			await prompt(alice, 'chain 2'),
+			await prompt(alice, `send agent/${bob.ref.id} ping`),
+		];
 		const outcomes = [];
-		for (const turn of turns) outcomes.push((await alice.requireHost().waitForSettlement(turn, context)).outcome);
+		for (const turn of turns)
+			outcomes.push((await alice.requireHost().waitForSettlement(turn, context)).outcome);
 		await alice.flush();
 		const ping = (await readAll(qw.log, inboxPath(bob.ref)))[0] as { messageId: string };
 		await qw.deliver(
 			durableStreamsWakeBody({
 				subscriptionId: INBOX_SUBSCRIPTION_ID,
 				generation: 1,
-				streams: [{ path: inboxPath(bob.ref), tailOffset: (await qw.log.head(inboxPath(bob.ref)))?.nextOffset ?? '-1' }],
+				streams: [
+					{
+						path: inboxPath(bob.ref),
+						tailOffset: (await qw.log.head(inboxPath(bob.ref)))?.nextOffset ?? '-1',
+					},
+				],
 			}),
 		);
 		const bobTurn = await deriveKeyedSubmissionId(bob.ref.type, bob.ref.id, ping.messageId);
@@ -512,5 +557,4 @@ describe('j. backend swap', () => {
 		},
 		TIMEOUT * 2,
 	);
-
 });
