@@ -46,6 +46,21 @@ export { createInstrumentationOwner, runWithInstrumentationOwner } from './instr
 // Node and Cloudflare coordinators inject into submission contexts.
 export type { McpConnectionDefinition, McpConnectionResolver } from './mcp.ts';
 export { handleMcpOAuthCallback, MCP_OAUTH_CALLBACK_PATH } from './mcp-oauth.ts';
+// The question seam (approvals and MCP input requests, docs/cloudflare-native.md
+// rule 9): the lane that publishes questions as entity events installs its
+// handler here and continues parked Code Mode executions.
+export { resumeCodemodeQuestion } from './codemode/tool.ts';
+export {
+	type CodemodeApprovalQuestion,
+	type CodemodePendingAction,
+	type FlueAnswer,
+	type FlueQuestion,
+	type McpInputQuestion,
+	type QuestionHandler,
+	QuestionParkedError,
+	QuestionsNotWiredError,
+	setQuestionHandler,
+} from './questions.ts';
 export { createNodeAgentCoordinator, createNodeDispatchQueue } from './node/agent-coordinator.ts';
 // The shared Node runtime assembly `start()` and the CLI's `flue run` build
 // on: registration → persistence validation → coordinator → runtime seed.

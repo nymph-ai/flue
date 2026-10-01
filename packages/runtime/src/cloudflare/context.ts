@@ -14,6 +14,11 @@ export interface CloudflareContext {
 		sql: SqlStorage;
 	};
 	durableObjectIdentity?: FlueDurableObjectIdentity;
+	/**
+	 * The Durable Object's own state (`this.ctx`), inside an agent instance.
+	 * Code Mode opens its runtime facet through it (`ctx.facets`, `ctx.exports`).
+	 */
+	durableObjectState?: DurableObjectState;
 }
 
 export interface FlueDurableObjectIdentity {

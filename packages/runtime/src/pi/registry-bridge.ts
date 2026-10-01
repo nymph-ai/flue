@@ -423,15 +423,12 @@ export class RegistryBridge {
 				const declaration = render.codeMode;
 				this.#codemodeTool = registry.tools.add(
 					createCodemodeToolRegistration({
-						executor: declaration.executor,
+						...declaration,
 						tools: [
 							...sandboxTools,
 							...render.tools.map((tool) => flueToolRegistration(tool, this.#options.tools)),
 							...mcpTools,
 						],
-						...(declaration.maxOutputTokens !== undefined
-							? { maxOutputTokens: declaration.maxOutputTokens }
-							: {}),
 					}),
 				);
 			}

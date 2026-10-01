@@ -42,6 +42,10 @@
 			"types": "./dist/cloudflare/index.d.mts",
 			"import": "./dist/cloudflare/index.mjs"
 		},
+		"./cloudflare/codemode": {
+			"types": "./dist/cloudflare/codemode.d.mts",
+			"import": "./dist/cloudflare/codemode.mjs"
+		},
 		"./cloudflare/internal": {
 			"types": "./dist/cloudflare/internal.d.mts",
 			"import": "./dist/cloudflare/internal.mjs"

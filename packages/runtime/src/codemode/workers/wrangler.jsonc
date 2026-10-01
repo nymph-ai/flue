@@ -1,8 +1,20 @@
 {
-	// Workers-pool test Worker (vitest.workers.config.ts): Code Mode's
-	// Dynamic Worker executor needs a Worker Loader binding.
+	// Workers-pool test Worker (vitest.workers.config.ts). Code Mode runs its
+	// scripts in Dynamic Workers (a Worker Loader binding) and keeps its
+	// runtime in a Durable Object Facet of the agent: CodemodeTestAgent stands
+	// in for an AgentDO. CODEMODE_RUNTIME is a test-only binding so that
+	// ctx.exports offers the facet class under vitest-pool-workers; a real
+	// Worker needs no binding or migration for it.
 	"name": "flue-codemode-workers-tests",
-	"compatibility_date": "2026-04-01",
+	"main": "./test-worker.ts",
+	"compatibility_date": "2026-07-22",
 	"compatibility_flags": ["nodejs_compat"],
-	"worker_loaders": [{ "binding": "LOADER" }]
+	"worker_loaders": [{ "binding": "LOADER" }],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "AGENT", "class_name": "CodemodeTestAgent" },
+			{ "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeTestAgent"] }]
 }

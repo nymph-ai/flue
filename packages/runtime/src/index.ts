@@ -65,6 +65,7 @@ export type {
 	CodemodeExecutor,
 	CodemodeProvider,
 } from './codemode/executor.ts';
+export type { CodemodeMethod } from './codemode/host.ts';
 export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
 export { useDataWriter } from './hooks/use-data-writer.ts';
 export { useDelivery } from './hooks/use-delivery.ts';
@@ -86,13 +87,11 @@ export type {
 	McpAuth,
 	McpConnection,
 	McpConnectionDefinition,
-	McpHttpConnectionDefinition,
 	McpOAuth,
-	McpStdioConnectionDefinition,
 	McpToolAnnotations,
 	McpTransport,
 } from './mcp.ts';
-export { McpInputRequiredError, mcpToolName } from './mcp.ts';
+export { McpInputRequiredError, McpProtocolVersionError, mcpToolName } from './mcp.ts';
 export {
 	createMcpOAuthBroker,
 	MCP_OAUTH_CALLBACK_PATH,
