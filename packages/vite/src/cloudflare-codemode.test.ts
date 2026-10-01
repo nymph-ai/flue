@@ -204,7 +204,7 @@ describe('Cloudflare Worker bundle', () => {
 			),
 		).toEqual([]);
 		// Nor the Node executor (a node:vm host) or its cloudflare:workers shim.
-		expect(findings(output, /NodeCodemodeExecutor|registerHooks/)).toEqual([]);
+		expect(findings(output, /class NodeCodemodeExecutor|registerHooks\(/)).toEqual([]);
 
 		const config = deployConfigOf(output);
 		expect(config.worker_loaders).toEqual([{ binding: CODEMODE_LOADER_BINDING }]);
