@@ -21,7 +21,7 @@
  * intended shape is one writer per path.
  */
 
-import type { ConversationRecord } from '../conversation-records.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
 import { ConversationStreamStoreError } from '../errors.ts';
 import type {
 	ConversationProducerClaim,

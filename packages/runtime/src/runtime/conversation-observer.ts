@@ -1,154 +1,14 @@
 /**
- * In-process observation of an agent instance's canonical conversation
- * stream.
- *
- * Two layers share this module:
- *
- * - The projection/wait primitives ({@link projectConversationRead},
- *   {@link waitForConversationData}) consumed by the HTTP read handlers
- *   (`handleAgentConversationRead`) — reading a durable batch window and
- *   projecting it into the public chunk protocol.
- * - Submission-scoped helpers ({@link observeSubmissionSettlement},
- *   {@link readSubmissionReply}) for callers that admit a direct submission
- *   in-process and want its outcome and reply without any transport: the
- *   CLI's `flue run` and the programmatic agent client.
+ * Submission-scoped, in-process observation of an agent instance's public
+ * conversation wire: settlement waits and reply reads for callers that admit
+ * a submission in-process and want its outcome without a transport (the
+ * CLI's `flue run`, the programmatic `init()` client). They read the same
+ * projection the HTTP routes serve, through a
+ * {@link ConversationProjectionSource}.
  */
 
-import { getConversationFoldHost } from '../conversation-fold-host.ts';
-import {
-	type AgentConversationSnapshot,
-	type ConversationStreamChunk,
-	projectAgentConversationBatch,
-	projectAgentConversationSnapshot,
-} from '../conversation-public.ts';
-import { loadReducedConversationPrefix } from '../conversation-reader.ts';
-import { reduceConversationRecords } from '../conversation-reducer.ts';
-import type {
-	ConversationStreamBatch,
-	ConversationStreamReadResult,
-	ConversationStreamStore,
-} from './conversation-stream-store.ts';
-import { legacyOffsetOrdinal } from './stream-offsets.ts';
-
-export const LONG_POLL_TIMEOUT_MS = 30_000;
-const DURABLE_POLL_INTERVAL_MS = 250;
-
-type ReducedPrefix = Awaited<ReturnType<typeof loadReducedConversationPrefix>>;
-
-/**
- * Project one durable read window into public conversation chunks,
- * advancing the reduced state batch by batch.
- */
-export function projectConversationRead(
-	initialState: ReducedPrefix,
-	read: ConversationStreamReadResult,
-	/**
-	 * Rewrites each `conversation-reset` snapshot against the state it was
-	 * projected from — how a bounded observation's updates stream keeps reset
-	 * snapshots inside its window.
-	 */
-	windowReset?: (
-		snapshot: AgentConversationSnapshot,
-		state: ReducedPrefix,
-	) => AgentConversationSnapshot,
-): { state: ReducedPrefix; items: ConversationStreamChunk[]; offset: string } {
-	let state = initialState;
-	const items: ConversationStreamChunk[] = [];
-	let offset = initialState.recordsThroughOffset;
-	for (const batch of read.batches) {
-		const previousState = state;
-		state = reduceConversationRecords(state, batch.records, batch.offset);
-		const batchState = state;
-		const chunks = projectAgentConversationBatch({
-			state,
-			previousState,
-			records: batch.records,
-			batchOrdinal: batchOrdinal(batch),
-		});
-		items.push(
-			...(windowReset
-				? chunks.map((chunk) =>
-						chunk.type === 'conversation-reset'
-							? { ...chunk, snapshot: windowReset(chunk.snapshot, batchState) }
-							: chunk,
-					)
-				: chunks),
-		);
-		offset = batch.offset;
-	}
-	return { state, items, offset };
-}
-
-/**
- * The batch's store-supplied ordinal — the SDK dedup key `position.batch`.
- * Offsets are opaque, so the ordinal is never derived from one, except for
- * adapters predating the field whose offsets are exactly the legacy
- * `formatOffset` shape (see `legacyOffsetOrdinal`).
- */
-function batchOrdinal(batch: ConversationStreamBatch): number {
-	if (batch.ordinal !== undefined) {
-		if (!Number.isSafeInteger(batch.ordinal) || batch.ordinal < 0) {
-			throw new Error(
-				`[flue] Conversation stream batch at offset "${batch.offset}" has an invalid ordinal: ${batch.ordinal}.`,
-			);
-		}
-		return batch.ordinal;
-	}
-	const legacy = legacyOffsetOrdinal(batch.offset);
-	if (legacy !== undefined) return legacy;
-	throw new Error(
-		`[flue] Conversation stream batch at offset "${batch.offset}" carries no ordinal. A ConversationStreamStore whose offsets are not the formatOffset() shape must set ConversationStreamBatch.ordinal.`,
-	);
-}
-
-/**
- * Wait for new durable data at `offset`, bounded by the long-poll window.
- * Returns the (possibly empty) read at deadline, or 'aborted' when the
- * signal fires first. Store change notifications wake the wait; a short
- * durable poll interval covers stores whose subscribe is advisory.
- */
-export async function waitForConversationData(
-	store: ConversationStreamStore,
-	path: string,
-	offset: string,
-	signal: AbortSignal,
-): Promise<ConversationStreamReadResult | 'aborted'> {
-	if (signal.aborted) return 'aborted';
-	const deadline = Date.now() + LONG_POLL_TIMEOUT_MS;
-	let pending = false;
-	let wake: (() => void) | undefined;
-	const unsubscribe = store.subscribe(path, () => {
-		pending = true;
-		wake?.();
-	});
-	const onAbort = () => wake?.();
-	signal.addEventListener('abort', onAbort, { once: true });
-	try {
-		while (true) {
-			pending = false;
-			const read = await store.read(path, { offset });
-			if (signal.aborted) return 'aborted';
-			if (read.batches.length > 0 || Date.now() >= deadline) return read;
-			if (pending) continue;
-			await new Promise<void>((resolve) => {
-				let timer: ReturnType<typeof setTimeout>;
-				const finish = () => {
-					clearTimeout(timer);
-					resolve();
-				};
-				wake = finish;
-				timer = setTimeout(finish, Math.min(DURABLE_POLL_INTERVAL_MS, deadline - Date.now()));
-				if (pending || signal.aborted) finish();
-			});
-			wake = undefined;
-		}
-	} finally {
-		unsubscribe();
-		signal.removeEventListener('abort', onAbort);
-	}
-}
-
-// ─── Submission-scoped observation ──────────────────────────────────────────
+import type { AgentConversationSnapshot, ConversationStreamChunk } from '../conversation-public.ts';
+import type { ConversationProjectionSource } from './conversation-source.ts';
 
 /** Terminal outcome of one submission, as recorded on the conversation stream. */
 export interface SubmissionSettlement {
@@ -157,73 +17,46 @@ export interface SubmissionSettlement {
 }
 
 export interface ObserveSubmissionSettlementOptions {
-	store: ConversationStreamStore;
-	/** Canonical stream path of the instance (see `agentStreamPath`). */
-	path: string;
+	/** The instance's conversation projection. */
+	source: ConversationProjectionSource;
 	/** The submission whose settlement resolves the observation. */
 	submissionId: string;
-	/** Offset to observe from — typically the admission receipt's offset. */
+	/** Offset to observe from — typically the admission receipt's offset, or `-1`. */
 	offset: string;
 	/** Receives every projected chunk as it is durably recorded. */
 	onEvent?: (chunk: ConversationStreamChunk) => void;
 	/**
 	 * Stops the observation: the promise rejects with the signal's reason.
 	 * Cancelling an observation is purely local — it never touches the
-	 * submission itself. A durable stop is the instance abort, whose settled
-	 * outcome a live observation reports.
+	 * submission itself.
 	 */
 	signal?: AbortSignal;
 }
 
 /**
- * Observe the conversation stream until the given submission settles, and
- * return its settlement. Every projected chunk along the way is forwarded to
- * `onEvent`.
- *
- * An unsignalled wait is indefinite by design: settlement is guaranteed by
- * the runtime's bounded-recovery/terminalization invariants. The caller's
- * `signal` stops only the observation itself (see its doc above).
- *
- * Settlement is detected in both projected forms: the per-record
+ * Observe the conversation until the given submission settles, and return
+ * its settlement. Every projected chunk along the way is forwarded to
+ * `onEvent`. Settlement is detected in both projected forms: the
  * `submission-settled` chunk, and a `conversation-reset` whose snapshot
- * already contains the settlement (a reset chunk subsumes every other chunk
- * of its batch, e.g. when a compaction lands in the same durable batch).
+ * already contains it.
  */
 export async function observeSubmissionSettlement(
 	options: ObserveSubmissionSettlementOptions,
 ): Promise<SubmissionSettlement> {
-	const { store, path, submissionId } = options;
-	// waitForConversationData wants an abort signal; without a caller signal
-	// the observation is deliberately unabortable, so default to one that
-	// never fires.
-	const signal = options.signal ?? new AbortController().signal;
-	// The shared fold host serves the observation base when the caller's
-	// offset is the head (the common case: observing from an admission
-	// receipt's offset before the attempt starts streaming); an older offset
-	// rebuilds its prefix by replay, as before.
-	const atHead = await getConversationFoldHost(store, path).getStateAtHead();
-	// Offsets are opaque (PROTOCOL §8): an exact resume point is the same
-	// token the store minted, so equality is string equality.
-	let state =
-		atHead.recordsThroughOffset === options.offset
-			? atHead
-			: await loadReducedConversationPrefix({ store, path, offset: options.offset });
+	const { source, submissionId } = options;
 	let offset = options.offset;
 	while (true) {
 		throwIfAborted(options.signal);
-		let read = await store.read(path, { offset });
-		if (read.batches.length === 0) {
-			const waited = await waitForConversationData(store, path, offset, signal);
-			if (waited === 'aborted') {
-				throwIfAborted(options.signal);
-				continue;
-			}
-			read = waited;
+		const read = await source.read(offset, {
+			live: 'long-poll',
+			...(options.signal ? { signal: options.signal } : {}),
+		});
+		if (read === 'aborted') {
+			throwIfAborted(options.signal);
+			continue;
 		}
-		const projected = projectConversationRead(state, read);
-		state = projected.state;
 		let settlement: SubmissionSettlement | undefined;
-		for (const chunk of projected.items) {
+		for (const chunk of read.chunks) {
 			options.onEvent?.(chunk);
 			settlement ??= settlementFromChunk(chunk, submissionId);
 		}
@@ -287,28 +120,21 @@ export interface SubmissionReply {
 }
 
 export interface ReadSubmissionReplyOptions {
-	store: ConversationStreamStore;
-	/** Canonical stream path of the instance (see `agentStreamPath`). */
-	path: string;
+	source: ConversationProjectionSource;
 	submissionId: string;
 }
 
 /**
- * Read the reply the given submission produced: the final assistant message
- * stamped with its submissionId. A submission that joined a busy response
- * settles under the host's response — its settlement's
- * `answeredBySubmissionId` names the host, and the host's final assistant
- * message is the coalesced reply that answered it. Settlements without that
- * linkage (records that predate attempt stamping) fall back to the
- * conversation's last assistant message.
+ * Read the reply the given submission produced: the response message stamped
+ * with its submissionId, or — for a delivery that joined a busy response —
+ * the response of the submission its settlement names as `answeredBy`.
  */
 export async function readSubmissionReply(
 	options: ReadSubmissionReplyOptions,
 ): Promise<SubmissionReply> {
-	const state = await getConversationFoldHost(options.store, options.path).getStateAtHead();
-	const snapshot = projectAgentConversationSnapshot(state);
-	if (!snapshot) return { text: '', data: {} };
-	return replyFromSnapshot(snapshot, options.submissionId);
+	const head = await options.source.head();
+	if (!head.snapshot) return { text: '', data: {} };
+	return replyFromSnapshot(head.snapshot, options.submissionId);
 }
 
 /**
@@ -324,10 +150,6 @@ export function replyFromSnapshot(
 	const own = assistantMessages.filter((message) => message.submissionId === submissionId);
 	let reply = own.at(-1);
 	if (!reply) {
-		// No message of its own: the settlement's derived linkage names the
-		// submission whose response answered this one (the joined case). Only
-		// settlements without the linkage — records that predate attempt
-		// stamping — fall back to recency.
 		const settlement = snapshot.settlements.find((entry) => entry.submissionId === submissionId);
 		reply =
 			settlement?.answeredBySubmissionId !== undefined

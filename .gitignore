@@ -54,3 +54,5 @@ corporate-ca.pem
 
 # legacy code (kept locally for reference, not pushed)
 legacy/
+# ...but the runtime's pre-Pi import module is source (PI_UPGRADE_PLAN.md §7 step 8)
+!packages/runtime/src/legacy/
