@@ -34,7 +34,11 @@ export class QualReplica extends DurableObject<Record<string, unknown>> {
 		return log;
 	}
 
-	async rebuild(entity: EntityAddress, lastSeq: number): Promise<Record<string, unknown>> {
+	async rebuild(
+		entity: EntityAddress,
+		lastSeq: number,
+		points?: readonly number[],
+	): Promise<Record<string, unknown>> {
 		await this.ctx.storage.deleteAll();
 		try {
 			const started = Date.now();
@@ -43,6 +47,7 @@ export class QualReplica extends DurableObject<Record<string, unknown>> {
 				log: this.#log(),
 				entity,
 				lastSeq,
+				...(points ? { points } : {}),
 			});
 			const digests = await digestSnapshot(snapshot);
 			return { rebuiltSeq, digest: digests.digest, keys: digests.keys, ms: Date.now() - started };

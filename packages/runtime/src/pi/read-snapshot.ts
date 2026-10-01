@@ -41,6 +41,10 @@ async function settle<T>(read: () => Promise<T>): Promise<T | { readonly error: 
 export async function snapshotReads(
 	storage: Storage,
 	lastSeq: number,
+	options: {
+		/** Historical points to read at (default every seq 1..lastSeq); `current` is always read. */
+		readonly points?: readonly number[];
+	} = {},
 ): Promise<Record<string, unknown>> {
 	const snapshot: Record<string, unknown> = {};
 	const conversations = await scanAll((cursor) =>
@@ -88,7 +92,9 @@ export async function snapshotReads(
 	}
 	const points = [
 		'current' as const,
-		...Array.from({ length: lastSeq }, (_, index) => (index + 1) as Seq),
+		...(options.points ?? Array.from({ length: lastSeq }, (_, index) => index + 1)).map(
+			(seq) => seq as Seq,
+		),
 	];
 	for (const scope of scopes) {
 		for (const at of points) {
