@@ -2,31 +2,38 @@
  * What the Cloudflare target needs for MCP and Code Mode
  * (docs/cloudflare-native.md rules 6 and 7):
  *
- * - `worker_loaders`: `useCodeMode()` runs scripts in Dynamic Workers, which
- *   need a Worker Loader binding. The customizer adds {@link CODEMODE_LOADER_BINDING}
- *   when a module under the source root calls the hook. Dynamic Workers need
- *   the Workers Paid plan, so apps that never call it get no binding.
+ * - Code Mode (`useCodeMode()`) is `@cloudflare/codemode`'s runtime, a
+ *   Durable Object Facet of each agent, and runs scripts in Dynamic Workers.
+ *   When a module under the source root calls the hook:
+ *   - the customizer adds the `LOADER` Worker Loader binding (Dynamic
+ *     Workers need the Workers Paid plan, so apps that never call it get
+ *     none);
+ *   - the generated Worker entry exports `CodemodeRuntime`, the facet class:
+ *     facets are created from `ctx.exports`, so the class must be a
+ *     top-level export. A facet-only class takes no Durable Object binding
+ *     and no migration of its own;
+ *   - the wrangler config must leave `ctx.exports` on (no
+ *     `disable_ctx_exports`; it is on by default from 2025-11-17, below
+ *     Flue's compatibility floor) and declare every agent class as
+ *     SQLite-backed (`new_sqlite_classes`): a facet's supervisor must be.
+ *   The Node target has neither facets nor Dynamic Workers, so a Node build
+ *   of an app that calls `useCodeMode()` fails.
  * - The `FlueMcpAuth` Durable Object: MCP OAuth keeps each principal's
  *   credentials in one, per authorization server. The customizer binds it as
  *   {@link MCP_AUTH_BINDING} when a module calls `mcpOAuth(`; its migration
  *   (`new_sqlite_classes: ["FlueMcpAuth"]`) belongs to the user's wrangler
  *   config like every other Durable Object class's.
- * - A stub for `cross-spawn`: the MCP client's stdio transport lives on its
- *   own entry (`@modelcontextprotocol/client/stdio`) that only
- *   `@flue/runtime/node` imports, so no Worker bundle reaches it. The alias is
- *   the backstop: a stdio import that survives fails with a clear error
- *   instead of bundling a process spawner into the Worker. `node:child_process`
- *   needs no alias: with `nodejs_compat` and a compatibility date from
- *   2026-03-17 (Flue's floor is later) workerd itself provides it as a
- *   non-functional stub (`enable_nodejs_child_process_module`), and
- *   @cloudflare/vite-plugin leaves it external for workerd to supply.
  */
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { glob } from 'tinyglobby';
-import type { Alias } from 'vite';
+import { stackless } from './diagnostics.ts';
 
-/** Matches `@flue/runtime`'s `CODEMODE_LOADER_BINDING`. */
+/** Matches `@flue/runtime/cloudflare/codemode`'s `CODEMODE_LOADER_BINDING`. */
 export const CODEMODE_LOADER_BINDING = 'LOADER';
+
+/** `@cloudflare/codemode`'s facet class, exported by the generated Worker entry. */
+export const CODEMODE_RUNTIME_CLASS_NAME = 'CodemodeRuntime';
 
 /** Matches `@flue/runtime`'s `MCP_AUTH_BINDING` and `MCP_AUTH_CLASS_NAME`. */
 export const MCP_AUTH_BINDING = 'FLUE_MCP_AUTH';
@@ -38,25 +45,21 @@ const MCP_OAUTH_CALL = /\bmcpOAuth\s*\(/;
 /** Which Cloudflare-specific features the modules under `sourceRoot` use. */
 export async function scanCloudflareFeatures(
 	sourceRoot: string,
-): Promise<{ codeMode: boolean; mcpOAuth: boolean }> {
+): Promise<{ codeMode: boolean; mcpOAuth: boolean; codeModeFile?: string }> {
 	const files = await glob(['**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'], {
 		cwd: sourceRoot,
 		absolute: true,
 		ignore: ['**/node_modules/**', '**/*.d.ts', '**/*.d.mts', '**/*.d.cts'],
 	});
-	const found = { codeMode: false, mcpOAuth: false };
-	for (const file of files) {
+	let codeModeFile: string | undefined;
+	let mcpOAuth = false;
+	for (const file of files.sort()) {
 		const code = await fs.readFile(file, 'utf8').catch(() => '');
-		found.codeMode ||= CODE_MODE_CALL.test(code);
-		found.mcpOAuth ||= MCP_OAUTH_CALL.test(code);
-		if (found.codeMode && found.mcpOAuth) break;
+		if (!codeModeFile && CODE_MODE_CALL.test(code)) codeModeFile = file;
+		mcpOAuth ||= MCP_OAUTH_CALL.test(code);
+		if (codeModeFile && mcpOAuth) break;
 	}
-	return found;
-}
-
-/** Whether any module under `sourceRoot` calls `useCodeMode(`. */
-export async function scanCodeModeUsage(sourceRoot: string): Promise<boolean> {
-	return (await scanCloudflareFeatures(sourceRoot)).codeMode;
+	return { codeMode: codeModeFile !== undefined, mcpOAuth, ...(codeModeFile ? { codeModeFile } : {}) };
 }
 
 /** The `FlueMcpAuth` Durable Object binding, unless the config already declares it. */
@@ -76,22 +79,49 @@ export function mergeCodeModeLoaderBinding(config: Record<string, unknown>): voi
 	config.worker_loaders = [...existing, { binding: CODEMODE_LOADER_BINDING }];
 }
 
-export const VIRTUAL_CROSS_SPAWN_STUB = 'virtual:flue/stub/cross-spawn';
-export const RESOLVED_CROSS_SPAWN_STUB = `\0${VIRTUAL_CROSS_SPAWN_STUB}`;
-
-/** `resolve.alias` entries for the Cloudflare target. */
-export const CLOUDFLARE_STUB_ALIASES: Alias[] = [
-	{ find: /^cross-spawn$/, replacement: VIRTUAL_CROSS_SPAWN_STUB },
-];
-
-export const CROSS_SPAWN_STUB_SOURCE = `function unavailable() {
-	throw new Error(${JSON.stringify(
-		'[flue] cross-spawn is not available in a Cloudflare Worker: Workers cannot start processes, so MCP stdio servers cannot run there. Connect to the server over Streamable HTTP instead.',
-	)});
+/**
+ * Check the resolved wrangler config against what Code Mode's runtime facet
+ * needs, failing with the exact change to make.
+ */
+export function assertCodeModeWorkerConfig(
+	config: Record<string, unknown>,
+	agentClassNames: readonly string[],
+): void {
+	const flags = Array.isArray(config.compatibility_flags) ? config.compatibility_flags : [];
+	if (flags.includes('disable_ctx_exports')) {
+		throw stackless(
+			new Error(
+				'[flue] An agent module calls useCodeMode(), whose runtime is a Durable Object Facet created from ctx.exports.CodemodeRuntime, ' +
+					'but your wrangler config sets the "disable_ctx_exports" compatibility flag. Remove it from "compatibility_flags".',
+			),
+		);
+	}
+	const migrations = Array.isArray(config.migrations) ? (config.migrations as unknown[]) : [];
+	const kvBacked = new Set<unknown>(
+		migrations.flatMap((migration) => {
+			const classes = (migration as { new_classes?: unknown } | null)?.new_classes;
+			return Array.isArray(classes) ? classes : [];
+		}),
+	);
+	const notSqlite = agentClassNames.filter((name) => kvBacked.has(name));
+	if (notSqlite.length > 0) {
+		throw stackless(
+			new Error(
+				`[flue] An agent module calls useCodeMode(), whose runtime is a Durable Object Facet of the agent, and a facet's parent must be SQLite-backed. ` +
+					`Your wrangler config declares ${notSqlite.map((name) => `"${name}"`).join(', ')} under "new_classes" (key-value storage). ` +
+					'Declare agent classes under "new_sqlite_classes" (a deployed key-value class cannot be converted: rename the class and add a new migration).',
+			),
+		);
+	}
 }
-unavailable.spawn = unavailable;
-unavailable.sync = unavailable;
-export const spawn = unavailable;
-export const sync = unavailable;
-export default unavailable;
-`;
+
+/** A Node build of an app that calls `useCodeMode()`. */
+export function codeModeOnNodeError(root: string, file: string): Error {
+	return stackless(
+		new Error(
+			`[flue] ${path.relative(root, file)} calls useCodeMode(), which runs only on the Cloudflare target: ` +
+				"its runtime is @cloudflare/codemode's Durable Object Facet and its scripts run in Dynamic Workers, and Node has neither. " +
+				'Build for Cloudflare (add cloudflare() from @cloudflare/vite-plugin after flue()), or remove useCodeMode().',
+		),
+	);
+}

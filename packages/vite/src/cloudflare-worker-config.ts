@@ -22,7 +22,9 @@
  *     the `flue()` plugin (left alone when the user set their own `main`);
  *   - one Durable Object binding per scanned `'use agent'` agent;
  *   - the `LOADER` Worker Loader binding, when a module calls `useCodeMode()`
- *     (Code Mode runs scripts in Dynamic Workers);
+ *     (Code Mode runs scripts in Dynamic Workers), after checking the config
+ *     allows Code Mode's runtime facet (`ctx.exports` on, SQLite-backed
+ *     agent classes);
  *   - the `FLUE_MCP_AUTH` Durable Object binding (class `FlueMcpAuth`), when a
  *     module calls `mcpOAuth()` (MCP OAuth credentials live there);
  *   - the `nodejs_compat` compatibility flag (unioned in);
@@ -44,6 +46,7 @@
  * cross-talk.
  */
 import {
+	assertCodeModeWorkerConfig,
 	MCP_AUTH_CLASS_NAME,
 	mcpAuthBinding,
 	mergeCodeModeLoaderBinding,
@@ -151,6 +154,12 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 			source.codeMode,
 		);
 		if (source.mcpOAuth) assertMcpAuthMigration(config as Record<string, unknown>);
+		if (source.codeMode) {
+			assertCodeModeWorkerConfig(
+				config as Record<string, unknown>,
+				source.doBindings.map((binding) => binding.class_name),
+			);
+		}
 	};
 }
 
@@ -205,7 +214,8 @@ function applyFlueWorkerConfig(
 	mergeDurableObjectBindings(config, doBindings);
 
 	// Code Mode's Dynamic Workers need a Worker Loader binding. Added only
-	// when used: Dynamic Workers require the Workers Paid plan.
+	// when used: Dynamic Workers require the Workers Paid plan. Its runtime
+	// facet class needs no binding: facets come from ctx.exports.
 	if (codeMode) mergeCodeModeLoaderBinding(config);
 
 	// compatibility_date and name are left to the sibling's own defaults when

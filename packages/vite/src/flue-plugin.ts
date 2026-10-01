@@ -58,11 +58,8 @@ import {
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
 import {
-	CLOUDFLARE_STUB_ALIASES,
-	CROSS_SPAWN_STUB_SOURCE,
-	RESOLVED_CROSS_SPAWN_STUB,
+	codeModeOnNodeError,
 	scanCloudflareFeatures,
-	VIRTUAL_CROSS_SPAWN_STUB,
 } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
 import {
@@ -383,10 +380,8 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				// CORS matches the Node target: workerd requests flow
 				// through Vite's middleware stack, and separate-origin local
 				// clients need the durable-stream coordination headers exposed.
-				// The alias stubs the process spawner the MCP stdio transport
-				// would pull in (see cloudflare-codemode.ts).
 				return {
-					resolve: { dedupe: RUNTIME_DEDUPE, alias: CLOUDFLARE_STUB_ALIASES },
+					resolve: { dedupe: RUNTIME_DEDUPE },
 					...(isBuild ? {} : { server: { cors: userConfig.server?.cors ?? DEV_CORS } }),
 				} satisfies UserConfig;
 			}
@@ -397,6 +392,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (project.providers?.includes('cloudflare')) {
 				throw cloudflareProviderOnNodeError();
 			}
+			// Code Mode's runtime is a Durable Object Facet: Cloudflare only.
+			const { codeModeFile } = await scanCloudflareFeatures(project.sourceRoot);
+			if (codeModeFile) throw codeModeOnNodeError(root, codeModeFile);
 
 			resolverState.root = root;
 			resolverState.external = !isBuild;
@@ -432,9 +430,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 							input: { server: bootstrap.entry, app: bootstrap.server },
 							external: [
 								...NODE_TARGET_EXTERNALS,
-								// @cloudflare/codemode imports it for base classes;
-								// @flue/runtime/node answers it with a shim at runtime.
-								'cloudflare:workers',
 								...getUserExternals(root),
 								...builtinModules,
 								...builtinModules.map((name) => `node:${name}`),
@@ -553,8 +548,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					return bootstrap.server;
 				case VIRTUAL_WORKER_ENTRY:
 					return RESOLVED_WORKER_ENTRY;
-				case VIRTUAL_CROSS_SPAWN_STUB:
-					return RESOLVED_CROSS_SPAWN_STUB;
 				default:
 					return undefined;
 			}
@@ -564,7 +557,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (id === RESOLVED_DB_STUB) {
 				return 'export default undefined;\n';
 			}
-			if (id === RESOLVED_CROSS_SPAWN_STUB) return CROSS_SPAWN_STUB_SOURCE;
 			if (id === RESOLVED_AGENTS) {
 				return generateScannedAgentsModule(state.agents);
 			}
@@ -584,6 +576,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					agents: state.agents,
 					providers: state.project.providers,
 					tracing: state.project.tracing,
+					codeMode: state.codeMode,
 				});
 			}
 			return undefined;
