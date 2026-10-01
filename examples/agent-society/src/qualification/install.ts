@@ -14,7 +14,6 @@ import {
 	inboxPath,
 	streamsSubscriptions,
 } from '@flue/runtime/qualification';
-import { getAgentByName } from 'agents';
 import type { Hono } from 'hono';
 
 type Vars = Record<string, unknown>;
@@ -39,7 +38,7 @@ function bindingOf(agent: string): string {
 async function agentStub(source: Vars, agent: string, id: string): Promise<AgentStub> {
 	const namespace = source[bindingOf(agent)];
 	if (!namespace) throw new Error(`no agent "${agent}"`);
-	return (await getAgentByName(namespace as never, id)) as AgentStub;
+	return (namespace as DurableObjectNamespace).getByName(id) as unknown as AgentStub;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -103,6 +102,22 @@ export function installQualification(app: Hono): void {
 		const log = configuredStreamsLog(c.env as Vars);
 		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
 		return c.json({ path, head: await log.head(path) });
+	});
+
+	// Read-only: up to 200 messages of a stream from an offset, through the configured log.
+	app.get('/qual/stream-read', async (c) => {
+		const path = c.req.query('path');
+		const from = c.req.query('from') ?? '-1';
+		const log = configuredStreamsLog(c.env as Vars);
+		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
+		const batch = await settled(() => log.read(path, from as never));
+		if ('error' in batch) return c.json({ path, ...batch });
+		return c.json({
+			path,
+			messages: batch.messages.slice(0, 200),
+			nextOffset: batch.nextOffset,
+			upToDate: batch.upToDate,
+		});
 	});
 
 	// Ring an entity's doorbell by hand: the same `__flueWake({ stream, head })`

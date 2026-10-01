@@ -1,0 +1,600 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index ac2d9d8..69ef602 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -3,6 +3,6 @@ export { toCodemodeIdentifier } from "./identifier.ts";
+ export { CodemodeSandbox } from "./runtime/host.ts";
+ export { MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS } from "./runtime/prelude-source.ts";
+ export { CODEMODE_OPTIONS_PREFIX, CODEMODE_SOURCE_GRAMMAR, CodemodeSourceError, type CodemodeSourceOptions, type ParsedCodemodeSource, parseCodemodeSource, } from "./source.ts";
+-export type { CodemodeCall, CodemodeCallStatus, CodemodeError, CodemodeErrorKind, CodemodeExecuteOptions, CodemodeJsonSchema, CodemodeOutputItem, CodemodeResult, CodemodeSandboxOptions, CodemodeStoreWrites, CodemodeTool, CodemodeToolContext, } from "./types.ts";
++export type { CodemodeCall, CodemodeCallStatus, CodemodeError, CodemodeErrorKind, CodemodeExecuteOptions, CodemodeJsonSchema, CodemodeOutputItem, CodemodeResult, CodemodeSandboxOptions, CodemodeSpawn, CodemodeSpawnEvents, CodemodeStoreWrites, CodemodeTool, CodemodeToolContext, CodemodeWorkerHandle, } from "./types.ts";
+ export { type CodemodeWasmModule, loadQuickJSWasm } from "./wasm.ts";
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/dist/runtime/host.d.ts b/dist/runtime/host.d.ts
+index 1ad4635..4f156fe 100644
+--- a/dist/runtime/host.d.ts
++++ b/dist/runtime/host.d.ts
+@@ -14,7 +14,7 @@ export declare class CodemodeSandbox {
+     private readonly timeoutMs;
+     private readonly memoryLimitBytes;
+     private readonly wasm;
+-    private readonly workerUrl;
++    private readonly spawn;
+     private readonly running;
+     private closed;
+     constructor(options?: CodemodeSandboxOptions);
+diff --git a/dist/runtime/host.js b/dist/runtime/host.js
+index 637bb9f..1fa932a 100644
+--- a/dist/runtime/host.js
++++ b/dist/runtime/host.js
+@@ -1,4 +1,3 @@
+-import { Worker } from "node:worker_threads";
+ import { toCodemodeIdentifier } from "../identifier.js";
+ import { loadQuickJSWasm } from "../wasm.js";
+ import { isWorkerToHostMessage, } from "./protocol.js";
+@@ -41,6 +40,24 @@ function defaultWorkerUrl() {
+     // `.ts` when running from source (tests, tsx), `.js` from the published dist.
+     return new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url);
+ }
++/**
++ * The default `spawn`: a `node:worker_threads` worker running `workerUrl`. Imported on first use, so
++ * hosts without worker threads (Cloudflare Workers) can load this module and pass their own `spawn`.
++ */
++function workerThreadSpawn(workerUrl) {
++    return async (workerData, events) => {
++        const { Worker } = await import("node:worker_threads");
++        const worker = new Worker(workerUrl, { workerData });
++        worker.on("message", events.message);
++        worker.on("error", events.error);
++        worker.on("exit", events.exit);
++        return worker;
++    };
++}
++/** One Int32 for the interrupt flag; shared with a worker thread where the host has shared memory. */
++function interruptBuffer() {
++    return typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(4) : new ArrayBuffer(4);
++}
+ /**
+  * One script run in its own worker and QuickJS VM. A fresh worker per run keeps
+  * termination simple: a runaway script, including one that only spins the
+@@ -50,7 +67,7 @@ class Execution {
+     promise;
+     resolveResult;
+     worker;
+-    interrupt = new SharedArrayBuffer(4);
++    interrupt = interruptBuffer();
+     tools;
+     globals;
+     signal;
+@@ -87,7 +104,7 @@ class Execution {
+         this.finish({ kind: "aborted", message });
+         return this.promise;
+     }
+-    start(options, wasm) {
++    async start(options, wasm) {
+         if (this.finished)
+             return;
+         const workerData = {
+@@ -108,24 +125,31 @@ class Execution {
+         };
+         let worker;
+         try {
+-            worker = new Worker(options.workerUrl, { workerData });
++            worker = await options.spawn(workerData, {
++                message: (message) => this.handleMessage(message),
++                error: (error) => {
++                    this.finish({
++                        kind: "sandbox",
++                        name: error instanceof Error ? error.name : undefined,
++                        message: errorMessage(error),
++                    });
++                },
++                exit: (code) => {
++                    this.finish({ kind: "sandbox", message: `Worker exited with code ${code} before the script settled` });
++                },
++            });
+         }
+         catch (error) {
+             this.finish({ kind: "sandbox", message: `Failed to start worker: ${errorMessage(error)}` });
+             return;
+         }
++        if (this.finished) {
++            // Settled (timeout, abort) while the worker started.
++            Atomics.store(new Int32Array(this.interrupt), 0, 1);
++            Promise.resolve(worker.terminate()).catch(() => undefined);
++            return;
++        }
+         this.worker = worker;
+-        worker.on("message", (message) => this.handleMessage(message));
+-        worker.on("error", (error) => {
+-            this.finish({
+-                kind: "sandbox",
+-                name: error instanceof Error ? error.name : undefined,
+-                message: errorMessage(error),
+-            });
+-        });
+-        worker.on("exit", (code) => {
+-            this.finish({ kind: "sandbox", message: `Worker exited with code ${code} before the script settled` });
+-        });
+     }
+     onAbort = () => {
+         const reason = this.signal?.reason;
+@@ -220,15 +244,15 @@ class Execution {
+             return;
+         }
+         Atomics.store(new Int32Array(this.interrupt), 0, 1);
+-        this.worker
+-            .terminate()
++        Promise.resolve()
++            .then(() => this.worker?.terminate())
+             .catch(() => undefined)
+             .then(() => this.resolveResult(result));
+     }
+ }
+ /**
+  * Runs JavaScript in a QuickJS VM (a separate wasm instance) inside a worker
+- * thread. The script sees `tools.<name>(args)` for every registered tool, `ALL_TOOLS`,
++ * thread, or wherever `options.spawn` runs it. The script sees `tools.<name>(args)` for every registered tool, `ALL_TOOLS`,
+  * the output helpers `text`, `image`, `exit`, and `console.*`, `store`/`load`, and the
+  * configured globals; nothing else (no timers, `fetch`, `process`, `require`, modules).
+  *
+@@ -241,14 +265,14 @@ export class CodemodeSandbox {
+     timeoutMs;
+     memoryLimitBytes;
+     wasm;
+-    workerUrl;
++    spawn;
+     running = new Set();
+     closed = false;
+     constructor(options = {}) {
+         this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+         this.memoryLimitBytes = options.memoryLimitBytes;
+         this.wasm = options.wasm;
+-        this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
++        this.spawn = options.spawn ?? workerThreadSpawn(options.workerUrl ?? defaultWorkerUrl());
+         for (const tool of options.tools ?? [])
+             this.registerTool(tool);
+         const namespaces = new Set();
+@@ -300,7 +324,7 @@ export class CodemodeSandbox {
+             memoryLimitBytes: this.memoryLimitBytes,
+             store: serializeStore(options.store),
+             wasm: this.wasm === undefined ? loadQuickJSWasm() : Promise.resolve(this.wasm),
+-            workerUrl: this.workerUrl,
++            spawn: this.spawn,
+         });
+         this.running.add(execution);
+         return execution.promise.finally(() => this.running.delete(execution));
+diff --git a/dist/runtime/protocol.d.ts b/dist/runtime/protocol.d.ts
+index c709afd..43e888b 100644
+--- a/dist/runtime/protocol.d.ts
++++ b/dist/runtime/protocol.d.ts
+@@ -26,7 +26,7 @@ export interface WorkerData {
+      * One Int32 the host sets to non-zero before terminating the worker. The VM's interrupt handler
+      * polls it, because Bun's `worker.terminate()` cannot stop a thread that is spinning in wasm.
+      */
+-    interrupt: SharedArrayBuffer;
++    interrupt: SharedArrayBuffer | ArrayBuffer;
+ }
+ /** JSON-encoded `{ name?, message, stack? }` of an error thrown by the script. */
+ export type ScriptErrorJson = string;
+diff --git a/dist/runtime/vm.d.ts b/dist/runtime/vm.d.ts
+new file mode 100644
+index 0000000..682ed9a
+--- /dev/null
++++ b/dist/runtime/vm.d.ts
+@@ -0,0 +1,22 @@
++import type { HostToWorkerMessage, WorkerData, WorkerToHostMessage } from "./protocol.ts";
++export type { HostToWorkerMessage, WorkerData, WorkerToHostMessage } from "./protocol.ts";
++/** The VM's side of the message channel to its host. */
++export interface CodemodeVmPort {
++    post(message: WorkerToHostMessage): void;
++    onMessage(listener: (message: HostToWorkerMessage) => void): void;
++}
++export interface CodemodeVmOptions {
++    /**
++     * Polled with the interrupt flag while the VM runs; `true` interrupts the script with an
++     * uncatchable `InternalError: interrupted`. For hosts that bound a script's CPU themselves.
++     */
++    shouldInterrupt?: () => boolean;
++}
++/**
++ * Run one script. Resolves once the script has been started; its outcome arrives on `port` as a
++ * `done` (or `crash`) message.
++ */
++export declare function runCodemodeVm(data: WorkerData, port: CodemodeVmPort, options?: CodemodeVmOptions): Promise<void>;
++/** Report a failure outside the script's control, such as a wasm trap. */
++export declare function crash(port: CodemodeVmPort, error: unknown): void;
++//# sourceMappingURL=vm.d.ts.map
+diff --git a/dist/runtime/vm.js b/dist/runtime/vm.js
+new file mode 100644
+index 0000000..58c6d6c
+--- /dev/null
++++ b/dist/runtime/vm.js
+@@ -0,0 +1,135 @@
++/**
++ * The VM half of a codemode execution, independent of where it runs. `runCodemodeVm()` creates a
++ * fresh QuickJS VM from `data.wasm`, evaluates the prelude and the script, relays tool calls and
++ * output through `port`, and reports the result. The worker entry (`worker.ts`) runs it on a
++ * `node:worker_threads` thread; a host that has no worker threads (a Cloudflare Worker or Durable
++ * Object) runs it in-process through `CodemodeSandboxOptions.spawn`.
++ */
++import { JSException, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";
++import { PRELUDE_SOURCE } from "./prelude-source.js";
++import { isHostToWorkerMessage } from "./protocol.js";
++/**
++ * QuickJS writes engine diagnostics to fd 1 and 2, which the default shim
++ * forwards to the host's stdout and stderr. That output belongs to the host
++ * application (for example a TUI), so it is discarded. Reporting every byte as
++ * written keeps libc from retrying.
++ */
++function discardOutput(memory) {
++    return {
++        fd_write(_fd, iovsPtr, iovsLen, nwrittenPtr) {
++            const view = new DataView(memory.buffer);
++            let written = 0;
++            for (let i = 0; i < iovsLen; i++) {
++                written += view.getUint32(iovsPtr + i * 8 + 4, true);
++            }
++            view.setUint32(nwrittenPtr, written, true);
++            return 0;
++        },
++    };
++}
++function describeException(error) {
++    const head = error.message ? `${error.name}: ${error.message}` : error.name;
++    const stack = error.stack?.trimEnd();
++    return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head });
++}
++/**
++ * Run one script. Resolves once the script has been started; its outcome arrives on `port` as a
++ * `done` (or `crash`) message. `options.shouldInterrupt` is polled with the interrupt flag while
++ * the VM runs, for hosts that bound a script's CPU themselves.
++ */
++export async function runCodemodeVm(data, port, options = {}) {
++    const interrupt = new Int32Array(data.interrupt);
++    const shouldInterrupt = options.shouldInterrupt;
++    const post = (message) => port.post(message);
++    const vm = await QuickJS.create({
++        wasm: data.wasm,
++        memoryLimit: data.memoryLimitBytes,
++        // Without a guard, deep recursion overflows the wasm stack and traps instead of throwing a
++        // catchable RangeError.
++        maxStackSize: MAX_STACK_SIZE,
++        interruptHandler: shouldInterrupt
++            ? () => Atomics.load(interrupt, 0) !== 0 || shouldInterrupt()
++            : () => Atomics.load(interrupt, 0) !== 0,
++        wasi: discardOutput,
++    });
++    // Called from the prelude with primitives only.
++    const bridge = vm.newFunction("bridge", (kind, a, b, c) => {
++        switch (kind.toString()) {
++            case "call":
++            case "global":
++                post({
++                    type: "call",
++                    id: a.toNumber(),
++                    target: kind.toString() === "call" ? "tool" : "global",
++                    name: b.toString(),
++                    args: c === undefined || c.isUndefined ? undefined : c.toString(),
++                });
++                break;
++            case "output":
++                post({
++                    type: "output",
++                    item: a.toString() === "image"
++                        ? { type: "image", data: b.toString(), mimeType: c.toString() }
++                        : { type: "text", text: b.toString() },
++                });
++                break;
++            case "done":
++                if (a.toBoolean()) {
++                    post({
++                        type: "done",
++                        ok: true,
++                        value: b === undefined || b.isUndefined ? undefined : b.toString(),
++                        writes: c.toString(),
++                    });
++                }
++                else {
++                    post({ type: "done", ok: false, error: b.toString() });
++                }
++                break;
++        }
++        return vm.undefined;
++    });
++    // The VM lives until the host terminates the execution, so these handles are never disposed.
++    const api = vm.withScope((scope) => scope.escape(vm.callFunction(vm.evalCode(PRELUDE_SOURCE, "codemode-prelude.js"), vm.undefined, bridge, vm.newString(JSON.stringify(data.tools)), vm.newString(JSON.stringify(data.globals)), vm.newString(JSON.stringify(data.store)))));
++    const settle = api.getProp("settle");
++    const run = api.getProp("run");
++    const stalled = api.getProp("stalled");
++    /** Run queued jobs, then fail a script that waits on nothing that can ever resume it. */
++    const drain = () => {
++        vm.executePendingJobs();
++        vm.callFunction(stalled, api).dispose();
++    };
++    port.onMessage((message) => {
++        if (!isHostToWorkerMessage(message))
++            return;
++        try {
++            vm.withScope(() => {
++                vm.callFunction(settle, api, vm.newNumber(message.id), message.ok ? vm.true : vm.false, message.payload === undefined ? vm.undefined : vm.newString(message.payload));
++            });
++            drain();
++        }
++        catch (error) {
++            crash(port, error);
++        }
++    });
++    // The prefix shares the first line with the script so reported line numbers
++    // match the script as written.
++    let fn;
++    try {
++        fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
++    }
++    catch (error) {
++        if (!(error instanceof JSException))
++            throw error;
++        post({ type: "done", ok: false, error: describeException(error) });
++        return;
++    }
++    vm.callFunction(run, api, fn).dispose();
++    fn.dispose();
++    drain();
++}
++/** Report a failure outside the script's control, such as a wasm trap. */
++export function crash(port, error) {
++    port.post({ type: "crash", message: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
++}
++//# sourceMappingURL=vm.js.map
+diff --git a/dist/runtime/worker.js b/dist/runtime/worker.js
+index aa77a8a..0afca4d 100644
+--- a/dist/runtime/worker.js
++++ b/dist/runtime/worker.js
+@@ -3,7 +3,7 @@
+  * (a separate wasm instance), relays tool calls and output to the host, and
+  * reports the result. The host terminates the worker when the script settles,
+  * times out, or is aborted; the worker exists so that a spinning script never
+- * blocks the host thread.
++ * blocks the host thread. The VM itself is `runCodemodeVm()` (`vm.ts`).
+  *
+  * Importing this module starts the worker. Hosts that bundle their code (for
+  * example a Bun compiled executable) add a file that imports
+@@ -11,127 +11,12 @@
+  * or embedded-module string specifier as `workerUrl`.
+  */
+ import { parentPort, workerData } from "node:worker_threads";
+-import { JSException, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";
+-import { PRELUDE_SOURCE } from "./prelude-source.js";
+-import { isHostToWorkerMessage } from "./protocol.js";
+-function post(message) {
+-    parentPort?.postMessage(message);
+-}
+-function crash(error) {
+-    post({ type: "crash", message: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
+-}
+-/**
+- * QuickJS writes engine diagnostics to fd 1 and 2, which the default shim
+- * forwards to the host's stdout and stderr. That output belongs to the host
+- * application (for example a TUI), so it is discarded. Reporting every byte as
+- * written keeps libc from retrying.
+- */
+-function discardOutput(memory) {
+-    return {
+-        fd_write(_fd, iovsPtr, iovsLen, nwrittenPtr) {
+-            const view = new DataView(memory.buffer);
+-            let written = 0;
+-            for (let i = 0; i < iovsLen; i++) {
+-                written += view.getUint32(iovsPtr + i * 8 + 4, true);
+-            }
+-            view.setUint32(nwrittenPtr, written, true);
+-            return 0;
+-        },
+-    };
+-}
+-function describeException(error) {
+-    const head = error.message ? `${error.name}: ${error.message}` : error.name;
+-    const stack = error.stack?.trimEnd();
+-    return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head });
+-}
+-async function main(data) {
+-    const interrupt = new Int32Array(data.interrupt);
+-    const vm = await QuickJS.create({
+-        wasm: data.wasm,
+-        memoryLimit: data.memoryLimitBytes,
+-        // Without a guard, deep recursion overflows the wasm stack and traps instead of throwing a
+-        // catchable RangeError.
+-        maxStackSize: MAX_STACK_SIZE,
+-        interruptHandler: () => Atomics.load(interrupt, 0) !== 0,
+-        wasi: discardOutput,
+-    });
+-    // Called from the prelude with primitives only.
+-    const bridge = vm.newFunction("bridge", (kind, a, b, c) => {
+-        switch (kind.toString()) {
+-            case "call":
+-            case "global":
+-                post({
+-                    type: "call",
+-                    id: a.toNumber(),
+-                    target: kind.toString() === "call" ? "tool" : "global",
+-                    name: b.toString(),
+-                    args: c === undefined || c.isUndefined ? undefined : c.toString(),
+-                });
+-                break;
+-            case "output":
+-                post({
+-                    type: "output",
+-                    item: a.toString() === "image"
+-                        ? { type: "image", data: b.toString(), mimeType: c.toString() }
+-                        : { type: "text", text: b.toString() },
+-                });
+-                break;
+-            case "done":
+-                if (a.toBoolean()) {
+-                    post({
+-                        type: "done",
+-                        ok: true,
+-                        value: b === undefined || b.isUndefined ? undefined : b.toString(),
+-                        writes: c.toString(),
+-                    });
+-                }
+-                else {
+-                    post({ type: "done", ok: false, error: b.toString() });
+-                }
+-                break;
+-        }
+-        return vm.undefined;
+-    });
+-    // The VM lives until the host terminates the worker, so these handles are never disposed.
+-    const api = vm.withScope((scope) => scope.escape(vm.callFunction(vm.evalCode(PRELUDE_SOURCE, "codemode-prelude.js"), vm.undefined, bridge, vm.newString(JSON.stringify(data.tools)), vm.newString(JSON.stringify(data.globals)), vm.newString(JSON.stringify(data.store)))));
+-    const settle = api.getProp("settle");
+-    const run = api.getProp("run");
+-    const stalled = api.getProp("stalled");
+-    /** Run queued jobs, then fail a script that waits on nothing that can ever resume it. */
+-    const drain = () => {
+-        vm.executePendingJobs();
+-        vm.callFunction(stalled, api).dispose();
+-    };
+-    parentPort?.on("message", (message) => {
+-        if (!isHostToWorkerMessage(message))
+-            return;
+-        try {
+-            vm.withScope(() => {
+-                vm.callFunction(settle, api, vm.newNumber(message.id), message.ok ? vm.true : vm.false, message.payload === undefined ? vm.undefined : vm.newString(message.payload));
+-            });
+-            drain();
+-        }
+-        catch (error) {
+-            crash(error);
+-        }
+-    });
+-    // The prefix shares the first line with the script so reported line numbers
+-    // match the script as written.
+-    let fn;
+-    try {
+-        fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
+-    }
+-    catch (error) {
+-        if (!(error instanceof JSException))
+-            throw error;
+-        post({ type: "done", ok: false, error: describeException(error) });
+-        return;
+-    }
+-    vm.callFunction(run, api, fn).dispose();
+-    fn.dispose();
+-    drain();
+-}
++import { crash, runCodemodeVm } from "./vm.js";
+ if (parentPort) {
+-    main(workerData).catch(crash);
++    const port = {
++        post: (message) => parentPort.postMessage(message),
++        onMessage: (listener) => parentPort.on("message", listener),
++    };
++    runCodemodeVm(workerData, port).catch((error) => crash(port, error));
+ }
+-//# sourceMappingURL=worker.js.map
+\ No newline at end of file
++//# sourceMappingURL=worker.js.map
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 9a5259b..d776e4c 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -1,3 +1,4 @@
++import type { HostToWorkerMessage, WorkerData } from "./runtime/protocol.ts";
+ import type { CodemodeWasmModule } from "./wasm.ts";
+ export interface CodemodeToolContext {
+     /**
+@@ -123,7 +124,30 @@ export interface CodemodeSandboxOptions {
+      * specifier of an embedded build entrypoint; other hosts usually use a URL.
+      */
+     workerUrl?: string | URL;
++    /**
++     * Start the VM half of one execution: `data` for `runCodemodeVm()` (`@earendil-works/pi-codemode/vm`),
++     * and the host's side of the channel as `events`. Default: a `node:worker_threads` worker running
++     * `workerUrl`. Pass it on hosts without worker threads, for example to run the VM in-process in a
++     * Cloudflare Worker; the VM then shares the host's thread, so a spinning script blocks it until
++     * the interrupt flag (or `runCodemodeVm`'s `shouldInterrupt`) stops it.
++     */
++    spawn?: CodemodeSpawn;
++}
++/** The host's side of one execution's channel to its VM. */
++export interface CodemodeSpawnEvents {
++    /** A `WorkerToHostMessage` from the VM. */
++    message(message: unknown): void;
++    /** The VM failed outside the script's control. */
++    error(error: unknown): void;
++    /** The VM went away before the script settled. */
++    exit(code: number): void;
++}
++/** What the host keeps of a started VM. `terminate()` is called once the execution settles. */
++export interface CodemodeWorkerHandle {
++    postMessage(message: HostToWorkerMessage): void;
++    terminate(): unknown;
+ }
++export type CodemodeSpawn = (data: WorkerData, events: CodemodeSpawnEvents) => CodemodeWorkerHandle | Promise<CodemodeWorkerHandle>;
+ export interface CodemodeExecuteOptions {
+     signal?: AbortSignal;
+     /** Overrides the sandbox default for this execution. */
+diff --git a/dist/wasm.js b/dist/wasm.js
+index 1b1c12e..792bdbb 100644
+--- a/dist/wasm.js
++++ b/dist/wasm.js
+@@ -1,24 +1,29 @@
+-import { readFile } from "node:fs/promises";
+-import { createRequire } from "node:module";
+ const modules = new Map();
+ /**
+  * Read and compile the QuickJS wasm once per path. `path` defaults to the file in the installed
+  * `quickjs-wasi` package; pass it when that file lives elsewhere, for example embedded in a Bun
+- * compiled executable. A failed load is retried on the next call.
++ * compiled executable. A failed load is retried on the next call. `node:fs` and `node:module` are
++ * imported on first use, so hosts without them (Cloudflare Workers, which import the compiled
++ * module instead) can load this package.
+  */
+ export function loadQuickJSWasm(path) {
+-    const resolved = path ?? createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+-    let module = modules.get(resolved);
++    const key = path ?? "";
++    let module = modules.get(key);
+     if (!module) {
+         const { WebAssembly } = globalThis;
+-        module = readFile(resolved)
+-            .then((bytes) => WebAssembly.compile(bytes))
+-            .catch((error) => {
+-            modules.delete(resolved);
++        module = (async () => {
++            const [{ readFile }, { createRequire }] = await Promise.all([
++                import("node:fs/promises"),
++                import("node:module"),
++            ]);
++            const resolved = path ?? createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
++            return WebAssembly.compile(await readFile(resolved));
++        })().catch((error) => {
++            modules.delete(key);
+             throw error;
+         });
+-        modules.set(resolved, module);
++        modules.set(key, module);
+     }
+     return module;
+ }
+-//# sourceMappingURL=wasm.js.map
+\ No newline at end of file
++//# sourceMappingURL=wasm.js.map
+diff --git a/package.json b/package.json
+index b0a3b27..aebe59b 100644
+--- a/package.json
++++ b/package.json
+@@ -21,6 +21,11 @@
+ 			"types": "./dist/source.d.ts",
+ 			"import": "./dist/source.js"
+ 		},
++		"./vm": {
++			"source": "./src/runtime/vm.ts",
++			"types": "./dist/runtime/vm.d.ts",
++			"import": "./dist/runtime/vm.js"
++		},
+ 		"./worker": {
+ 			"source": "./src/runtime/worker.ts",
+ 			"types": "./dist/runtime/worker.d.ts",

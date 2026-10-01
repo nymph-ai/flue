@@ -244,6 +244,62 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 				},
 			},
 			{
+				name: 'answer_question',
+				description:
+					"Answer another agent's question (an approval or an input request it is waiting on). It continues once the answer arrives. Give the asker's address and the question id from the question you received.",
+				parameters: Type.Object({
+					to: EntityRefSchema,
+					question_id: Type.String({ description: 'The id of the question.' }),
+					decision: Type.Optional(
+						Type.Union([Type.Literal('approve'), Type.Literal('reject')], {
+							description: 'For an approval: approve or reject.',
+						}),
+					),
+					reason: Type.Optional(
+						Type.String({ description: 'For a rejection: why, shown to the asker.' }),
+					),
+					input_responses: Type.Optional(
+						Type.Unknown({
+							description:
+								'For an input request: one entry per requested key, e.g. {"confirm":{"action":"accept","content":{…}}}.',
+						}),
+					),
+				}),
+				replay: 'safe',
+				async execute(raw, api, context) {
+					try {
+						const args = raw as Args;
+						const target = entityArg(args, 'to');
+						const questionId = optionalString(args, 'question_id');
+						if (!target || !questionId)
+							throw new Error('answer_question needs to { type, id } and question_id.');
+						const answer: JsonValue =
+							args.input_responses !== undefined
+								? { kind: 'mcp-input', inputResponses: args.input_responses as JsonValue }
+								: {
+										kind: 'codemode-approval',
+										decision: args.decision === 'reject' ? 'reject' : 'approve',
+										...(typeof args.reason === 'string' ? { reason: args.reason } : {}),
+									};
+						if (args.input_responses === undefined && args.decision === undefined)
+							throw new Error('answer_question needs decision (approvals) or input_responses (input requests).');
+						const result = await messaging.answer(
+							target,
+							questionId,
+							answer,
+							{},
+							callScoped(api, context),
+						);
+						return text(`Answered ${questionId} for ${entityKey(target)}.`, {
+							...result,
+							questionId,
+						});
+					} catch (error) {
+						return failure(error);
+					}
+				},
+			},
+			{
 				name: 'schedule_wake',
 				description:
 					'Schedule a message to arrive later — for this agent (a reminder that wakes it) or for another agent instance.',

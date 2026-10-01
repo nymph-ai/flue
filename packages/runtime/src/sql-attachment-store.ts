@@ -10,7 +10,7 @@ import {
 	sameAttachmentRef,
 	verifyAttachmentBytes,
 } from './runtime/attachment-store.ts';
-import type { SqlStorage } from './sql-storage.ts';
+import { type SqlStorage, sqlTableExists } from './sql-storage.ts';
 
 export const ATTACHMENT_CHUNK_BYTE_LENGTH = 512 * 1024;
 
@@ -59,16 +59,35 @@ export function ensureSqlAttachmentTable(sql: SqlStorage): void {
 	});
 }
 
+/**
+ * Attachments in SQL. The tables are created by the first `put`: an agent
+ * instance that never stores an attachment never pays for them, and a read of
+ * a store nothing was ever put in finds nothing (nymph-ai/nymphai #3868).
+ */
 export class SqliteAttachmentStore implements AttachmentStore {
+	#ready = false;
+
 	constructor(
 		private readonly sql: SqlStorage,
 		private readonly runTransaction: <T>(closure: () => T) => T,
-	) {
-		ensureSqlAttachmentTable(sql);
+	) {}
+
+	/** The tables, behind the format-version fence; once per store. */
+	#schema(): void {
+		if (this.#ready) return;
+		ensureSqlAttachmentTable(this.sql);
+		this.#ready = true;
+	}
+
+	/** Whether the tables exist (then fenced like a write), without creating them. */
+	#exists(): boolean {
+		if (!this.#ready && sqlTableExists(this.sql, 'flue_attachments')) this.#schema();
+		return this.#ready;
 	}
 
 	async put(input: PutAttachmentInput): Promise<void> {
 		await verifyAttachmentBytes(input.attachment, input.bytes);
+		this.#schema();
 		this.runTransaction(() => {
 			const existing = this.read(input.streamPath, input.attachment.id);
 			if (existing) {
@@ -103,6 +122,7 @@ export class SqliteAttachmentStore implements AttachmentStore {
 	}
 
 	async get(input: GetAttachmentInput): Promise<StoredAttachment | null> {
+		if (!this.#exists()) return null;
 		const row = this.read(input.streamPath, input.attachmentId);
 		if (!row || row.conversationId !== input.conversationId) {
 			return null;

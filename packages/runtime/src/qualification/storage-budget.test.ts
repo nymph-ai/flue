@@ -15,6 +15,12 @@
  * submissions before it). Flue's overhead — its rows minus bare Pi's at the
  * same size — must stay within a fixed allowance and be the same at both
  * sizes. `[storage-budget]` lines report every measurement.
+ *
+ * Code Mode (Pi's QuickJS sandbox, in-process as on workerd): a cold `store()` turn after
+ * `size` earlier writes of the store (nymph-ai/nymphai #3862: without a
+ * checkpoint predicate, its cold read replayed every write), and a question
+ * parked on an approval (rule 9) — park, answer through the inbox, resume —
+ * plus idle wakes while it waits, which must write nothing.
  */
 import {
 	type AssistantMessage,
@@ -26,9 +32,16 @@ import {
 	fauxToolCall,
 	type Message,
 } from '@earendil-works/pi-ai';
-import { createRegistry, Harness, type ToolRegistration } from '@earendil-works/pi-durable';
+import {
+	createRegistry,
+	Harness,
+	ROOT_CONVERSATION_ID,
+	type ToolRegistration,
+} from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { FlueCodemodeStore } from '../codemode/store.ts';
+import { useCodeMode } from '../hooks/use-code-mode.ts';
 import { context, removeTempFiles, tempFile, textOf } from '../entity/a2a-test-support.ts';
 import { inboxPath } from '../entity/paths.ts';
 import { useModel } from '../hooks/use-model.ts';
@@ -61,7 +74,13 @@ const BUDGET: Record<string, Rows> = {
 	'A2A receive (doorbell, pump, admission, turn)': { rowsRead: 20, rowsWritten: 45 },
 	'idle wake': { rowsRead: 4, rowsWritten: 0 },
 	'cold open + admission + turn': { rowsRead: 80, rowsWritten: 30 },
+	'Code Mode store() turn, cold, after <size> store writes': { rowsRead: 120, rowsWritten: 50 },
+	'parked question (ask, park, answer, resume)': { rowsRead: 70, rowsWritten: 70 },
+	'3 idle wakes while a question is parked': { rowsRead: 15, rowsWritten: 0 },
 };
+
+const STORE_CODE = "const n = load('k') ?? 0; store('k', n + 1); return n + 1;";
+const APPROVAL_CODE = "await tools.send({}); return 'sent';";
 
 function respond(messages: readonly Message[]): AssistantMessage {
 	const userIndex = messages.findLastIndex((message) => message.role === 'user');
@@ -77,6 +96,14 @@ function respond(messages: readonly Message[]): AssistantMessage {
 			{ stopReason: 'toolUse' },
 		);
 	}
+	if (/store it/.test(text))
+		return fauxAssistantMessage([fauxToolCall('codemode', { code: STORE_CODE })], {
+			stopReason: 'toolUse',
+		});
+	if (/approve it/.test(text))
+		return fauxAssistantMessage([fauxToolCall('codemode', { code: APPROVAL_CODE })], {
+			stopReason: 'toolUse',
+		});
 	const send = /send (\S+)\/(\S+)/.exec(text);
 	if (send)
 		return fauxAssistantMessage(
@@ -184,6 +211,8 @@ const control = { model: 'fast/m' };
 const BudgetAgent = (() => {
 	useModel(control.model);
 	useTool({ name: 'probe', description: 'Probe.', run: () => 'ok' });
+	useTool({ name: 'send', description: 'Send.', run: () => 'sent' });
+	useCodeMode({ requiresApproval: ['send'] });
 	return 'You are a budget probe.';
 }) as unknown as Agent;
 
@@ -204,7 +233,7 @@ async function flueInstance(log: InMemoryDurableStreamLog, id: string, file = ':
 	});
 	instances.push(instance);
 	let counter = Date.now();
-	const ask = async (body: string) => {
+	const start = async (body: string) => {
 		const submissionId = `sub_${id}_${counter++}`;
 		await instance.admit({
 			kind: 'direct',
@@ -212,12 +241,17 @@ async function flueInstance(log: InMemoryDurableStreamLog, id: string, file = ':
 			message: { kind: 'user', body },
 			acceptedAt: new Date().toISOString(),
 		});
+		return submissionId;
+	};
+	const ask = async (body: string) => {
+		const submissionId = await start(body);
 		await (await instance.host()).waitForSettlement(submissionId, context);
 		await instance.waitForIdle(context);
 	};
 	return {
 		database,
 		instance,
+		start,
 		ask,
 		async history(size: number) {
 			for (let n = 0; n < size; n++) await ask(`question ${n}`);
@@ -296,6 +330,34 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 			);
 			piRows['cold open + admission + turn'] = { ...reopened.database.rows };
 			await reopened.close();
+			// A cold process over a one-turn conversation, one tool round: what the
+			// cold store() turn (a one-turn conversation too) is measured against.
+			const piStoreFile = await tempFile(`pi-store-${size}.sqlite`);
+			const piStore = await bareHarness(piStoreFile);
+			await piStore.ask('hello');
+			await piStore.close();
+			const piStoreCold = await bareHarness(piStoreFile);
+			await piStoreCold.ask('tools 1');
+			piRows['Code Mode store() turn, cold, after <size> store writes'] = {
+				...piStoreCold.database.rows,
+			};
+			await piStoreCold.close();
+			// A warm turn with one tool round, and idle wakes: the parked question's baselines.
+			const reopenedAgain = await bareHarness(piFile);
+			piRows['parked question (ask, park, answer, resume)'] = await measure(
+				reopenedAgain.database,
+				() => reopenedAgain.ask('tools 1'),
+			);
+			piRows['3 idle wakes while a question is parked'] = await measure(
+				reopenedAgain.database,
+				async () => {
+					for (let n = 0; n < 3; n++) {
+						reopenedAgain.harness.resume();
+						await reopenedAgain.harness.inspect(context);
+					}
+				},
+			);
+			await reopenedAgain.close();
 
 			// Flue.
 			const aliceFile = await tempFile(`alice-${size}.sqlite`);
@@ -326,6 +388,37 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 			flueRows['idle wake'] = await measure(alice.database, async () => {
 				await alice.instance.wake({ kind: 'live-tasks' });
 			});
+
+			// A Code Mode approval parks a question (rule 9): ask and park, wait, answer, resume.
+			let parkedQuestion = '';
+			let parkedSubmission = '';
+			const parking = await measure(alice.database, async () => {
+				parkedSubmission = await alice.start('approve it');
+				await alice.instance.waitForIdle(context);
+				parkedQuestion = (await alice.instance.pendingQuestions())[0]?.id ?? '';
+			});
+			flueRows['3 idle wakes while a question is parked'] = await measure(
+				alice.database,
+				async () => {
+					for (let n = 0; n < 3; n++) await alice.instance.wake({ kind: 'live-tasks' });
+				},
+			);
+			const answering = await measure(alice.database, async () => {
+				const answered = await alice.instance.answerQuestion(parkedQuestion, {
+					kind: 'codemode-approval',
+					decision: 'approve',
+				});
+				expect(answered.status).toBe('accepted');
+				const wake = await alice.instance.wake({ kind: 'pump' });
+				expect(wake.pump?.answered).toEqual([parkedQuestion]);
+				await (await alice.instance.host()).waitForSettlement(parkedSubmission, context);
+				await alice.instance.waitForIdle(context);
+			});
+			flueRows['parked question (ask, park, answer, resume)'] = {
+				rowsRead: parking.rowsRead + answering.rowsRead,
+				rowsWritten: parking.rowsWritten + answering.rowsWritten,
+			};
+			expect(await alice.instance.pendingQuestions()).toEqual([]);
 			// The public conversation is served from the cache: the streamed answer is in it.
 			const head = await alice.instance.source.head();
 			expect(head.snapshot?.messages.some((message) => message.role === 'assistant')).toBe(true);
@@ -341,6 +434,30 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 			);
 			// A clean close leaves the cache usable: the cold start did not rebuild it.
 			expect((await cold.instance.source.head()).incarnation).toBe(head.incarnation);
+
+			// Code Mode store(): `size` earlier writes of the store, then a cold store() turn.
+			const carolFile = await tempFile(`carol-${size}.sqlite`);
+			const carol = await flueInstance(log, `carol-${size}`, carolFile);
+			await carol.ask('hello');
+			const carolHost = await carol.instance.host();
+			for (let n = 0; n < size; n++) {
+				await carolHost.harness.commit(async (tx) => {
+					(await tx.doc(FlueCodemodeStore, ROOT_CONVERSATION_ID)).values.k = n + 1;
+				}, context);
+			}
+			await carol.instance.close();
+			const carolCold = await flueInstance(log, `carol-${size}`, carolFile);
+			flueRows['Code Mode store() turn, cold, after <size> store writes'] = await measure(
+				carolCold.database,
+				async () => {
+					await carolCold.instance.wake({ kind: 'live-tasks' });
+					await carolCold.ask('store it');
+				},
+			);
+			const stored = await (
+				await carolCold.instance.host()
+			).harness.snapshot(FlueCodemodeStore, ROOT_CONVERSATION_ID, context);
+			expect(stored?.values.k).toBe(size + 1);
 
 			for (const scenario of Object.keys(BUDGET)) {
 				record(scenario, size, piRows[scenario] as Rows, flueRows[scenario] as Rows);

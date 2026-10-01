@@ -636,11 +636,23 @@ export async function enforceTimeouts(
 
 /**
  * Count one attempt for every submission a (re)opened Harness finds live —
- * the Flue attempt budget — and end those that exhausted it.
+ * the Flue attempt budget — and end those that exhausted it. A submission
+ * whose conversation only waits on parked questions is not retrying
+ * anything: `waiting` (resolved once, on the first live receipt) names
+ * those conversations, and their submissions are not counted.
  */
-export async function countAttempts(harness: Harness, context: Context): Promise<void> {
+export async function countAttempts(
+	harness: Harness,
+	context: Context,
+	waiting?: () => Promise<ReadonlySet<number>>,
+): Promise<void> {
+	let parked: ReadonlySet<number> | undefined;
 	for (const { submissionId, receipt } of await liveReceipts(harness, context)) {
 		if (receipt.classification !== undefined) continue;
+		if (waiting) {
+			parked ??= await waiting();
+			if (parked.has(receipt.conversationId)) continue;
+		}
 		const attempts = await harness.commit(async (tx) => {
 			const record = await tx.doc(FlueReceipts, submissionId, null);
 			record.attempts += 1;

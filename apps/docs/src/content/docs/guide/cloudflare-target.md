@@ -110,7 +110,7 @@ The submitting connection observes the work but does not own it. If a client dis
 Accepted work runs inside the Durable Object itself, as one platform-visible unit per response: after admission answers, Flue schedules a zero-delay wake, and the object's alarm invocation claims the queued submission and awaits the full response — every model turn and tool call — before completing. Admission always returns first; the response begins on the next alarm tick, typically within tens of milliseconds. Three consequences:
 
 - **Platform observability sees agent work.** Workers Logs, Workers Traces, and invocation-wrapping integrations (the Sentry `wrap` pattern in [Extending Agents](#extending-agents-on-cloudflare)) attribute the whole response to the one invocation that ran it. [`createCloudflareTracing()`](#createcloudflaretracing) (installed by default) adds agent-level spans to those traces. See [Observability](/docs/guide/observability/#cloudflare) for the two views and [Deploy on Cloudflare](/docs/ecosystem/deploy/cloudflare/#observability) for enabling them.
-- **Scheduled callbacks wait for a running response.** A Durable Object runs one alarm at a time, so `schedule()`/`scheduleEvery()` callbacks that come due mid-response fire after it settles — delivery is durable; timeliness is not guaranteed while the agent is busy. `queue()` is not alarm-driven and is unaffected. Steering is also unaffected: a message that arrives mid-response still joins it at the next turn boundary.
+- **The alarm is Flue's.** Each agent's Durable Object alarm carries its wakes — inbox pumps, Pi's live-task backstop, deadlines and the agent's own schedules — so Agents SDK capabilities that need the alarm (`Scheduler`, `Queue`, `Tasks`) are not available on generated agents. Schedule per-conversation work with Flue's schedules instead. Steering is unaffected: a message that arrives mid-response still joins it at the next turn boundary.
 - **CPU limits are per invocation.** Agent responses are I/O-bound and sit far below the default 30-second active-CPU limit; raise [`limits.cpu_ms`](https://developers.cloudflare.com/durable-objects/platform/limits/) in `wrangler.jsonc` if an agent computes heavily.
 
 When a Durable Object resumes after interruption, Flue decides what to do next from the stored input and canonical conversation progress. It requeues only when it can prove the input was not applied, recognizes already-completed output, and records an interruption instead of blindly repeating uncertain model or tool work.
@@ -211,12 +211,13 @@ Use Cloudflare Computer when a durable workspace and shell-expressible work are 
 
 ## Extending Agents on Cloudflare
 
-Flue owns each generated Durable Object class. When an agent needs access to native Cloudflare Agents SDK capabilities such as `onStart()`, `schedule()`, `scheduleEvery()`, or `queue()`, export a `cloudflare` extension descriptor from its module:
+Flue owns each generated Durable Object class: a `DurableObject` composed with the Cloudflare Agents SDK's [`Lifecycle`](https://github.com/cloudflare/agents/blob/main/docs/lifecycle.md), with no SDK capability installed beyond Flue's own wake. When an agent needs an `onStart()` hook, extra RPC methods, or an SDK capability that does not use the alarm, such as `State` (`agents/state`) or `WebSockets` (`agents/websockets`), export a `cloudflare` extension descriptor from its module and install the capability on `this.lifecycle` in its constructor:
 
 ```ts
 'use agent';
 import { useModel } from '@flue/runtime';
 import { extend } from '@flue/runtime/cloudflare';
+import { State } from 'agents/state';
 
 export function Assistant() {
   useModel('anthropic/claude-sonnet-4-6');
@@ -225,18 +226,21 @@ export function Assistant() {
 export const cloudflare = extend({
   base: (Base) =>
     class extends Base {
-      async onStart() {
-        await this.scheduleEvery(60, 'heartbeat');
+      readonly preferences = new State({ initialState: { locale: 'en' } });
+
+      constructor(ctx: DurableObjectState, env: Env) {
+        super(ctx, env);
+        this.lifecycle.use(this.preferences);
       }
 
-      async heartbeat() {
-        this.setState({ ...this.state, lastHeartbeatAt: Date.now() });
+      async onStart() {
+        console.log(`${this.name} woke with locale ${this.preferences.get()?.locale}`);
       }
     },
 });
 ```
 
-`base` receives the Agents SDK `Agent` base class. Flue applies it before defining the final generated Durable Object subclass, so your authored methods and lifecycle hooks are available on the generated class. The `cloudflare` export is per-module: when a marked file exports several agents, the extension applies to every generated class in that file.
+`base` receives a `DurableObject` whose Agents SDK `Lifecycle` is already constructed as `this.lifecycle`, so a subclass constructor can install capabilities before the object starts. It is not the SDK's `Agent` class: `this.schedule()`, `this.setState()` and `this.queue()` do not exist. Capabilities that use Lifecycle's job queue (`Scheduler`, `Queue`, `Tasks`) are not supported: Flue owns the object's alarm. Flue applies `base` before defining the final generated Durable Object subclass, so your authored methods and lifecycle hooks are available on the generated class. The `cloudflare` export is per-module: when a marked file exports several agents, the extension applies to every generated class in that file.
 
 `wrap` receives the final generated class and may return a prototype-preserving constructor wrapper. Use it for integrations like Sentry that instrument the class without replacing its prototype:
 
@@ -247,9 +251,9 @@ export const cloudflare = extend({
 });
 ```
 
-Both `base` and `wrap` are optional. Do not override Flue-owned `fetch()`, `onRequest()`, `onFiberRecovered()`, or `alarm()` methods.
+Both `base` and `wrap` are optional. Do not override Flue-owned `fetch()`, `alarm()`, `onRequest()` or `__flueWake()` methods.
 
-Use this module-local extension point for scheduled or queued behavior that belongs to one generated agent Durable Object. Scheduled callbacks share the object's alarm with agent execution: a `schedule()`/`scheduleEvery()` callback that comes due while a response is running fires after that response settles — see [Durable agent execution](#durable-agent-execution). Do not add a Worker cron trigger just to reach `scheduleEvery(...)`; the Agents SDK scheduling APIs run inside the generated Durable Object after that object is created. If your application needs to create the first conversation, expose an authenticated bootstrap route in `app.ts` or otherwise obtain the Durable Object namespace from `env` and address the conversation once.
+Use this module-local extension point for state, hooks and methods that belong to one generated agent Durable Object. For timers, use [schedules](/docs/guide/schedules/): a Worker cron trigger for application-wide ones, an agent's own schedules for one conversation's. If your application needs to create the first conversation, expose an authenticated bootstrap route in `app.ts` or otherwise obtain the Durable Object namespace from `env` and address the conversation once.
 
 ## Extending `cloudflare.ts` Entrypoint
 
@@ -299,7 +303,7 @@ function extend<TBase extends object = CloudflareAgentLike, TEnv = any>(
 
 Creates a branded Cloudflare extension descriptor for an agent module. The descriptor may contain `base` and `wrap` callbacks.
 
-Both callbacks are typed against `CloudflareAgentLike`, a structural view of the Agents SDK `Agent` base class covering `state`, `setState()`, `onStart()`, `schedule()`, `scheduleEvery()`, and `queue()`, so typos inside `base` callbacks fail at typecheck. Pass an explicit `TBase` (for example `extend<CloudflareAgentLike<MyState>>({ ... })`) to type against a richer class shape, and an explicit `TEnv` to type the `env` an instrumentation callback receives.
+Both callbacks are typed against `CloudflareAgentLike`, a structural view of the class Flue passes in covering `name`, `lifecycle` (`use()`, `start()`) and `onStart()`, so typos inside `base` callbacks fail at typecheck. Pass an explicit `TBase` to type against a richer class shape, and an explicit `TEnv` to type the `env` an instrumentation callback receives.
 
 `base(Base)` must return the received class or a subclass. Flue uses its return value as the superclass for the generated Durable Object.
 
@@ -340,7 +344,7 @@ The returned `FlueDurableObjectIdentity` includes:
 
 - `bindingName` -- the Wrangler binding name, such as `"FLUE_SUPPORT_CHAT_AGENT"`.
 - `className` -- the generated class name, such as `"FlueSupportChatAgent"`.
-- `name` -- the instance name passed to `idFromName` or `getAgentByName`.
+- `name` -- the instance name passed to `getByName` or `idFromName`.
 - `id` -- the Durable Object ID as a string.
 
 Throws when called outside a generated Durable Object context.

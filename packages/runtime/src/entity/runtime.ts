@@ -14,6 +14,7 @@ import type { FluePiHost, WakeReason } from '../pi/host.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { createEntityFacet, type EntitySubscriptionPort } from './facet.ts';
 import { InboxConsumer } from './inbox.ts';
+import { createEntityQuestionHandler } from './questions.ts';
 import { ObservationBook } from './observations.ts';
 import { ScheduleBook } from './schedules.ts';
 import {
@@ -63,6 +64,17 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 	const now = options.now ?? Date.now;
 	const onReport = options.onReport ?? (() => {});
 	const { host, entity, log } = options;
+	// Questions to people are entity events (rule 9): this instance's handler.
+	host.setQuestionHandler(
+		createEntityQuestionHandler({
+			entity,
+			log,
+			settings: () => host.render?.questions,
+			armWake: options.armWake,
+			now,
+			onReport,
+		}),
+	);
 	const schedules = new ScheduleBook({ host, now, armWake: options.armWake, onReport });
 	const observations = new ObservationBook({ host, log, now });
 	const inbox = new InboxConsumer({

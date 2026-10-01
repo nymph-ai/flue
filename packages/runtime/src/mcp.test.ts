@@ -2,7 +2,8 @@
  * The MCP client against real servers from `@modelcontextprotocol/server`,
  * in process: a stateless 2026-07-28 endpoint (`createMcpHandler`), and a
  * 2025-11-25-only endpoint (a sessionful Streamable HTTP transport that
- * refuses the 2026 envelope), which Flue must refuse. Every request goes
+ * refuses the 2026 envelope), which Flue speaks through `initialize`, the
+ * way it speaks Linear's. Every request goes
  * through an injected `fetch`, which records what crossed the wire.
  */
 import {
@@ -16,15 +17,10 @@ import {
 	createMcpConnection,
 	createMcpConnectionCache,
 	McpInputRequiredError,
-	McpProtocolVersionError,
 	mcpToolName,
 } from './mcp.ts';
 import type { McpConnectionDefinition } from './mcp-types.ts';
-import {
-	type FlueQuestion,
-	QuestionParkedError,
-	setQuestionHandler,
-} from './questions.ts';
+import { type FlueQuestion, QuestionParkedError, setQuestionHandler } from './questions.ts';
 import { getMcpToolSource, getPreparedToolAdapter } from './tool-adapter.ts';
 import type { ToolDefinition } from './types.ts';
 
@@ -146,7 +142,7 @@ function legacyServer(tools: readonly ToolSpec[]) {
 		await buildServer(tools).connect(transport);
 		return transport.handleRequest(request);
 	}) as typeof fetch;
-	return { seen, fetch: fetchFn };
+	return { seen, fetch: fetchFn, forgetSessions: () => sessions.clear() };
 }
 
 const echo: ToolSpec = {
@@ -355,7 +351,10 @@ describe('stateless MCP (2026-07-28)', () => {
 		const asked: FlueQuestion[] = [];
 		setQuestionHandler(async (question) => {
 			asked.push(question);
-			return { kind: 'mcp-input', inputResponses: { confirm: { action: 'accept', content: { approved: true } } } };
+			return {
+				kind: 'mcp-input',
+				inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+			};
 		});
 		const connection = await createMcpConnection({
 			name: 'ops',
@@ -363,7 +362,9 @@ describe('stateless MCP (2026-07-28)', () => {
 			fetch: server.fetch,
 		});
 		const text = textOf(await run(connection.tools[0], { text: 'x' }));
-		expect(text).toBe('deployed with {"confirm":{"action":"accept","content":{"approved":true}}} and opaque-state-1');
+		expect(text).toBe(
+			'deployed with {"confirm":{"action":"accept","content":{"approved":true}}} and opaque-state-1',
+		);
 		expect(asked).toHaveLength(1);
 		const question = asked[0];
 		expect(question?.kind).toBe('mcp-input');
@@ -401,27 +402,54 @@ describe('stateless MCP (2026-07-28)', () => {
 	});
 });
 
-describe('servers on earlier revisions are refused', () => {
-	it('refuses a 2025-only server with one error naming it and its server/discover answer', async () => {
+describe('servers on the 2025 revisions are spoken through initialize', () => {
+	it('falls back from server/discover to the initialize handshake and its session', async () => {
 		const server = legacyServer([echo]);
-		const failure = await createMcpConnection({
+		const connection = await createMcpConnection({
 			name: 'old',
 			url: URL_LEGACY,
 			fetch: server.fetch,
-		}).catch((error: unknown) => error);
-		expect(failure).toBeInstanceOf(McpProtocolVersionError);
-		const message = (failure as Error).message;
-		expect(message).toContain('MCP server "old" (https://legacy.test/mcp)');
-		expect(message).toContain('does not speak MCP 2026-07-28');
-		expect(message).toContain('server/discover answer: HTTP 400, JSON-RPC error -32000');
-		expect(message).toContain('Server not initialized');
-		// No fallback: the 2025 handshake was never attempted, and no session exists.
-		const methods = server.seen.map((request) => request.method);
-		expect(methods).toEqual(['server/discover']);
-		expect(server.seen.every((request) => request.sessionId === null)).toBe(true);
+		});
+		expect(connection.tools.map((tool) => tool.name)).toEqual(['mcp__old__echo']);
+		expect(textOf(await run(connection.tools[0], { text: 'hi' }))).toBe('echo: hi');
+		const posts = server.seen.filter((request) => request.httpMethod === 'POST');
+		expect(posts.map((request) => request.method)).toEqual([
+			'server/discover',
+			'initialize',
+			'notifications/initialized',
+			'tools/list',
+			'tools/call',
+		]);
+		// Everything after initialize carries its session; nothing standing was opened.
+		expect(posts.slice(2).every((request) => typeof request.sessionId === 'string')).toBe(true);
+		expect(server.seen.filter((request) => request.httpMethod === 'GET')).toEqual([]);
+		await connection.close();
 	});
 
-	it('names the versions a server offers when none is 2026-07-28', async () => {
+	it('re-initializes once, without probing again, when the server forgot the session', async () => {
+		const server = legacyServer([echo]);
+		const connection = await createMcpConnection({
+			name: 'old',
+			url: URL_LEGACY,
+			fetch: server.fetch,
+		});
+		server.forgetSessions();
+		const before = server.seen.length;
+		expect(textOf(await run(connection.tools[0], { text: 'again' }))).toBe('echo: again');
+		const methods = server.seen
+			.slice(before)
+			.filter((request) => request.httpMethod === 'POST')
+			.map((request) => request.method);
+		expect(methods).toEqual([
+			'tools/call',
+			'initialize',
+			'notifications/initialized',
+			'tools/call',
+		]);
+		await connection.close();
+	});
+
+	it('refuses a server that speaks no revision Flue does', async () => {
 		const offering = (async (input: RequestInfo | URL, init?: RequestInit) => {
 			const request = new Request(input, init);
 			const body = (await request.clone().json()) as { id?: number };
@@ -432,7 +460,7 @@ describe('servers on earlier revisions are refused', () => {
 					error: {
 						code: -32022,
 						message: 'Unsupported protocol version',
-						data: { supported: ['2025-06-18', '2025-11-25'], requested: '2026-07-28' },
+						data: { supported: ['2024-01-01'], requested: '2026-07-28' },
 					},
 				},
 				{ status: 400 },
@@ -443,9 +471,7 @@ describe('servers on earlier revisions are refused', () => {
 			url: URL_LEGACY,
 			fetch: offering,
 		}).catch((error: unknown) => error);
-		expect(failure).toBeInstanceOf(McpProtocolVersionError);
-		expect((failure as McpProtocolVersionError).offered).toEqual(['2025-06-18', '2025-11-25']);
-		expect((failure as Error).message).toContain('It offered: 2025-06-18, 2025-11-25.');
+		expect(failure).toBeInstanceOf(Error);
 	});
 });
 

@@ -41,6 +41,16 @@ import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
 import { FlueInstance, FlueState } from '../pi/docs.ts';
+import {
+	listPendingQuestions,
+	onlyParked,
+	type PendingQuestion,
+	parkedQuestionTasks,
+	readQuestion,
+} from '../pi/questions.ts';
+import { appendAnswer } from '../entity/questions.ts';
+import type { EntityRef } from '../entity/services.ts';
+import type { FlueAnswer } from '../questions.ts';
 import { executionEnvFromSandbox } from '../pi/execution-env.ts';
 import type { FlueAttachmentPort } from '../pi/hooks.ts';
 import {
@@ -527,6 +537,7 @@ export class FlueAgentInstance {
 			context: workspace.context,
 			workspaceSkills: workspace.skills,
 			...(rendered.codeMode ? { codeMode: rendered.codeMode } : {}),
+			...(rendered.questions ? { questions: rendered.questions } : {}),
 		});
 		await host.applyRender(
 			this.#sandbox.tools ? { ...render, sandboxTools: this.#sandbox.tools } : render,
@@ -724,7 +735,7 @@ export class FlueAgentInstance {
 	 * Ring the doorbell: `stream` holds events through `head`. Records the
 	 * high-water mark in the wake book, then arms a wake now; the wake pumps.
 	 * (The Cloudflare coordinator rings the book itself, synchronously with
-	 * `setAlarm`, without opening the instance.)
+	 * its wake job, without opening the instance.)
 	 */
 	async ring(stream: string, head: string): Promise<void> {
 		(await this.#wakeBook()).ring(stream, head);
@@ -792,20 +803,102 @@ export class FlueAgentInstance {
 		return host.settlement(submissionId, BACKGROUND_CONTEXT);
 	}
 
-	/** Whether Pi holds no live work and no entity event waits to be pumped. */
+	/**
+	 * Whether Pi holds no live work and no entity event waits to be pumped.
+	 * Work that only waits on parked questions counts as idle: nothing runs
+	 * until an answer (or a deadline) wakes the instance.
+	 */
 	async idle(): Promise<boolean> {
 		if (!this.#opened) return true;
 		const { host } = await this.#open();
-		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
 		const behind = this.#options.entities ? (await this.#wakeBook()).behind() : false;
-		return inspection.tasks.length === 0 && inspection.submissions.length === 0 && !behind;
+		return !behind && (await this.#settledOrParked(host));
 	}
 
-	/** Resolve when every conversation's ordinary work is idle. */
+	async #settledOrParked(host: FluePiHost): Promise<boolean> {
+		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
+		if (inspection.tasks.length === 0) return inspection.submissions.length === 0;
+		return onlyParked(inspection.tasks, await parkedQuestionTasks(host.harness, BACKGROUND_CONTEXT));
+	}
+
+	/** Live work exists, and all of it waits on parked questions. */
+	async #onlyParked(host: FluePiHost): Promise<boolean> {
+		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
+		return (
+			inspection.tasks.length > 0 &&
+			onlyParked(inspection.tasks, await parkedQuestionTasks(host.harness, BACKGROUND_CONTEXT))
+		);
+	}
+
+	/**
+	 * Resolve when every conversation's ordinary work is idle, or waits only
+	 * on parked questions (nothing more happens until an answer arrives).
+	 */
 	async waitForIdle(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		if (!this.#opened) return;
 		const { host } = await this.#open();
-		await host.harness.waitForIdle(context);
+		let settled = false;
+		const idle = host.harness.waitForIdle(context).finally(() => {
+			settled = true;
+		});
+		idle.catch(() => {});
+		while (!settled) {
+			if (await this.#onlyParked(host)) return;
+			await Promise.race([idle, new Promise((resolve) => setTimeout(resolve, 25))]);
+		}
+		await idle;
+	}
+
+	// ─── Questions (rule 9) ─────────────────────────────────────────────────
+
+	/** The questions this instance waits on, oldest first. */
+	async pendingQuestions(): Promise<PendingQuestion[]> {
+		if (!this.#opened && !hasPiState(await this.#db())) return [];
+		const { host } = await this.#open();
+		return listPendingQuestions(host.harness, BACKGROUND_CONTEXT);
+	}
+
+	/**
+	 * Answer one of this instance's questions as a participant does: append
+	 * an `input-answered` event to its inbox, then ring its doorbell. The
+	 * pump admits the answer like any inbox event. An unknown or settled
+	 * question, or an answer of the wrong kind, is refused here before
+	 * anything is appended.
+	 */
+	async answerQuestion(
+		questionId: string,
+		answer: FlueAnswer,
+		options: { readonly from?: EntityRef; readonly answerId?: string } = {},
+	): Promise<
+		| { readonly status: 'accepted'; readonly eventId: string }
+		| { readonly status: 'unknown' }
+		| { readonly status: 'settled'; readonly questionStatus: string }
+		| { readonly status: 'mismatched'; readonly expected: string }
+	> {
+		const entities = this.#options.entities;
+		if (!entities) {
+			throw new Error(
+				'[flue] Questions travel on entity streams; configure Electric (FLUE_STREAMS_URL) to answer them.',
+			);
+		}
+		if (!this.#opened && !hasPiState(await this.#db())) return { status: 'unknown' };
+		const { host } = await this.#open();
+		const record = await readQuestion(host.harness, questionId, BACKGROUND_CONTEXT);
+		if (!record) return { status: 'unknown' };
+		if (record.status !== 'parked') return { status: 'settled', questionStatus: record.status };
+		const expected = (record.question as { kind?: string } | null)?.kind ?? '';
+		if (answer.kind !== expected) return { status: 'mismatched', expected };
+		const self = { type: this.agentName, id: this.instanceId };
+		const eventId = `answer:${options.answerId ?? crypto.randomUUID()}`;
+		const { inbox } = await appendAnswer(entities.log, self, {
+			from: options.from ?? { type: 'person', id: 'http' },
+			questionId,
+			answer,
+			eventId,
+		});
+		const head = await entities.log.head(inbox);
+		if (head) await this.ring(inbox, head.nextOffset);
+		return { status: 'accepted', eventId };
 	}
 
 	/** Rows this instance's database read and wrote so far (the counting facades only). */

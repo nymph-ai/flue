@@ -1,11 +1,11 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 /**
- * Code Mode inside workerd: the real `codemode` Pi tool over
- * `@cloudflare/codemode`'s runtime, whose state lives in a Durable Object
- * Facet of a stand-in agent (`workers/test-worker.ts`), with scripts in
- * Dynamic Workers over Miniflare's Worker Loader. The Pi tool API is a fake
- * whose documents live in a Map, so `codemode.store()` is observed the way
- * Pi stores it: through `snapshot` and `commit`.
+ * Code Mode inside workerd: the real `codemode` Pi tool running Pi's QuickJS
+ * sandbox in-process in a stand-in agent's Durable Object
+ * (`workers/test-worker.ts`), with QuickJS imported as a compiled module the
+ * way the generated Worker entry imports it. The Pi tool API is a fake whose
+ * documents live in a Map, so `store()` and the journal of a parked script
+ * are observed the way Pi stores them: through `snapshot` and `commit`.
  */
 
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
@@ -17,8 +17,8 @@ import type {
 	ToolRegistration,
 } from '@earendil-works/pi-durable';
 import { afterEach, describe, expect, it } from 'vitest';
-import { codemodeRuntime } from '../cloudflare/codemode.ts';
 import { runWithCloudflareContext } from '../cloudflare/context.ts';
+import { FlueQuestionCall, FlueQuestions } from '../pi/questions.ts';
 import {
 	type FlueAnswer,
 	type FlueQuestion,
@@ -26,12 +26,17 @@ import {
 	setQuestionHandler,
 } from '../questions.ts';
 import { type McpCallResult, registerMcpToolSource } from '../tool-adapter.ts';
-import { CODEMODE_TOOL_NAME, type CodemodeToolOptions, createCodemodeToolRegistration, resumeCodemodeQuestion } from './tool.ts';
+import {
+	CODEMODE_TOOL_NAME,
+	type CodemodeToolOptions,
+	createCodemodeToolRegistration,
+	resumeCodemodeQuestion,
+} from './tool.ts';
 
 const PIXEL =
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
-type TestEnv = { AGENT: DurableObjectNamespace; LOADER: WorkerLoader };
+type TestEnv = { AGENT: DurableObjectNamespace };
 const testEnv = env as unknown as TestEnv;
 
 const objectSchema = (properties: Record<string, unknown>) =>
@@ -43,7 +48,11 @@ function fakeApi(documents: Map<string, unknown>, callId: string): ToolExecution
 		`${token.definition.kind}:${String(conversationId)}`;
 	return {
 		callId,
+		// One tool task per call: the codemode tool keeps a task-scoped record of
+		// the call (`pi/questions.ts` FlueQuestionCall).
+		taskId: callId,
 		conversationId: 1,
+		env: undefined,
 		output: () => {},
 		diagnostic: () => {},
 		details: async () => {},
@@ -144,15 +153,6 @@ const greet: ToolRegistration = {
 	},
 };
 
-const greetUnderscore: ToolRegistration = {
-	name: 'greet_user',
-	description: 'Greets someone, differently.',
-	parameters: objectSchema({ name: { type: 'string' } }),
-	async execute(args) {
-		return { content: [{ type: 'text', text: `hi ${String((args as { name: string }).name)}` }] };
-	},
-};
-
 const camera = mcpTool('cam', 'snapshot', {
 	description: 'Take a picture.',
 	result: () => ({
@@ -177,15 +177,30 @@ function opsServer() {
 	return { deployed, tool };
 }
 
+/** A tool that only counts its calls: the effect a rerun must not repeat. */
+function counter(name: string) {
+	const state = { calls: 0 };
+	const tool: ToolRegistration = {
+		name,
+		description: `Count ${name} calls.`,
+		parameters: objectSchema({}),
+		async execute() {
+			state.calls++;
+			return { content: [{ type: 'text', text: `${name} #${state.calls}` }] };
+		},
+	};
+	return { state, tool };
+}
+
 function textOf(result: ToolExecutionResult): string {
 	return (result.content ?? [])
 		.map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
 		.join('\n');
 }
 
-/** The script's value, from a completed result's second block. */
-function scriptValue(result: ToolExecutionResult): unknown {
-	return JSON.parse(textOf(result).split('\n').slice(1).join('\n'));
+/** The output after Pi's result header (`Script completed` … `Output:`). */
+function outputOf(result: ToolExecutionResult): string {
+	return textOf(result).split('Output:\n').slice(1).join('Output:\n').trim();
 }
 
 function detailsOf(result: ToolExecutionResult) {
@@ -194,7 +209,7 @@ function detailsOf(result: ToolExecutionResult) {
 
 let agentCount = 0;
 
-/** A fresh stand-in agent: its own Durable Object, so its own runtime facet. */
+/** A fresh stand-in agent: scripts run inside its Durable Object. */
 function agent() {
 	const stub = testEnv.AGENT.get(testEnv.AGENT.idFromName(`agent-${++agentCount}`));
 	/** Run `fn` inside the agent, with the Cloudflare context the coordinator establishes. */
@@ -221,102 +236,118 @@ function agent() {
 
 afterEach(() => setQuestionHandler(undefined));
 
-describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Workers)', () => {
-	it('describes the sandbox ABI and its namespaces, not every method', async () => {
+describe("Pi's Code Mode in a Durable Object (QuickJS in-process)", () => {
+	it("describes Pi's surface: helpers, the models API, and the tools' declarations", async () => {
 		const { inside } = agent();
 		const tool = await inside(async () =>
 			createCodemodeToolRegistration({ tools: [greet, ...largeCatalog()] }),
 		);
 		expect(tool.name).toBe(CODEMODE_TOOL_NAME);
-		expect(tool.replay).toBe('unsafe');
-		for (const phrase of ['codemode.search(', 'codemode.describe(', 'codemode.step(', 'codemode.run(']) {
+		// Rerun only to continue a parked question; any other rerun settles as interrupted.
+		expect(tool.replay).toBe('safe');
+		for (const phrase of [
+			'await tools.read(...)',
+			'searchTools(query: string',
+			'describeNamespace(name: string)',
+			'store(key: string, value: any)',
+			'Model API:',
+			'classify(model: ModelInfo, context: ClassifierContext): Promise<ClassifierResult>',
+			'## mcp__crm (some tools not listed)',
+			'### `greet_user` (`greet-user`)',
+		]) {
 			expect(tool.description).toContain(phrase);
 		}
-		expect(tool.description).toContain('MCP server "crm", 200 methods');
-		expect(tool.description).not.toContain('list_widgets_7');
+		// Pi's 3000-token budget lists some of the 200 tools, not all.
+		expect(tool.description).not.toContain('list_widgets_198');
 	});
 
-	it("searches and describes a 200-method catalog with the runtime's own codemode.search/describe", async () => {
+	it('finds a tool in a 200-tool catalog with searchTools() and describeTool()', async () => {
 		const { run } = agent();
 		const result = await run(
 			{ tools: largeCatalog() },
-			`async () => {
-				const found = await codemode.search("invoice total");
-				const docs = await codemode.describe(found.results[0].path);
-				return { first: found.results[0].path, total: found.total, types: docs.types };
-			}`,
+			`const found = await searchTools("invoice total");
+			const docs = await describeTool(found[0].name);
+			return { first: found[0].name, all: ALL_TOOLS.length, typed: docs.includes("cents: number") };`,
 		);
 		expect(result.isError).toBeUndefined();
-		const value = scriptValue(result) as { first: string; total: number; types: string };
-		expect(value.first).toBe('crm.get_invoice_total');
-		expect(value.total).toBeGreaterThanOrEqual(1);
-		expect(value.types).toContain('cents: number');
+		expect(JSON.parse(outputOf(result))).toEqual({
+			first: 'mcp__crm__get_invoice_total',
+			all: 200,
+			typed: true,
+		});
 	});
 
-	it('returns typed structured content from MCP methods', async () => {
+	it("resolves an MCP tool to its CallToolResult, Pi's way", async () => {
 		const { run } = agent();
 		const result = await run(
 			{ tools: largeCatalog() },
-			`async () => {
-				const total = await crm.get_invoice_total({ id: "inv-7" });
-				return total.cents + 1;
-			}`,
+			`const total = await tools.mcp__crm__get_invoice_total({ id: "inv-7" });
+			return [total.structuredContent.cents + 1, total.content[0].type, "_meta" in total];`,
 		);
-		expect(textOf(result)).toMatch(/\n4201$/);
+		expect(outputOf(result)).toBe('[4201,"text",false]');
 	});
 
-	it('passes images through to the model', async () => {
+	it('passes images through image()', async () => {
 		const { run } = agent();
-		const result = await run({ tools: [camera] }, 'async () => await cam.snapshot({})');
+		const result = await run(
+			{ tools: [camera] },
+			'const shot = await tools.mcp__cam__snapshot({}); text(shot.content[0].text); image(shot.content[1]);',
+		);
 		expect(result.isError).toBeUndefined();
 		expect(result.content).toContainEqual({ type: 'image', data: PIXEL, mimeType: 'image/png' });
 		expect(textOf(result)).toContain('a frame');
 	});
 
-	it("calls the agent's own tools, keeping names that differ only by - and _ apart", async () => {
-		const { inside, run } = agent();
-		const tool = await inside(async () =>
-			createCodemodeToolRegistration({ tools: [greet, greetUnderscore] }),
-		);
-		const ids = [...new Set([...tool.description.matchAll(/greet_user_[0-9a-f]{6}/g)].map((m) => m[0]))];
-		expect(ids).toHaveLength(2);
-		const [first, second] = ids as [string, string];
+	it("calls the agent's own tools by identifier and by name", async () => {
+		const { run } = agent();
 		const result = await run(
-			{ tools: [greet, greetUnderscore] },
-			`async () => [await tools.${first}({ name: "a" }), await tools.${second}({ name: "b" })]`,
+			{ tools: [greet] },
+			'return [await tools.greet_user({ name: "a" }), await tools["greet-user"]({ name: "b" })];',
 		);
-		const value = scriptValue(result) as string[];
-		expect(value.some((entry) => entry.startsWith('hello'))).toBe(true);
-		expect(value.some((entry) => entry.startsWith('hi'))).toBe(true);
+		expect(outputOf(result)).toBe('["hello a","hello b"]');
 	});
 
 	it('keeps store() across calls in the conversation, and drops the writes of a failed script', async () => {
 		const { run } = agent();
-		const first = await run(
-			{ tools: [greet] },
-			'async () => { await codemode.store("seen", { count: 1 }); return "ok"; }',
-		);
+		const first = await run({ tools: [greet] }, 'store("seen", { count: 1 }); return "ok";');
 		expect(first.isError).toBeUndefined();
 		const failed = await run(
 			{ tools: [greet] },
-			'async () => { await codemode.store("seen", { count: 99 }); throw new Error("boom"); }',
+			'store("seen", { count: 99 }); throw new Error("boom");',
 		);
 		expect(failed.isError).toBe(true);
 		expect(textOf(failed)).toContain('boom');
-		const second = await run({ tools: [greet] }, 'async () => (await codemode.load("seen")).count + 1');
-		expect(textOf(second)).toMatch(/\n2$/);
+		const second = await run({ tools: [greet] }, 'return load("seen").count + 1;');
+		expect(outputOf(second)).toBe('2');
 	});
 
-	it('has no network', async () => {
+	it('has no network, no timers and no host globals', async () => {
 		const { run } = agent();
 		const result = await run(
 			{ tools: [] },
-			'async () => { await fetch("https://example.com"); return "reached"; }',
+			'return [typeof fetch, typeof setTimeout, typeof process, typeof WebAssembly];',
 		);
-		expect(textOf(result)).not.toContain('reached');
+		expect(outputOf(result)).toBe('["undefined","undefined","undefined","undefined"]');
 	});
 
-	it('pauses at a method that requires approval, and continues by replay once approved', async () => {
+	it('stops a script that spins, within its CPU budget', async () => {
+		const { run } = agent();
+		const result = await run({ tools: [] }, 'while (true) {}');
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain('CPU budget');
+	});
+
+	it('fails a script that outgrows its memory limit, inside the script', async () => {
+		const { run } = agent();
+		const result = await run(
+			{ tools: [], memoryLimitBytes: 8 * 1024 * 1024 },
+			'const a = []; while (true) a.push("x".repeat(1024));',
+		);
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain('out of memory');
+	});
+
+	it('asks before a tool that requires approval, and runs it once approved', async () => {
 		const ops = opsServer();
 		const asked: FlueQuestion[] = [];
 		setQuestionHandler(async (question): Promise<FlueAnswer> => {
@@ -325,59 +356,55 @@ describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Work
 		});
 		const { run } = agent();
 		const result = await run(
-			{ tools: [ops.tool], requiresApproval: ['ops.deploy'] },
-			`async () => {
-				const id = await codemode.step("build-id", () => crypto.randomUUID());
-				const done = await ops.deploy({ id });
-				return { id, done };
-			}`,
+			{ tools: [ops.tool], requiresApproval: ['mcp__ops__deploy'] },
+			'const done = await tools.mcp__ops__deploy({ id: "b-0" }); return done.content[0].text;',
 		);
 		expect(result.isError).toBeUndefined();
-		const value = scriptValue(result) as { id: string; done: string };
-		// The step ran once: the replayed run saw the same id, and deployed it once.
-		expect(ops.deployed).toEqual([value.id]);
-		expect(value.done).toBe(`deployed ${value.id}`);
+		expect(outputOf(result)).toBe('deployed b-0');
+		expect(ops.deployed).toEqual(['b-0']);
 		expect(asked).toHaveLength(1);
 		const question = asked[0];
 		if (question?.kind !== 'codemode-approval') throw new Error('expected an approval question');
-		expect(question.runtime).toBe('flue');
 		expect(question.pending).toEqual([
-			expect.objectContaining({ connector: 'ops', method: 'deploy', args: { id: value.id } }),
+			expect.objectContaining({
+				connector: 'tools',
+				method: 'mcp__ops__deploy',
+				args: { id: 'b-0' },
+			}),
 		]);
-		expect(question.id).toBe(
-			`codemode:flue:${question.executionId}:${question.pending.map((action) => action.seq).join(',')}`,
-		);
+		expect(question.id).toMatch(new RegExp(`^codemode:${question.executionId}:[0-9a-f]{12}$`));
 		expect(question.callId).toMatch(/^call-/);
 	});
 
-	it('gates methods by a predicate over MCP annotations', async () => {
+	it('gates tools by a predicate over MCP annotations', async () => {
 		const ops = opsServer();
 		const { run } = agent();
 		const result = await run(
-			{ tools: [ops.tool], requiresApproval: (method) => method.annotations?.destructiveHint === true },
-			'async () => await ops.deploy({ id: "b-1" })',
+			{
+				tools: [ops.tool],
+				requiresApproval: (method) => method.annotations?.destructiveHint === true,
+			},
+			'await tools.mcp__ops__deploy({ id: "b-1" });',
 		);
 		// Not wired: refused, and never executed.
 		expect(result.isError).toBe(true);
 		expect(ops.deployed).toEqual([]);
 	});
 
-	it('refuses clearly while questions are not wired, ending the execution', async () => {
+	it('refuses clearly while questions are not wired', async () => {
 		const ops = opsServer();
-		const { run, inside } = agent();
+		const { run } = agent();
 		const result = await run(
-			{ tools: [ops.tool], requiresApproval: ['ops.*'] },
-			'async () => await ops.deploy({ id: "b-1" })',
+			{ tools: [ops.tool], requiresApproval: ['mcp__ops__*'] },
+			'await tools.mcp__ops__deploy({ id: "b-1" });',
 		);
 		expect(result.isError).toBe(true);
-		expect(textOf(result)).toContain('ops.deploy');
+		expect(textOf(result)).toContain('tools.mcp__ops__deploy');
 		expect(textOf(result)).toContain('questions are not wired');
 		expect(ops.deployed).toEqual([]);
-		// Nothing is left paused in the facet.
-		expect(await inside(() => codemodeRuntime().pending())).toEqual([]);
 	});
 
-	it('ends the execution when the approval is rejected', async () => {
+	it('rejects the call inside the script when the approval is rejected', async () => {
 		const ops = opsServer();
 		setQuestionHandler(async () => ({
 			kind: 'codemode-approval',
@@ -386,44 +413,47 @@ describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Work
 		}));
 		const { run } = agent();
 		const result = await run(
-			{ tools: [ops.tool], requiresApproval: ['ops.deploy'] },
-			'async () => await ops.deploy({ id: "b-2" })',
+			{ tools: [ops.tool], requiresApproval: ['mcp__ops__deploy'] },
+			'try { await tools.mcp__ops__deploy({ id: "b-2" }); } catch (error) { return "caught: " + error.message; }',
 		);
-		expect(result.isError).toBe(true);
-		expect(textOf(result)).toContain('rejected: not on a Friday');
+		expect(result.isError).toBeUndefined();
+		expect(outputOf(result)).toContain('rejected: not on a Friday');
 		expect(ops.deployed).toEqual([]);
 	});
 
-	it('parks durably: the execution survives an eviction and resumes with the answer', async () => {
+	it('parks durably: after an eviction the script runs again over its journal, the parked call once', async () => {
 		const ops = opsServer();
+		const note = counter('note');
 		let parked: FlueQuestion | undefined;
 		setQuestionHandler(async (question) => {
 			parked = question;
 			throw new QuestionParkedError(question);
 		});
 		const { stub, inside, documents } = agent();
-		const options: CodemodeToolOptions = { tools: [ops.tool], requiresApproval: ['ops.deploy'] };
+		const options: CodemodeToolOptions = {
+			tools: [note.tool, ops.tool],
+			requiresApproval: ['mcp__ops__deploy'],
+		};
+		const code =
+			'const before = await tools.note({}); store("last", "b-3"); const done = await tools.mcp__ops__deploy({ id: "b-3" }); return [before, done.content[0].text];';
 		const first = await inside(async () =>
 			createCodemodeToolRegistration(options).execute(
-				{
-					code: 'async () => { await codemode.store("last", "b-3"); return await ops.deploy({ id: "b-3" }); }',
-				},
+				{ code },
 				fakeApi(documents, 'call-park'),
 				BACKGROUND_CONTEXT,
 			),
 		);
 		expect(first.isError).toBeUndefined();
 		expect(detailsOf(first).status).toBe('parked');
-		expect(textOf(first)).toContain('ops.deploy needs approval');
+		expect(textOf(first)).toContain('tools.mcp__ops__deploy needs approval');
 		expect(ops.deployed).toEqual([]);
+		expect(note.state.calls).toBe(1);
 		if (parked?.kind !== 'codemode-approval') throw new Error('expected a parked approval');
 		const question = parked;
 		expect(detailsOf(first).questionId).toBe(question.id);
 
 		await evictDurableObject(stub);
 
-		const pending = await inside(() => codemodeRuntime().pending());
-		expect(pending).toEqual([expect.objectContaining({ executionId: question.executionId, method: 'deploy' })]);
 		const resumed = await inside(async () =>
 			resumeCodemodeQuestion(
 				createCodemodeToolRegistration(options),
@@ -434,34 +464,71 @@ describe('Code Mode on @cloudflare/codemode (Durable Object Facet + Dynamic Work
 			),
 		);
 		expect(resumed.isError).toBeUndefined();
-		expect(textOf(resumed)).toContain('deployed b-3');
+		expect(outputOf(resumed)).toBe('["note #1","deployed b-3"]');
+		// The journaled call was answered from the journal; the approved one ran once.
+		expect(note.state.calls).toBe(1);
 		expect(ops.deployed).toEqual(['b-3']);
-		// The resumed run's store() writes were kept.
+		// The continued run's store() writes were kept.
 		expect([...documents.values()]).toContainEqual({ values: { last: 'b-3' } });
 	});
 
-	it('runs a snippet the developer saved from an earlier execution', async () => {
-		const { run, inside } = agent();
-		const first = await run(
-			{ tools: [greet] },
-			'async (input) => await tools.greet_user({ name: input?.name ?? "nobody" })',
+	it('continues a parked call when Pi reruns it, answering the earlier calls from the journal', async () => {
+		const ops = opsServer();
+		const note = counter('note');
+		const { inside, documents } = agent();
+		const api = fakeApi(documents, 'call-rerun');
+		// The first run parks the way the entity handler does when its instance
+		// goes away: the question and the call record stay, the call ends.
+		setQuestionHandler(async (question) => {
+			await api.commit(async (tx) => {
+				const record = await tx.doc(FlueQuestions, question.id, null);
+				record.status = 'parked';
+				record.question = JSON.parse(JSON.stringify(question));
+				const call = await tx.doc(FlueQuestionCall, api.taskId);
+				call.started = true;
+				call.question = question.id;
+			}, BACKGROUND_CONTEXT);
+			throw new QuestionParkedError(question);
+		});
+		const options: CodemodeToolOptions = {
+			tools: [note.tool, ops.tool],
+			requiresApproval: ['mcp__ops__deploy'],
+		};
+		const code =
+			'const [a, b] = await Promise.all([tools.note({}), tools.note({})]); const done = await tools.mcp__ops__deploy({ id: "c-0" }); return [a, b, done.content[0].text];';
+		const first = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
+		);
+		expect(detailsOf(first).status).toBe('parked');
+		expect(note.state.calls).toBe(2);
+		// The answer arrives; Pi reruns the same tool task.
+		setQuestionHandler(async () => ({ kind: 'codemode-approval', decision: 'approve' }));
+		const rerun = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
+		);
+		expect(rerun.isError).toBeUndefined();
+		expect(outputOf(rerun)).toBe('["note #1","note #2","deployed c-0"]');
+		expect(note.state.calls).toBe(2);
+		expect(ops.deployed).toEqual(['c-0']);
+	});
+
+	it('a rerun of a call that never parked settles as interrupted instead of running the script again', async () => {
+		const ops = opsServer();
+		const { inside, documents } = agent();
+		const options: CodemodeToolOptions = { tools: [ops.tool] };
+		const code = 'return (await tools.mcp__ops__deploy({ id: "c-1" })).content[0].text;';
+		const api = fakeApi(documents, 'call-once');
+		const first = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
 		);
 		expect(first.isError).toBeUndefined();
-		await inside(() =>
-			codemodeRuntime().saveSnippet('greet-someone', {
-				executionId: detailsOf(first).executionId,
-				description: 'Greet a person by name.',
-			}),
+		expect(ops.deployed).toEqual(['c-1']);
+		// Pi reruns the same tool task (the same api): the call already started.
+		const rerun = await inside(async () =>
+			createCodemodeToolRegistration(options).execute({ code }, api, BACKGROUND_CONTEXT),
 		);
-		const second = await run(
-			{ tools: [greet] },
-			`async () => {
-				const found = await codemode.search("greet a person");
-				const ran = await codemode.run("greet-someone", { name: "Ada" });
-				return { snippet: found.results.some((r) => r.kind === "snippet" && r.path === "greet-someone"), ran };
-			}`,
-		);
-		expect(second.isError).toBeUndefined();
-		expect(scriptValue(second)).toEqual({ snippet: true, ran: 'hello Ada' });
+		expect(rerun.isError).toBe(true);
+		expect(textOf(rerun)).toContain('interrupted');
+		expect(ops.deployed).toEqual(['c-1']);
 	});
 });

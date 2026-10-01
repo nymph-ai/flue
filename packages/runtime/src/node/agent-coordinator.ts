@@ -40,6 +40,8 @@ import { entityOfInboxPath } from '../entity/paths.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { conversationStreamStoreLog } from '../streams/store-bridge-log.ts';
 import { join } from 'node:path';
+import type { PendingQuestion } from '../pi/questions.ts';
+import type { AnswerRequest, AnswerResult } from '../runtime/question-routes.ts';
 import type { Agent, DeliveredMessage, DispatchReceipt } from '../types.ts';
 import { openNodeSqliteDatabase } from './node-sqlite-database.ts';
 
@@ -60,6 +62,15 @@ export interface NodeAgentCoordinator {
 	readAttachment(agentName: string, instanceId: string, attachmentId: string): Promise<Response>;
 	/** Existence and uid of an instance, without creating it. */
 	instanceInfo(agentName: string, instanceId: string): Promise<{ exists: boolean; uid?: string }>;
+	/** The questions an instance waits on (rule 9). */
+	pendingQuestions(agentName: string, instanceId: string): Promise<PendingQuestion[]>;
+	/** Answer one of an instance's questions through its inbox. */
+	answerQuestion(
+		agentName: string,
+		instanceId: string,
+		questionId: string,
+		request: AnswerRequest,
+	): Promise<AnswerResult>;
 	/** Resolves when every open instance is idle. For tests and graceful shutdown. */
 	waitForIdle(): Promise<void>;
 	/**
@@ -274,6 +285,21 @@ export function createNodeAgentCoordinator(options: {
 
 		instanceInfo(agentName, instanceId) {
 			return instanceOf(agentName, instanceId).info();
+		},
+
+		async pendingQuestions(agentName, instanceId) {
+			const instance = instanceOf(agentName, instanceId);
+			if (!(await instance.info()).exists) return [];
+			return (await opened(agentName, instanceId)).pendingQuestions();
+		},
+
+		async answerQuestion(agentName, instanceId, questionId, request) {
+			const instance = instanceOf(agentName, instanceId);
+			if (!(await instance.info()).exists) return { status: 'unknown' };
+			return (await opened(agentName, instanceId)).answerQuestion(questionId, request.answer, {
+				...(request.from ? { from: request.from } : {}),
+				...(request.answerId ? { answerId: request.answerId } : {}),
+			});
 		},
 
 		async waitForIdle() {

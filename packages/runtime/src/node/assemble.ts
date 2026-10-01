@@ -165,6 +165,10 @@ export async function assembleNodeAgentRuntime(
 		readAttachment: (agentName, instanceId, attachmentId) =>
 			coordinator.readAttachment(agentName, instanceId, attachmentId),
 		instanceInfo: (agentName, instanceId) => coordinator.instanceInfo(agentName, instanceId),
+		pendingQuestions: (agentName, instanceId) =>
+			coordinator.pendingQuestions(agentName, instanceId),
+		answerQuestion: (agentName, instanceId, questionId, request) =>
+			coordinator.answerQuestion(agentName, instanceId, questionId, request),
 	};
 	configurationAdapters.set(runtimeConfiguration, options.adapter);
 	configureFlueRuntime(runtimeConfiguration);

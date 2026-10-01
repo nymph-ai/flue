@@ -10,6 +10,13 @@
  * a sender's replayed tool call, a crash before the cursor moved, two
  * overlapping pumps — is admitted once (rule 5).
  *
+ * Two event kinds are not messages (rule 9): an `input-answered` event
+ * settles the parked question it names (`pi/questions.ts` `recordAnswer`),
+ * which continues the asking call — a duplicate, late, unknown or mismatched
+ * answer is reported and changes nothing; an `input-requested` event (this
+ * entity is a question's responder) is admitted as an `input.requested`
+ * signal, keyed by the event id like any message.
+ *
  * An event is admitted, or — when it can never be (a payload conflict, a
  * spawn of an instance that already exists, a malformed message) — reported
  * and skipped, so one bad event cannot wedge the inbox. Anything else
@@ -19,11 +26,18 @@ import type { Context } from '@earendil-works/chord';
 import { AgentInstanceExistsError, SubmissionConflictError } from '../errors.ts';
 import { type A2aInboxMessage, parseA2aInboxMessage } from './events.ts';
 import type { FluePiHost } from '../pi/host.ts';
+import { recordAnswer } from '../pi/questions.ts';
 import { deriveKeyedSubmissionId } from '../runtime/ids.ts';
 import { DurableStreamLogError, type DurableStreamLog } from '../streams/log.ts';
 import { asStreamOffset, type StreamOffset } from '../streams/offset.ts';
 import { deliveredFromEntity, parseEntityMessage } from './messages.ts';
 import { entityKey, inboxPath } from './paths.ts';
+import {
+	type InputAnsweredEvent,
+	type InputRequestedEvent,
+	parseInputAnswered,
+	parseInputRequested,
+} from './questions.ts';
 import type { ScheduleBook } from './schedules.ts';
 import type { EntityRef } from './services.ts';
 
@@ -46,6 +60,8 @@ export interface InboxBatchResult {
 	/** Submission ids admitted (or found already admitted). */
 	readonly admitted: readonly string[];
 	readonly skipped: number;
+	/** Question ids an `input-answered` event of the batch settled. */
+	readonly answered: readonly string[];
 }
 
 /** The submission a relayed message is admitted as. */
@@ -75,13 +91,34 @@ export class InboxConsumer {
 			batch = await log.read(this.path, asStreamOffset(from));
 		} catch (error) {
 			if (error instanceof DurableStreamLogError && error.code === 'not-found') {
-				return { nextOffset: from, upToDate: true, events: 0, admitted: [], skipped: 0 };
+				return {
+					nextOffset: from,
+					upToDate: true,
+					events: 0,
+					admitted: [],
+					skipped: 0,
+					answered: [],
+				};
 			}
 			throw error;
 		}
 		const admitted: string[] = [];
+		const answered: string[] = [];
 		let skipped = 0;
 		for (const raw of batch.messages) {
+			const answer = parseInputAnswered(raw);
+			if (answer) {
+				if (await this.#answer(answer, context)) answered.push(answer.questionId);
+				else skipped++;
+				continue;
+			}
+			const requested = parseInputRequested(raw);
+			if (requested) {
+				const outcome = await this.#requested(requested, context);
+				if (outcome === 'skipped') skipped++;
+				else admitted.push(outcome);
+				continue;
+			}
 			const message = parseA2aInboxMessage(raw);
 			if (!message) {
 				onReport(new Error(`[flue] Skipped a malformed message on inbox "${this.path}".`));
@@ -98,7 +135,78 @@ export class InboxConsumer {
 			events: batch.messages.length,
 			admitted,
 			skipped,
+			answered,
 		};
+	}
+
+	/** Settle the question an answer names; `false` when it changed nothing (reported). */
+	async #answer(event: InputAnsweredEvent, context: Context): Promise<boolean> {
+		const { host, onReport, now } = this.#options;
+		const outcome = await recordAnswer(
+			host.harness,
+			{
+				questionId: event.questionId,
+				answer: event.answer,
+				from: event.from,
+				eventId: event.eventId,
+				now: now(),
+			},
+			context,
+		);
+		if (outcome.kind === 'answered') return true;
+		const why =
+			outcome.kind === 'unknown'
+				? 'no such question'
+				: outcome.kind === 'settled'
+					? `the question is already ${outcome.status}`
+					: `a ${event.answer.kind} answer to a ${outcome.expected} question`;
+		onReport(
+			new Error(
+				`[flue] Ignored answer ${event.eventId} from ${entityKey(event.from)} to ${event.questionId} on inbox "${this.path}": ${why}.`,
+			),
+		);
+		return false;
+	}
+
+	/** This entity is a question's responder: the question arrives as a signal. */
+	async #requested(event: InputRequestedEvent, context: Context): Promise<string | 'skipped'> {
+		const { host, entity, now, onReport } = this.#options;
+		const submissionId = await inboxSubmissionId(entity, event.eventId);
+		const asker = event.answerTo.entity;
+		try {
+			await host.admit(
+				{
+					submissionId,
+					kind: 'dispatch',
+					message: {
+						kind: 'signal',
+						type: 'input.requested',
+						body: [
+							`${entityKey(event.from)} asks: ${event.summary}`,
+							`Answer it with the answer_question tool: to ${JSON.stringify({ type: asker.type, id: asker.id })}, question_id ${JSON.stringify(event.questionId)}, and the answer.`,
+						].join('\n'),
+						attributes: {
+							from_type: event.from.type,
+							from_id: event.from.id,
+							from: entityKey(event.from),
+							question_id: event.questionId,
+							question_kind: String((event.question as { kind?: unknown }).kind ?? ''),
+							message_id: event.eventId,
+						},
+					},
+					acceptedAt: new Date(now()).toISOString(),
+					whenBusy: 'followUp',
+				},
+				context,
+			);
+		} catch (error) {
+			if (error instanceof SubmissionConflictError || error instanceof AgentInstanceExistsError) {
+				onReport(error);
+				return 'skipped';
+			}
+			throw error;
+		}
+		return submissionId;
 	}
 
 	/** Admit one message; the submission id, `undefined` for a directive without one, or `skipped`. */

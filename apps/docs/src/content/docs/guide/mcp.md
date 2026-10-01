@@ -125,13 +125,22 @@ On Node, credentials are kept in memory; pass `setMcpOAuthBroker(createMcpOAuthB
 
 ## Protocol and transports
 
-Flue speaks one MCP protocol revision, the stateless 2026-07-28, over Streamable HTTP. A connection starts with `server/discover` and carries no session, so an agent keeps no connection open between messages: a server's tool list is re-read when its cache hint expires, or on the agent's next wake.
+Flue speaks MCP over Streamable HTTP, in the revision each server speaks. A connection starts with `server/discover`: a server on the stateless 2026-07-28 revision answers it and the connection carries no session. Any other answer — a 2025 server's `Method not found` or `Server not initialized`, as most servers give today — gets the standard `initialize` handshake (2025-11-25 or 2025-06-18) and a session. What each server speaks is remembered in memory for the agent's lifetime, so a reconnect skips the probe; nothing is stored, and a cold start negotiates again. If a 2025 server forgets the session (HTTP 404), Flue initializes again once and resends the request.
 
-Servers on earlier revisions are not supported. Flue does not fall back to the 2025 `initialize` handshake; connecting to such a server fails with `McpProtocolVersionError`, which names the server and the versions it offered (or what it answered to `server/discover`). There is no stdio transport on any target, and the legacy HTTP+SSE transport is not supported either: run a local server behind Streamable HTTP.
+Either way an agent keeps no connection open between messages: Flue opens no server-to-client stream, and a server's tool list is re-read when its cache hint expires, or on the agent's next wake. A server that speaks none of these revisions is refused with `McpProtocolVersionError`, naming the server and what it offered. There is no stdio transport on any target, and the legacy HTTP+SSE transport is not supported either: run a local server behind Streamable HTTP.
 
 ### When a server asks for input
 
-A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue puts that request to the agent's question channel and, once answered, sends the call again with the answers and the server's `requestState`. Questions to people are published as entity events (see [Code Mode approvals](/docs/guide/code-mode/#approvals), which use the same channel). Until that is wired, nothing answers, and the call fails with `McpInputRequiredError`, whose message names what the server asked for.
+A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue turns that into a question to a person or another agent: an `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream (see [Answering approvals](/docs/guide/code-mode/#answering-approvals), which use the same channel). The tool call waits inside the agent's turn, durably — the agent may be evicted meanwhile — and once the answer arrives in the agent's inbox, Flue sends the call again on a fresh request with the answers as `inputResponses` and the server's `requestState` echoed byte for byte. The answer is keyed as the server keyed its input requests:
+
+```ts
+await client.answer(question.id, {
+  kind: 'mcp-input',
+  inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+});
+```
+
+Questions need the agent's entity streams (Electric). Without them, or when the question expires (`useQuestions({ timeoutMs })`), the call fails with `McpInputRequiredError`, whose message names what the server asked for.
 
 ## Specifying tools
 

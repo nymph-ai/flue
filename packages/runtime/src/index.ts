@@ -60,13 +60,22 @@ export type {
 } from './execution-interceptor.ts';
 export { useAgentFinish } from './hooks/use-agent-finish.ts';
 export { useAgentStart } from './hooks/use-agent-start.ts';
-export type {
-	CodemodeExecuteResult,
-	CodemodeExecutor,
-	CodemodeProvider,
-} from './codemode/executor.ts';
-export type { CodemodeMethod } from './codemode/host.ts';
+export type { CodemodeMethod } from './codemode/tool.ts';
 export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
+export {
+	type QuestionResponder,
+	type UseQuestionsOptions,
+	useQuestions,
+} from './hooks/use-questions.ts';
+export type {
+	CodemodeApprovalQuestion,
+	CodemodePendingAction,
+	FlueAnswer,
+	FlueQuestion,
+	McpInputQuestion,
+} from './questions.ts';
+export { QuestionCancelledError, QuestionTimeoutError } from './questions.ts';
+export type { InputAnsweredEvent, InputRequestedEvent } from './entity/questions.ts';
 export { useDataWriter } from './hooks/use-data-writer.ts';
 export { useDelivery } from './hooks/use-delivery.ts';
 export { useDispatchMessage } from './hooks/use-dispatch-message.ts';

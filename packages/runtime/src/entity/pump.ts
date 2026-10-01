@@ -54,6 +54,8 @@ export interface PumpResult {
 	readonly behind: boolean;
 	/** Submission ids admitted (or found already admitted) from the inbox. */
 	readonly admitted: readonly string[];
+	/** Question ids an `input-answered` inbox event settled. */
+	readonly answered: readonly string[];
 	readonly events: number;
 	readonly reads: number;
 }
@@ -68,6 +70,7 @@ export async function pumpEntity(
 	const now = options.now ?? Date.now;
 	const deadline = now() + limits.wallMs;
 	const admitted: string[] = [];
+	const answered: string[] = [];
 	let events = 0;
 	let reads = 0;
 	const spent = () => reads >= limits.reads || events >= limits.events || now() >= deadline;
@@ -81,6 +84,7 @@ export async function pumpEntity(
 				reads++;
 				events += batch.events;
 				admitted.push(...batch.admitted);
+				answered.push(...batch.answered);
 				// Caught up short of a head the server reported: the head is
 				// reached as far as this stream will ever say.
 				const next =
@@ -118,5 +122,5 @@ export async function pumpEntity(
 		if (caughtUp) book.advance(stream.path, stream.head);
 		else if (through !== undefined) book.advance(stream.path, through);
 	}
-	return { behind: book.behind(), admitted, events, reads };
+	return { behind: book.behind(), admitted, answered, events, reads };
 }

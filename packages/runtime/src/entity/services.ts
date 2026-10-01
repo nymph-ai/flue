@@ -63,6 +63,17 @@ export interface EntityMessagingService {
 		options: { readonly eventId?: string },
 		context: Context,
 	): Promise<{ readonly eventId: string }>;
+	/**
+	 * Answer another entity's question (rule 9): append one `input-answered`
+	 * event to its inbox (same id rules as `send`). `answer` is a `FlueAnswer`.
+	 */
+	answer(
+		target: EntityRef,
+		questionId: string,
+		answer: JsonValue,
+		options: { readonly eventId?: string },
+		context: Context,
+	): Promise<{ readonly eventId: string }>;
 }
 
 export interface EntityObservationService {

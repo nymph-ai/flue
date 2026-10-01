@@ -18,6 +18,7 @@ import {
 	handleAgentConversationHead,
 	handleAgentConversationRead,
 } from './handle-conversation-routes.ts';
+import { answerResponse, parseAnswerRequest, questionsResponse } from './question-routes.ts';
 import { agentStreamPath } from './stream-offsets.ts';
 
 /** One agent-scoped HTTP interaction, already resolved to its storage identity. */
@@ -84,6 +85,39 @@ export async function executeAgentAbort(
 	// Cloudflare: forward to the owning agent DO, which recognizes the
 	// abort intent by the canonical path tail and settles via its coordinator.
 	return routeToAgent(rt, canonicalAgentRequest(target, '/abort'), target, 'abort');
+}
+
+/** List the questions an agent instance waits on (rule 9). */
+export async function executeAgentQuestions(
+	rt: FlueRuntime,
+	target: AgentRequestTarget,
+): Promise<Response> {
+	const { agentName, instanceId } = target;
+	if (rt.target === 'node') {
+		return questionsResponse(await rt.pendingQuestions(agentName, instanceId));
+	}
+	return routeToAgent(rt, canonicalAgentRequest(target, '/questions'), target, 'questions');
+}
+
+/** Answer one question of an agent instance through its inbox (rule 9). */
+export async function executeAgentAnswer(
+	rt: FlueRuntime,
+	target: AgentRequestTarget & { questionId: string },
+): Promise<Response> {
+	const { agentName, instanceId, questionId } = target;
+	if (rt.target === 'node') {
+		const request = await parseAnswerRequest(target.request);
+		return answerResponse(
+			questionId,
+			await rt.answerQuestion(agentName, instanceId, questionId, request),
+		);
+	}
+	return routeToAgent(
+		rt,
+		canonicalAgentRequest(target, `/questions/${encodeURIComponent(questionId)}/answer`),
+		target,
+		'answer',
+	);
 }
 
 /** Serve one attachment's bytes. */

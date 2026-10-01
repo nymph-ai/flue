@@ -35,7 +35,9 @@ import type { Agent, DurabilityConfig } from '../types.ts';
 import {
 	assertAgentInstanceId,
 	executeAgentAbort,
+	executeAgentAnswer,
 	executeAgentAttachmentRead,
+	executeAgentQuestions,
 	executeAgentConversationRead,
 	executeAgentPrompt,
 } from './agent-routes.ts';
@@ -243,6 +245,8 @@ export function resetFlueAgentRegistrationForTests(): void {
  * - `GET|HEAD /:id` — DS conversation stream read
  * - `POST /:id/abort` — abort in-flight/queued work
  * - `ALL /:id/attachments/:attachmentId` — attachment byte download
+ * - `GET /:id/questions` — the questions the instance waits on
+ * - `POST /:id/questions/:questionId/answer` — answer one (rule 9)
  *
  * Mounting is the exposure decision; auth and other middleware compose in
  * the host app (`app.use('/agents/triage/*', auth)`). The returned Hono app
@@ -304,6 +308,38 @@ export function createAgentRouter(agent: Agent): Hono {
 			agentName: identity,
 			instanceId: c.req.param('id') ?? '',
 			attachmentId: c.req.param('attachmentId') ?? '',
+			request: c.req.raw.clone(),
+			env: c.env,
+		});
+	});
+
+	// Questions (docs/cloudflare-native.md rule 9): list, and answer one.
+	app.all('/:id/questions', async (c) => {
+		const rt = requireRuntime();
+		if (c.req.method !== 'GET') {
+			throw new MethodNotAllowedError({ method: c.req.method, allowed: ['GET'] });
+		}
+		const id = c.req.param('id') ?? '';
+		assertAgentInstanceId(id);
+		return executeAgentQuestions(rt, {
+			agentName: identity,
+			instanceId: id,
+			request: c.req.raw.clone(),
+			env: c.env,
+		});
+	});
+
+	app.all('/:id/questions/:questionId/answer', async (c) => {
+		const rt = requireRuntime();
+		if (c.req.method !== 'POST') {
+			throw new MethodNotAllowedError({ method: c.req.method, allowed: ['POST'] });
+		}
+		const id = c.req.param('id') ?? '';
+		assertAgentInstanceId(id);
+		return executeAgentAnswer(rt, {
+			agentName: identity,
+			instanceId: id,
+			questionId: c.req.param('questionId') ?? '',
 			request: c.req.raw.clone(),
 			env: c.env,
 		});

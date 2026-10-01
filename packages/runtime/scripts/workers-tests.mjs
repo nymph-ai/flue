@@ -1,6 +1,6 @@
 // Runs the tests that execute inside workerd (`vitest.workers.config.ts`,
-// through @cloudflare/vitest-pool-workers and Miniflare) — today Code Mode
-// against the Dynamic Worker executor.
+// through @cloudflare/vitest-pool-workers and Miniflare): Code Mode's QuickJS
+// sandbox in a Durable Object, and Durable Object SQLite row costs.
 //
 // workerd ships as a prebuilt binary with a minimum glibc (2.35). On a Linux
 // x64 machine whose glibc is older (the BuildBuddy runners run Ubuntu 20.04,
@@ -83,7 +83,7 @@ if (failure && !process.env.MINIFLARE_WORKERD_PATH) {
 }
 if (failure) {
 	console.warn(
-		`[flue] SKIPPED vitest.workers.config.ts: workerd ${workerd.version} cannot run on this machine, so Miniflare cannot host the Worker Loader tests.\n${failure}`,
+		`[flue] SKIPPED vitest.workers.config.ts: workerd ${workerd.version} cannot run on this machine, so Miniflare cannot host the workerd tests.\n${failure}`,
 	);
 	process.exit(0);
 }

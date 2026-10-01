@@ -57,10 +57,7 @@ import {
 	scanAgents,
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
-import {
-	codeModeOnNodeError,
-	scanCloudflareFeatures,
-} from './cloudflare-codemode.ts';
+import { scanCloudflareFeatures } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
 import {
 	cloudflareOrderingError,
@@ -186,7 +183,7 @@ interface FluePluginState {
 	isPreview: boolean;
 	/** Whether the config hook took the Cloudflare path (sibling detected). */
 	cloudflarePrepared: boolean;
-	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: adds the Worker Loader binding). */
+	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: the entry imports QuickJS). */
 	codeMode: boolean;
 	/** Whether a module under the source root calls `mcpOAuth()` (Cloudflare: binds the FlueMcpAuth Durable Object). */
 	mcpOAuth: boolean;
@@ -236,9 +233,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				name: agent.bindingName,
 				class_name: agent.className,
 			}));
-		},
-		get codeMode() {
-			return state.codeMode;
 		},
 		get mcpOAuth() {
 			return state.mcpOAuth;
@@ -392,10 +386,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (project.providers?.includes('cloudflare')) {
 				throw cloudflareProviderOnNodeError();
 			}
-			// Code Mode's runtime is a Durable Object Facet: Cloudflare only.
-			const { codeModeFile } = await scanCloudflareFeatures(project.sourceRoot);
-			if (codeModeFile) throw codeModeOnNodeError(root, codeModeFile);
-
 			resolverState.root = root;
 			resolverState.external = !isBuild;
 			resolverState.importers = isBuild ? undefined : [bootstrap.server];

@@ -109,7 +109,7 @@ export default {
 
 `dispatch(...)` works in a `scheduled` handler exactly as it does in an HTTP route: it needs no mount, bypasses HTTP middleware, and durably admits the message to the agent's Durable Object before resolving. A Worker has one `scheduled` handler; when `crons` lists several patterns, `controller.cron` identifies which one fired.
 
-For a schedule that belongs to one _existing_ conversation rather than to the application — a follow-up timer inside a running agent's Durable Object — the Agents SDK `schedule()`/`scheduleEvery()` APIs are available through the per-module `extend()` extension point instead. See [Extending Agents on Cloudflare](/docs/guide/cloudflare-target/#extending-agents-on-cloudflare). Those callbacks share the conversation's Durable Object with agent execution, so one that comes due while a response is running fires after it settles. A Cron Trigger is the right tool when the schedule must address or create conversations from outside — it runs in the Worker, independent of any conversation's activity.
+For a schedule that belongs to one _existing_ conversation rather than to the application — a follow-up timer inside a running agent's Durable Object — use the agent's own schedules, which ride its Durable Object's alarm; the Agents SDK `Scheduler` capability is not available on generated agents, because Flue owns that alarm. A Cron Trigger is the right tool when the schedule must address or create conversations from outside — it runs in the Worker, independent of any conversation's activity.
 
 ## What a fire delivers
 
