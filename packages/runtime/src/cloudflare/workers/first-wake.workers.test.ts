@@ -8,8 +8,11 @@
  * admits the birth, and the turn answers in one short sentence. Then the
  * live-task backstop that turn armed fires once.
  *
- * Every statement is reported (`[first-wake]` lines) with its rows; the
- * budget below is the total, Agents SDK included, since that is the bill.
+ * Every statement is reported (`[first-wake]` lines) with its rows, and
+ * attributed by the tables it names (`statementOwner`). The budget holds
+ * Flue's own statements tight, and the total — Agents SDK and Pi included,
+ * since that is the bill — loosely, so a dependency that changes what a
+ * birth costs is seen.
  */
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { getAgentByName } from 'agents';
@@ -17,15 +20,32 @@ import { describe, expect, it } from 'vitest';
 import { spawnedUid } from '../../entity/facet.ts';
 import { eventsPath, inboxPath } from '../../entity/paths.ts';
 import { ElectricDurableStreamLog } from '../../streams/electric-log.ts';
-import { type FirstWakeAgent, STREAMS_ROOT, streamsServer } from './first-wake.ts';
+import { STREAMS_ROOT, streamsServer } from './first-wake.ts';
 import { formatTrace, sqlTrace, type TraceSummary } from './sql-trace.ts';
 
-type WakeStub = DurableObjectStub<FirstWakeAgent> & {
+type WakeStub = DurableObjectStub & {
 	__flueWake(doorbell: { stream: string; head: string }): Promise<{ recorded: true }>;
 };
 
-const namespace = (env as unknown as { FIRST_WAKE: DurableObjectNamespace<FirstWakeAgent> })
-	.FIRST_WAKE;
+const namespace = (env as unknown as { FIRST_WAKE: DurableObjectNamespace }).FIRST_WAKE;
+
+type Rows = { rowsRead: number; rowsWritten: number };
+
+/**
+ * Measured 2026-10-01 at 733 read / 275 written in all: Agents SDK 430 / 53
+ * and 14 / 1 key-value keys, Pi 263 / 201, Flue's tables 26 / 20. Before
+ * nymph-ai/nymphai #3868: 1,086 / 302, with Flue's tables at 38 / 47 and
+ * `hasPiState` reading the whole schema (45 rows at the address, 80 at the
+ * backstop).
+ */
+const BUDGET: { total: Rows; flue: Rows; piStateChecks: number } = {
+	/** Every row of the four phases, key-value keys included. */
+	total: { rowsRead: 800, rowsWritten: 300 },
+	/** Statements on Flue's own tables. */
+	flue: { rowsRead: 35, rowsWritten: 25 },
+	/** Rows Pi-owned statements read outside the turn (the address and the backstop). */
+	piStateChecks: 10,
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -121,6 +141,29 @@ describe("a new entity's first wake on Durable Object SQLite (workerd)", () => {
 			);
 			expect(await settledSubmissions(stub)).toBe(1);
 			expect(phases.birth?.statements.length).toBeGreaterThan(0);
+			const flue = Object.values(phases).reduce(
+				(sum, phase) => ({
+					rowsRead: sum.rowsRead + phase.byOwner.flue.rowsRead,
+					rowsWritten: sum.rowsWritten + phase.byOwner.flue.rowsWritten,
+				}),
+				{ rowsRead: 0, rowsWritten: 0 },
+			);
+			expect(flue.rowsRead, 'rows Flue read').toBeLessThanOrEqual(BUDGET.flue.rowsRead);
+			expect(flue.rowsWritten, 'rows Flue wrote').toBeLessThanOrEqual(BUDGET.flue.rowsWritten);
+			// The Agents SDK migrates its schema on a new object; no Flue table may
+			// exist yet, or each of its schema scans reads it too.
+			expect(
+				phases.address?.byOwner.flue.rowsWritten,
+				'Flue tables before the SDK',
+			).toBeLessThanOrEqual(5);
+			expect(
+				(phases.address?.byOwner.pi.rowsRead ?? 0) + (phases.backstop?.byOwner.pi.rowsRead ?? 0),
+				'rows read checking for Pi state',
+			).toBeLessThanOrEqual(BUDGET.piStateChecks);
+			expect(total.rowsRead, 'rows read in all').toBeLessThanOrEqual(BUDGET.total.rowsRead);
+			expect(total.rowsWritten, 'rows written in all').toBeLessThanOrEqual(
+				BUDGET.total.rowsWritten,
+			);
 		},
 	);
 });
