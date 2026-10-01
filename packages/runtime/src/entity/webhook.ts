@@ -17,6 +17,39 @@
  *   callback_token }`;
  * - a `200 { "done": true }` reply acks every `tail_offset` of the wake;
  *   anything else leaves the wake to the callback (or the lease timeout).
+ *
+ * ## Behind Electric's agents-server (the production path)
+ *
+ * agents-server 0.6.4 fronts its durable-streams server and proxies the
+ * subscription API (`routing/durable-streams-router.ts`,
+ * `routing/internal-router.ts`). What reaches the Worker differs:
+ *
+ * - `PUT {publicUrl}/__ds/subscriptions/{id}` stores the caller's
+ *   `webhook.url` and registers its own
+ *   `{publicUrl}/_electric/subscription-webhooks/{id}` with the backend; the
+ *   response's `webhook.signing.jwks_url` names its JWKS.
+ * - The backend's wake is verified there, then **re-signed** with the
+ *   agents-server's own Ed25519 key (`ELECTRIC_AGENTS_WEBHOOK_SIGNING_PRIVATE_KEY`,
+ *   random per process when unset) in the same header format
+ *   (`webhook-signature: t=…,kid=…,ed25519=…` over `${t}.${body}`), with the
+ *   JWKS at `{publicUrl}/__ds/jwks.json`.
+ * - The body is rewritten: the backend fields stay (`subscription_id`,
+ *   `wake_id`, `generation`, `callback_url`, `callback_token`), but
+ *   `streams` becomes **only the first pending stream** as
+ *   `[{ path: "/<path>", offset: <tail_offset> }]`, and it adds
+ *   `wakeId`, `consumerId`, `epoch` (= generation), `streamPath`,
+ *   `claimToken` (= callback_token) and `callback`
+ *   (`{publicUrl}/_electric/wake-callbacks/{wakeId}`) — plus `entity`,
+ *   `principal`, `triggerEvent` for streams of registered Electric entities.
+ * - The Worker's reply is relayed to the backend verbatim, so `{done:true}`
+ *   would ack streams the Worker never saw. Ack through `callback` instead,
+ *   with `Authorization: Bearer <claimToken>` and
+ *   `{ generation, acks: [{ stream, offset }], done }`; the agents-server
+ *   treats a body carrying a wake id **without** `done: true` as a claim and
+ *   does not forward it, so acks never send one.
+ *
+ * {@link parseWakeNotice} accepts both and normalizes them to a
+ * {@link WakeNotice}; the agents-server form is tried first.
  */
 
 import { decodeBase64 } from '../base64.ts';
@@ -39,6 +72,8 @@ export interface WebhookJwks {
 export interface WebhookSignature {
 	/** Unix seconds from the `t` parameter. */
 	readonly timestamp: number;
+	/** `t` exactly as sent: the signed bytes are `` `${t}.${body}` `` over this text. */
+	readonly timestampText: string;
 	readonly kid: string;
 	readonly signature: Uint8Array<ArrayBuffer>;
 }
@@ -128,7 +163,7 @@ export function parseWebhookSignatureHeader(header: string): WebhookSignature | 
 	if (!Number.isSafeInteger(timestamp)) return null;
 	const signature = decodeBase64Url(encoded);
 	if (!signature || signature.length !== SIGNATURE_BYTES) return null;
-	return { timestamp, kid, signature };
+	return { timestamp, timestampText: t, kid, signature };
 }
 
 function isWebhookJwk(value: unknown): value is WebhookJwk {
@@ -249,7 +284,7 @@ export async function verifyWebhookSignature(options: {
 	const key = await options.keys(parsed.kid);
 	if (!key) return { ok: false, reason: 'unknown-key' };
 	const body = typeof options.body === 'string' ? encoder.encode(options.body) : options.body;
-	const signed = concatBytes(encoder.encode(`${parsed.timestamp}.`), body);
+	const signed = concatBytes(encoder.encode(`${parsed.timestampText}.`), body);
 	const valid = await crypto.subtle.verify('Ed25519', key, parsed.signature, signed);
 	return valid
 		? { ok: true, timestamp: parsed.timestamp, kid: parsed.kid }
@@ -409,4 +444,185 @@ export async function acknowledgeWebhookWake(
 		status: 'ok',
 		nextWake: (body as { next_wake?: unknown } | undefined)?.next_wake === true,
 	};
+}
+
+// ─── Normalized wakes (agents-server first, bare Durable Streams second) ────
+
+export type WakeFormat = 'agents-server' | 'durable-streams';
+
+export interface WakeNoticeStream {
+	/** Wire path (as the server names the stream), without a leading slash. */
+	readonly path: string;
+	/** The stream's tail when the wake was issued. */
+	readonly tailOffset: StreamOffset;
+	/** Whether the stream had unacked data; agents-server wakes list only a pending stream. */
+	readonly pending: boolean;
+}
+
+/** One wake, whichever server signed it. */
+export interface WakeNotice {
+	readonly format: WakeFormat;
+	readonly subscriptionId: string;
+	readonly wakeId: string;
+	readonly generation: number;
+	readonly streams: readonly WakeNoticeStream[];
+	/** Where acks go, and the bearer token they carry. */
+	readonly callback: { readonly url: string; readonly token: string };
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stripLeadingSlash(path: string): string {
+	return path.replace(/^\/+/, '');
+}
+
+function parseGeneration(value: unknown, field: string): number {
+	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+		throw new WebhookPayloadError(`"${field}" must be a non-negative integer.`);
+	}
+	return value;
+}
+
+/** The agents-server form (`routing/internal-router.ts` `subscriptionWebhook`). */
+function agentsServerNotice(record: Record<string, unknown>): WakeNotice | undefined {
+	if (
+		typeof record.wakeId !== 'string' ||
+		typeof record.callback !== 'string' ||
+		typeof record.claimToken !== 'string' ||
+		!Array.isArray(record.streams)
+	) {
+		return undefined;
+	}
+	const streams = record.streams.map((entry, index): WakeNoticeStream => {
+		if (!isRecordValue(entry)) throw new WebhookPayloadError(`streams[${index}] is not an object.`);
+		return {
+			path: stripLeadingSlash(requireString(entry, 'path')),
+			tailOffset: asStreamOffset(requireString(entry, 'offset')),
+			pending: true,
+		};
+	});
+	return {
+		format: 'agents-server',
+		subscriptionId: requireString(record, 'subscription_id'),
+		wakeId: requireString(record, 'wakeId'),
+		generation: parseGeneration(record.epoch ?? record.generation, 'epoch'),
+		streams,
+		callback: { url: requireString(record, 'callback'), token: requireString(record, 'claimToken') },
+	};
+}
+
+/** Parse a wake body from the agents-server or a bare Durable Streams server. */
+export function parseWakeNotice(text: string): WakeNotice {
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch {
+		throw new WebhookPayloadError('the body is not JSON.');
+	}
+	if (!isRecordValue(value)) throw new WebhookPayloadError('the body is not a JSON object.');
+	const proxied = agentsServerNotice(value);
+	if (proxied) return proxied;
+	const webhook = parseWebhookBody(text);
+	return {
+		format: 'durable-streams',
+		subscriptionId: webhook.subscription_id,
+		wakeId: webhook.wake_id,
+		generation: webhook.generation,
+		streams: webhook.streams.map((stream) => ({
+			path: stripLeadingSlash(stream.path),
+			tailOffset: stream.tail_offset,
+			pending: stream.has_pending,
+		})),
+		callback: { url: webhook.callback_url, token: webhook.callback_token },
+	};
+}
+
+export type ReceivedWakeNotice =
+	| { readonly ok: true; readonly notice: WakeNotice }
+	| { readonly ok: false; readonly status: 400 | 401; readonly reason: string };
+
+/** Verify and parse an incoming wake of either format. Consumes the request body. */
+export async function receiveWakeNotice(
+	request: Request,
+	options: {
+		readonly keys: WebhookKeyResolver;
+		readonly now?: () => number;
+		readonly toleranceSeconds?: number;
+	},
+): Promise<ReceivedWakeNotice> {
+	const body = new Uint8Array(await request.arrayBuffer());
+	const verification = await verifyWebhookSignature({
+		body,
+		header: request.headers.get('webhook-signature'),
+		keys: options.keys,
+		...(options.now ? { now: options.now } : {}),
+		...(options.toleranceSeconds === undefined ? {} : { toleranceSeconds: options.toleranceSeconds }),
+	});
+	if (!verification.ok) return { ok: false, status: 401, reason: verification.reason };
+	try {
+		return { ok: true, notice: parseWakeNotice(new TextDecoder().decode(body)) };
+	} catch (error) {
+		return { ok: false, status: 400, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/**
+ * Ack a wake through its callback, in the format its server expects. `acks`
+ * are last-processed offsets (inclusive) by wire path; `done: true` releases
+ * the wake and lets the server issue the next one for what is still pending.
+ */
+export async function acknowledgeWakeNotice(
+	notice: WakeNotice,
+	input: {
+		readonly acks: readonly { readonly stream: string; readonly offset: string }[];
+		readonly done?: boolean;
+	},
+	options: {
+		readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+		readonly signal?: AbortSignal;
+	} = {},
+): Promise<WakeAckResult> {
+	if (notice.format === 'durable-streams') {
+		return acknowledgeWebhookWake(
+			{
+				subscription_id: notice.subscriptionId,
+				wake_id: notice.wakeId,
+				generation: notice.generation,
+				streams: [],
+				callback_url: notice.callback.url,
+				callback_token: notice.callback.token,
+			},
+			input,
+			options,
+		);
+	}
+	const fetchImpl = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
+	const response = await fetchImpl(notice.callback.url, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${notice.callback.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			generation: notice.generation,
+			acks: input.acks.map((ack) => ({ stream: stripLeadingSlash(ack.stream), offset: ack.offset })),
+			// A wake id without `done: true` is a claim to the agents-server, which it does not forward.
+			...(input.done === true ? { done: true, wake_id: notice.wakeId } : {}),
+		}),
+		...(options.signal ? { signal: options.signal } : {}),
+	});
+	const text = await response.text();
+	let body: unknown;
+	try {
+		body = text ? JSON.parse(text) : undefined;
+	} catch {
+		body = undefined;
+	}
+	const code = (body as { error?: { code?: unknown } } | undefined)?.error?.code;
+	if (response.status === 409 && code === 'FENCED') return { status: 'fenced' };
+	if (!response.ok) {
+		throw new Error(
+			`[flue] agents-server wake callback failed with ${response.status}${typeof code === 'string' ? ` (${code})` : ''}.`,
+		);
+	}
+	return { status: 'ok', nextWake: (body as { next_wake?: unknown } | undefined)?.next_wake === true };
 }

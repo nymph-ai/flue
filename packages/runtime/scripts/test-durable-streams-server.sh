@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Runs src/streams/electric-log.test.ts and the StreamStorage crash/replay
-# suite (src/pi/stream-storage.electric.test.ts) against the real Durable Streams Node
+# Runs src/streams/electric-log.test.ts, the StreamStorage crash/replay
+# suite (src/pi/stream-storage.electric.test.ts) and the A2A entity scenario
+# (src/entity/a2a.electric.test.ts) against the real Durable Streams Node
 # reference server (`@durable-streams/server`, the server Electric's
-# agents-server embeds), including a webhook subscription whose signed wake
-# is verified by src/entity/webhook.ts.
+# agents-server embeds), including webhook subscriptions whose signed wakes
+# are verified by src/entity/webhook.ts. The A2A test serves the wake route
+# itself on an ephemeral 127.0.0.1 port and subscribes the server to it.
+#
+# Not run here: Electric's agents-server (it needs Postgres). Its wake format,
+# re-signing and callback are covered against its source's shapes in
+# src/entity/webhook.test.ts and src/entity/a2a.test.ts.
 #
 # The server is installed outside the workspace (no lockfile change) and
 # started in-process with a local webhook receiver:
@@ -78,4 +84,5 @@ done
 FLUE_DS_URL="http://127.0.0.1:${ds_port}/v1/stream" \
 FLUE_DS_WEBHOOK_URL="http://127.0.0.1:${hook_port}/hook" \
 FLUE_DS_WEBHOOK_CAPTURE_URL="http://127.0.0.1:${hook_port}/captured" \
-	vitest run src/streams/electric-log.test.ts src/pi/stream-storage.electric.test.ts "$@"
+	vitest run src/streams/electric-log.test.ts src/pi/stream-storage.electric.test.ts \
+		src/entity/a2a.electric.test.ts "$@"
