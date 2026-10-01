@@ -419,7 +419,11 @@ export function societyResponder(messages: readonly Message[]) {
 				toolCall('publish_event', { event: { round: results.length + 1, of: rounds } })
 			: answer(`Chain of ${rounds} published.`);
 	}
-	if (results.length > 0) return answer(`Done: ${textOf(lastMessage(messages)).slice(0, 60)}`);
+	if (results.length > 0) {
+		// Not the tool's text: it carries ids derived from random faux call ids.
+		const last = lastMessage(messages);
+		return answer(`Done after ${results.length} ${last?.role === 'toolResult' ? last.toolName : 'tool'} call(s).`);
+	}
 	const send = /^send ([^/\s]+)\/(\S+) (.*)$/.exec(body);
 	if (send) {
 		return toolCall('send_message', {
