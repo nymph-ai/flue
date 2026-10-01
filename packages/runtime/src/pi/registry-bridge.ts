@@ -28,6 +28,7 @@ import type {
 } from '@earendil-works/pi-durable';
 import { ENTITY_TOOL_NAMES } from '../entity/tool-names.ts';
 import { ToolNameConflictError } from '../errors.ts';
+import type { CodeModeDeclaration } from '../hooks/use-code-mode.ts';
 import type { AgentOutputChannel } from '../message-output.ts';
 import type { McpConnectionDefinition } from '../mcp-types.ts';
 import { FINISH_TOOL_NAME, GIVE_UP_TOOL_NAME } from '../result.ts';
@@ -40,7 +41,13 @@ import type {
 	SubagentDefinition,
 	ThinkingLevel,
 } from '../types.ts';
-import { compactionPolicyFor, modelLimits, parseModelSpecifier, thinkingLevelFor } from './config.ts';
+import { CODEMODE_TOOL_NAME, createCodemodeToolRegistration } from './codemode/tool.ts';
+import {
+	compactionPolicyFor,
+	modelLimits,
+	parseModelSpecifier,
+	thinkingLevelFor,
+} from './config.ts';
 import { FlueProfile } from './docs.ts';
 import type { FlueLifecycle } from './hooks.ts';
 import {
@@ -50,7 +57,12 @@ import {
 	renderSkillsSection,
 } from './skills.ts';
 import { TASK_TOOL_NAME } from './subagent-tool.ts';
-import { type FlueToolDeps, flueToolRegistration, SANDBOX_TOOL_NAMES, sandboxToolRegistrations } from './tools.ts';
+import {
+	type FlueToolDeps,
+	flueToolRegistration,
+	SANDBOX_TOOL_NAMES,
+	sandboxToolRegistrations,
+} from './tools.ts';
 
 /**
  * One render of the agent function, as the bridge consumes it. Every field is
@@ -79,13 +91,30 @@ export interface RenderedAgent {
 	readonly subagents: readonly SubagentDefinition[];
 	/** `useAgentStart`/`useAgentFinish`/`useResponseStart`/`useResponseFinish` declarations. */
 	readonly lifecycle: FlueLifecycle;
+	/** Whether the render declared a sandbox (`useSandbox()`): the sandbox tools are offered only then. */
+	readonly sandbox?: boolean;
+	/**
+	 * The sandbox factory's own tool list (`SandboxFactory.tools`), replacing
+	 * the standard set. Keep the array identity stable across renders of the
+	 * same sandbox: a new array re-registers the tools.
+	 */
+	readonly sandboxTools?: readonly ToolRegistration[];
+	/** `useCodeMode()` declaration: offers Pi's `codemode` tool over the render's other tools. */
+	readonly codeMode?: CodeModeDeclaration;
 }
 
 /** Assemble a {@link RenderedAgent} from one render's config and output channel. */
 export function renderedAgentFrom(
 	config: AgentRuntimeConfig,
-	output?: Pick<AgentOutputChannel, 'agentStarts' | 'agentFinishes' | 'responseStarts' | 'responseFinishes'>,
-	extras: { readonly context?: string; readonly workspaceSkills?: readonly RegisteredSkill[] } = {},
+	output?: Pick<
+		AgentOutputChannel,
+		'agentStarts' | 'agentFinishes' | 'responseStarts' | 'responseFinishes'
+	>,
+	extras: {
+		readonly context?: string;
+		readonly workspaceSkills?: readonly RegisteredSkill[];
+		readonly codeMode?: CodeModeDeclaration;
+	} = {},
 ): RenderedAgent {
 	return {
 		...(config.model !== undefined ? { model: config.model } : {}),
@@ -103,6 +132,8 @@ export function renderedAgentFrom(
 			responseStarts: output?.responseStarts ?? [],
 			responseFinishes: output?.responseFinishes ?? [],
 		},
+		sandbox: config.sandbox !== undefined,
+		...(extras.codeMode !== undefined ? { codeMode: extras.codeMode } : {}),
 	};
 }
 
@@ -131,6 +162,7 @@ const SECTION_AGENTS = 'flue_agents';
 
 const FRAMEWORK_TOOLS = new Set([
 	TASK_TOOL_NAME,
+	CODEMODE_TOOL_NAME,
 	ACTIVATE_SKILL_TOOL_NAME,
 	'read_skill_resource',
 	FINISH_TOOL_NAME,
@@ -150,7 +182,9 @@ function renderAgentCatalog(subagents: readonly { name: string; description: str
 		'',
 		'You can delegate focused work to one of these agents with the `task` tool, naming the agent to use. The list can change over the conversation — additions and removals are announced.',
 		'',
-		...subagents.map((agent) => `- **${agent.name}**${agent.description ? ` — ${agent.description}` : ''}`),
+		...subagents.map(
+			(agent) => `- **${agent.name}**${agent.description ? ` — ${agent.description}` : ''}`,
+		),
 	].join('\n');
 }
 
@@ -161,6 +195,13 @@ export class RegistryBridge {
 	/** Custom tool registrations of the current render, by name. */
 	#renderTools = new Map<string, { definition: ToolDefinition; registration: Registration }>();
 	#mcpTools: Registration | undefined;
+	#codemodeTool: Registration | undefined;
+	readonly #defaultSandboxTools: readonly ToolRegistration[];
+	/** The sandbox tool set registered now, and its registration. */
+	#sandboxTools: readonly ToolRegistration[] = [];
+	#sandboxRegistration: Registration | undefined;
+	/** Configuration last applied per conversation, so an unchanged render writes nothing. */
+	#applied = new Map<number, string>();
 	/** Tools a delegation registered; they outlive renders (a child may still run). */
 	#delegateTools = new Map<string, ToolDefinition>();
 	/** Every skill and subagent any render or delegate declared, by name. */
@@ -172,10 +213,12 @@ export class RegistryBridge {
 	constructor(options: RegistryBridgeOptions) {
 		this.#options = options;
 		const { registry } = options;
+		this.#defaultSandboxTools = options.sandbox ? sandboxToolRegistrations(options.sandbox) : [];
 		registry.batch(() => {
-			if (options.sandbox) for (const tool of sandboxToolRegistrations(options.sandbox)) registry.tools.add(tool);
 			registry.tools.add(options.taskTool);
-			registry.tools.add(activateSkillRegistration((id, read, context) => this.skillsFor(id, read, context)));
+			registry.tools.add(
+				activateSkillRegistration((id, read, context) => this.skillsFor(id, read, context)),
+			);
 			registry.systemPrompt.section(
 				SECTION_INSTRUCTIONS,
 				async (input, context) => {
@@ -194,12 +237,14 @@ export class RegistryBridge {
 			);
 			registry.systemPrompt.section(
 				SECTION_SKILLS,
-				async (input, context) => renderSkillsSection(await this.skillsFor(input.conversationId, input.read, context)),
+				async (input, context) =>
+					renderSkillsSection(await this.skillsFor(input.conversationId, input.read, context)),
 				{ tag: false },
 			);
 			registry.systemPrompt.section(
 				SECTION_AGENTS,
-				async (input, context) => renderAgentCatalog(await this.rosterFor(input.conversationId, input.read, context)),
+				async (input, context) =>
+					renderAgentCatalog(await this.rosterFor(input.conversationId, input.read, context)),
 				{ tag: false },
 			);
 		});
@@ -256,7 +301,7 @@ export class RegistryBridge {
 	baseToolNames(): string[] {
 		const names = this.#options.registry.snapshot().toolNames();
 		return [
-			...SANDBOX_TOOL_NAMES.filter((name) => names.includes(name)),
+			...this.#sandboxTools.map((tool) => tool.name),
 			TASK_TOOL_NAME,
 			ACTIVATE_SKILL_TOOL_NAME,
 			...(names.includes('read_skill_resource') ? ['read_skill_resource'] : []),
@@ -270,10 +315,25 @@ export class RegistryBridge {
 	 * the model, thinking level, active tools and compaction policy of every
 	 * governed conversation.
 	 */
-	async apply(render: RenderedAgent, conversations: readonly Conversation[], context: Context): Promise<void> {
+	/** Every tool name the current render offers its conversations. */
+	activeToolNames(): string[] {
+		return [...this.#activeNames];
+	}
+
+	#activeNames: string[] = [];
+
+	async apply(
+		render: RenderedAgent,
+		conversations: readonly Conversation[],
+		context: Context,
+		options: { readonly force?: boolean } = {},
+	): Promise<void> {
 		const registered = this.#options.registry.snapshot().toolNames();
-		const reserved = new Set<string>([
+		const sandboxTools =
+			render.sandbox === false ? [] : (render.sandboxTools ?? this.#defaultSandboxTools);
+		const reserved = new Set([
 			...SANDBOX_TOOL_NAMES,
+			...sandboxTools.map((tool) => tool.name),
 			...FRAMEWORK_TOOLS,
 			...ENTITY_TOOL_NAMES.filter((name) => registered.includes(name)),
 		]);
@@ -288,18 +348,31 @@ export class RegistryBridge {
 				});
 			}
 			if (seen.has(tool.name)) {
-				throw new ToolNameConflictError({ name: tool.name, conflict: 'duplicate', source: 'custom' });
+				throw new ToolNameConflictError({
+					name: tool.name,
+					conflict: 'duplicate',
+					source: 'custom',
+				});
 			}
 			const delegated = this.#delegateTools.get(tool.name);
 			if (delegated !== undefined && delegated !== tool) {
-				throw new ToolNameConflictError({ name: tool.name, conflict: 'duplicate', source: 'custom' });
+				throw new ToolNameConflictError({
+					name: tool.name,
+					conflict: 'duplicate',
+					source: 'custom',
+				});
 			}
 			seen.add(tool.name);
 		}
-		const mcpTools = render.mcp.length > 0 && this.#options.mcp ? await this.#options.mcp(render.mcp, context) : [];
+		const mcpTools =
+			render.mcp.length > 0 && this.#options.mcp
+				? await this.#options.mcp(render.mcp, context)
+				: [];
 		if (render.mcp.length > 0 && !this.#options.mcp) {
 			this.#options.onReport(
-				new Error('[flue] useMcpConnection() declarations need an MCP port on the Pi host; they were skipped.'),
+				new Error(
+					'[flue] useMcpConnection() declarations need an MCP port on the Pi host; they were skipped.',
+				),
 			);
 		}
 		for (const skill of render.skills) this.#skills.set(skill.name, skill);
@@ -308,6 +381,16 @@ export class RegistryBridge {
 		const { registry } = this.#options;
 		const nextTools = new Map<string, { definition: ToolDefinition; registration: Registration }>();
 		registry.batch(() => {
+			if (sandboxTools !== this.#sandboxTools) {
+				this.#sandboxRegistration?.dispose();
+				const registrations = sandboxTools.map((tool) => registry.tools.add(tool));
+				this.#sandboxRegistration = {
+					dispose: () => {
+						for (const registration of registrations) registration.dispose();
+					},
+				};
+				this.#sandboxTools = sandboxTools;
+			}
 			for (const [name, entry] of this.#renderTools) {
 				const next = render.tools.find((tool) => tool.name === name);
 				if (next === entry.definition) {
@@ -333,6 +416,29 @@ export class RegistryBridge {
 					},
 				};
 			}
+			this.#codemodeTool?.dispose();
+			this.#codemodeTool = undefined;
+			if (render.codeMode) {
+				// Scripts call the render's own tools (and the sandbox's, when present).
+				const declaration = render.codeMode;
+				this.#codemodeTool = registry.tools.add(
+					createCodemodeToolRegistration({
+						executor: declaration.executor,
+						tools: [
+							...sandboxTools,
+							...render.tools.map((tool) => flueToolRegistration(tool, this.#options.tools)),
+							...mcpTools,
+						],
+						...(declaration.timeoutMs !== undefined ? { timeoutMs: declaration.timeoutMs } : {}),
+						...(declaration.memoryLimitBytes !== undefined
+							? { memoryLimitBytes: declaration.memoryLimitBytes }
+							: {}),
+						...(declaration.maxOutputTokens !== undefined
+							? { maxOutputTokens: declaration.maxOutputTokens }
+							: {}),
+					}),
+				);
+			}
 			this.#syncSkillRead(render.skills);
 		});
 		this.#renderTools = nextTools;
@@ -344,12 +450,18 @@ export class RegistryBridge {
 			...this.baseToolNames(),
 			...render.tools.map((tool) => tool.name),
 			...mcpTools.map((tool) => tool.name),
+			...(render.codeMode ? [CODEMODE_TOOL_NAME] : []),
 		];
+		this.#activeNames = active;
+		const thinkingLevel = thinkingLevelFor(render.thinkingLevel);
+		const fingerprint = JSON.stringify([model, thinkingLevel, active, policy]);
 		for (const conversation of conversations) {
+			if (!options.force && this.#applied.get(conversation.id) === fingerprint) continue;
 			await conversation.setModel(model, context);
-			await conversation.setThinkingLevel(thinkingLevelFor(render.thinkingLevel), context);
+			await conversation.setThinkingLevel(thinkingLevel, context);
 			await conversation.setActiveTools(active, context);
 			await conversation.setCompaction(policy, context);
+			this.#applied.set(conversation.id, fingerprint);
 		}
 	}
 
@@ -367,9 +479,14 @@ export class RegistryBridge {
 		const { registry } = this.#options;
 		const fresh: ToolDefinition[] = [];
 		for (const tool of delegate.tools ?? []) {
-			const bound = this.#delegateTools.get(tool.name) ?? this.#renderTools.get(tool.name)?.definition;
+			const bound =
+				this.#delegateTools.get(tool.name) ?? this.#renderTools.get(tool.name)?.definition;
 			if (bound !== undefined && bound !== tool) {
-				throw new ToolNameConflictError({ name: tool.name, conflict: 'duplicate', source: 'custom' });
+				throw new ToolNameConflictError({
+					name: tool.name,
+					conflict: 'duplicate',
+					source: 'custom',
+				});
 			}
 			if (bound === undefined) fresh.push(tool);
 			this.#delegateTools.set(tool.name, tool);
@@ -394,7 +511,11 @@ export class RegistryBridge {
 		for (const skill of [...this.#skills.values(), ...skills]) all.set(skill.name, skill);
 		const registration = packagedSkillReadRegistration([...all.values()]);
 		const ids = [...all.keys()].sort().join('\n');
-		if (ids === this.#skillReadIds && (registration === undefined) === (this.#skillRead === undefined)) return;
+		if (
+			ids === this.#skillReadIds &&
+			(registration === undefined) === (this.#skillRead === undefined)
+		)
+			return;
 		this.#skillRead?.dispose();
 		this.#skillRead = registration ? this.#options.registry.tools.add(registration) : undefined;
 		this.#skillReadIds = ids;

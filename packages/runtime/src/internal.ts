@@ -29,7 +29,7 @@ export { createSqlConversationStores } from './cloudflare/agent-execution-store.
 // Overflow classifier, exposed for application regression tripwires that
 // assert the 413→overflow chain against the installed runtime (#468). Not an
 // authoring API: agent code never classifies its own failures.
-export { isAssistantContextOverflow } from './compaction.ts';
+export { isAssistantContextOverflow } from './overflow.ts';
 // Conversation wire types projected onto the HTTP `history`/`updates` views.
 // Exposed here only so the SDK can pin its public projection types to the
 // runtime's emitted shapes via a compile-time assignability test.
@@ -38,6 +38,7 @@ export type {
 	ConversationStreamChunk,
 	ConversationStreamWireChunk,
 } from './conversation-public.ts';
+export type { ConversationProjectionSource } from './runtime/conversation-source.ts';
 export { configureErrorRendering, RuntimeUnavailableError, toHttpResponse } from './errors.ts';
 export type { InstrumentationOwner } from './instrumentation.ts';
 export { createInstrumentationOwner, runWithInstrumentationOwner } from './instrumentation.ts';
@@ -119,9 +120,6 @@ export {
 } from './runtime/registration.ts';
 export type { RuntimeActivityGate, RuntimeActivityLease } from './runtime/runtime-activity-gate.ts';
 export { createRuntimeActivityGate } from './runtime/runtime-activity-gate.ts';
-// Divergence repair for the settlement cache (ledger restored from backup):
-// re-derives terminal rows from the streams' settle records.
-export { rebuildSettledSubmissionRows } from './runtime/settlement-rebuild.ts';
 // Storage path of an agent instance's canonical conversation stream — the
 // durable-storage contract callers pair with the observation helpers above.
 export { agentStreamPath } from './runtime/stream-offsets.ts';

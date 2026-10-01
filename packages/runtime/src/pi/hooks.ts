@@ -23,7 +23,13 @@
  * content, so attachment bytes never enter the canonical log.
  */
 import type { Context, JsonValue } from '@earendil-works/chord';
-import type { AssistantMessage, ImageContent, Message, TextContent, UserMessage } from '@earendil-works/pi-ai';
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	TextContent,
+	UserMessage,
+} from '@earendil-works/pi-ai';
 import {
 	type ConversationId,
 	type EntryDraft,
@@ -73,11 +79,20 @@ export interface FlueAttachmentPort {
 
 export interface LifecycleHookDeps {
 	/** Declarations governing a conversation (root agent only; delegates have none). */
-	lifecycle(conversationId: ConversationId, api: HookApi, context: Context): Promise<FlueLifecycle | undefined>;
+	lifecycle(
+		conversationId: ConversationId,
+		api: HookApi,
+		context: Context,
+	): Promise<FlueLifecycle | undefined>;
 	/** One Session commit on the host's Harness. */
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
 	/** Admit a passive write into a conversation (placed at its next boundary). */
-	write(conversationId: ConversationId, entry: EntryDraft, requestId: string, context: Context): Promise<void>;
+	write(
+		conversationId: ConversationId,
+		entry: EntryDraft,
+		requestId: string,
+		context: Context,
+	): Promise<void>;
 	readonly attachments?: FlueAttachmentPort;
 	/** `ctx.harness` of lifecycle callbacks; absent until the cutover wires it. */
 	readonly harness?: (conversationId: ConversationId, context: Context) => FlueHarness;
@@ -122,14 +137,18 @@ function responseAggregates(
 	const toolCalls: AgentResponseToolCall[] = [];
 	const usage = emptyUsage();
 	for (const message of messages.slice(Math.min(anchor, messages.length))) {
-		if (message.role === 'toolResult') toolCalls.push({ tool: message.toolName, isError: message.isError });
+		if (message.role === 'toolResult')
+			toolCalls.push({ tool: message.toolName, isError: message.isError });
 		if (message.role === 'assistant') addAssistantUsage(usage, message);
 	}
 	if (answer) addAssistantUsage(usage, answer);
 	return { toolCalls, usage };
 }
 
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(
+	target: Record<string, unknown>,
+	source: Record<string, unknown>,
+): Record<string, unknown> {
 	for (const [key, value] of Object.entries(source)) {
 		const existing = target[key];
 		if (
@@ -140,7 +159,10 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 			typeof existing === 'object' &&
 			!Array.isArray(existing)
 		) {
-			target[key] = deepMerge({ ...(existing as Record<string, unknown>) }, value as Record<string, unknown>);
+			target[key] = deepMerge(
+				{ ...(existing as Record<string, unknown>) },
+				value as Record<string, unknown>,
+			);
 		} else {
 			target[key] = value;
 		}
@@ -166,7 +188,8 @@ function appendWindow(): { append: (message: AgentAppendMessage) => void; close(
 	let open = true;
 	return {
 		append(message) {
-			if (!open) throw new Error('[flue] append() was called after its lifecycle callback settled.');
+			if (!open)
+				throw new Error('[flue] append() was called after its lifecycle callback settled.');
 			collected.push(signalText(message));
 		},
 		close() {
@@ -176,12 +199,18 @@ function appendWindow(): { append: (message: AgentAppendMessage) => void; close(
 	};
 }
 
-function lazyHarness(deps: LifecycleHookDeps, conversationId: ConversationId, context: Context): FlueHarness {
+function lazyHarness(
+	deps: LifecycleHookDeps,
+	conversationId: ConversationId,
+	context: Context,
+): FlueHarness {
 	let harness: FlueHarness | undefined;
 	return new Proxy({} as FlueHarness, {
 		get(_target, property) {
 			if (!deps.harness) {
-				throw new Error('[flue] ctx.harness is not available on this Pi host yet (coordinator cutover).');
+				throw new Error(
+					'[flue] ctx.harness is not available on this Pi host yet (coordinator cutover).',
+				);
 			}
 			harness ??= deps.harness(conversationId, context);
 			return Reflect.get(harness, property);
@@ -207,7 +236,8 @@ export async function rehydrateAttachments(
 			if (block.type === 'image' && block.data.startsWith(ATTACHMENT_PLACEHOLDER_PREFIX)) {
 				const stored = await port.get(block.data.slice(ATTACHMENT_PLACEHOLDER_PREFIX.length));
 				if (stored) {
-					content.push({ type: 'image', data: stored.data, mimeType: stored.mimeType });
+					// Keep the carrier's other fields (a document's `filename`).
+					content.push({ ...block, data: stored.data, mimeType: stored.mimeType });
 					changed = true;
 					continue;
 				}
@@ -257,7 +287,8 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 
 	return {
 		async beforeRequest(request, api, context) {
-			let messages = (await rehydrateAttachments(request.messages, deps.attachments)) ?? request.messages;
+			let messages =
+				(await rehydrateAttachments(request.messages, deps.attachments)) ?? request.messages;
 			const lifecycle = await deps.lifecycle(api.conversationId, api, context);
 			const run = lifecycle ? await runKeyOf(api, context) : undefined;
 			if (lifecycle && run) {
@@ -298,7 +329,8 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 						api.conversationId,
 						run.key,
 						(record) => {
-							for (const input of pending) if (!record.started.includes(input)) record.started.push(input);
+							for (const input of pending)
+								if (!record.started.includes(input)) record.started.push(input);
 							record.appends.push(...appended);
 							if (state === undefined) record.anchor = anchor;
 							if (metadata) deepMerge(record.metadata as Record<string, unknown>, metadata);
@@ -329,7 +361,8 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 		async onYield(answer, api, context) {
 			const lifecycle = await deps.lifecycle(api.conversationId, api, context);
 			if (!lifecycle) return undefined;
-			if (lifecycle.agentFinishes.length === 0 && lifecycle.responseFinishes.length === 0) return undefined;
+			if (lifecycle.agentFinishes.length === 0 && lifecycle.responseFinishes.length === 0)
+				return undefined;
 			const run = await runKeyOf(api, context);
 			if (!run) return undefined;
 			const runs = await api.snapshot(FlueRuns, api.conversationId, context);
@@ -372,7 +405,9 @@ export function lifecycleHooks(deps: LifecycleHookDeps): Partial<GenerationHooks
 				);
 			}
 
-			const metadata: Record<string, unknown> = { ...((state?.metadata ?? {}) as Record<string, unknown>) };
+			const metadata: Record<string, unknown> = {
+				...((state?.metadata ?? {}) as Record<string, unknown>),
+			};
 			for (const declaration of lifecycle.responseFinishes) {
 				const returned = declaration.run({
 					metadata: { ...metadata },

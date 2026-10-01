@@ -2,7 +2,11 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { type Static, Type } from '@earendil-works/pi-ai';
 import { composeTimeoutSignal } from './abort.ts';
 import { decodeBase64 } from './base64.ts';
-import type { PackagedSkillDirectory, Sandbox } from './types.ts';
+import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
+import { activateSkillRegistration } from './pi/skills.ts';
+import type { PackagedSkillDirectory, RegisteredSkill, Sandbox } from './types.ts';
 
 const MAX_READ_LINES = 2000;
 const MAX_READ_BYTES = 50 * 1024;
@@ -12,37 +16,6 @@ const MAX_GLOB_RESULTS = 1000;
 const BASE64_READ_LINE_LENGTH = 76;
 const PACKAGED_SKILLS_ROOT = '/.flue/packaged-skills/';
 export const READ_SKILL_RESOURCE_TOOL_NAME = 'read_skill_resource';
-
-export interface TaskToolParams {
-	prompt: string;
-	description?: string;
-	/**
-	 * Required and non-blank in the model-facing schema. Agent-less blank
-	 * children exist only outside the tool path: programmatic `session.task()`
-	 * calls and durable replays of records without an `agent` argument.
-	 */
-	agent: string;
-	cwd?: string;
-	attachments?: Array<{ id: string }>;
-}
-
-export interface TaskToolResultDetails {
-	taskId: string;
-	session: string;
-	messageId?: string;
-	agent?: string;
-	cwd?: string;
-}
-
-/**
- * Details for a `task` call naming an agent outside the live roster. The
- * call answers with a factual miss (same pattern as `activate_skill`), so
- * no child session — and none of the `TaskToolResultDetails` fields — exist.
- */
-export interface TaskToolUndeclaredAgentDetails {
-	agent: string;
-	available: string[];
-}
 
 /**
  * Layer packaged-skill routing onto an env before handing it to model-facing
@@ -346,107 +319,33 @@ export function createBashTool(env: Sandbox): AgentTool<typeof BashParams> {
 	};
 }
 
-const TaskParams = Type.Object({
-	description: Type.Optional(
-		Type.String({ description: 'Short human-readable label for the delegated work' }),
-	),
-	prompt: Type.String({ description: 'Focused instructions for the child agent' }),
-	// Required in the schema, but a plain string rather than an enum: the
-	// live roster can outgrow the frozen baseline (a dynamically declared
-	// subagent is delegable the same turn its `resources` signal announced
-	// it), and an enum would rewrite the tool spec on every roster flip.
-	agent: Type.String({
-		minLength: 1,
-		description:
-			'Subagent to run the task with, from the list of currently available agents. ' +
-			'Agents that have been removed from the list are no longer usable (until re-introduced, if ever).',
-	}),
-	cwd: Type.Optional(
-		Type.String({
-			description:
-				'Working directory for the child agent. AGENTS.md and skills are discovered from here.',
-		}),
-	),
-	attachments: Type.Optional(
-		Type.Array(
-			Type.Object({
-				id: Type.String({ description: 'Attachment ID shown in the current conversation' }),
-			}),
-			{
-				description:
-					'Images or documents from this conversation to include in the child agent prompt',
-			},
-		),
-	),
-});
-
 /**
- * Build Flue's framework-owned `task` tool. Always in the tool set, and the
- * spec is fully STATIC — no roster, no per-agent text — so the serialized
- * tools block never changes and keeps hitting the provider's prompt-cache
- * prefix regardless of roster state. The roster lives in the system prompt's
- * "Available Agents" section (same freeze semantics as the skill catalog);
- * mid-window changes are announced as `resources` signals; and `agent` is
- * schema-required, resolving against the live roster at run time — an agent
- * with no `useSubagent()` declarations has no valid value to pass, and a
- * name outside the roster answers with a factual miss (same pattern as
- * `activate_skill`), not an error outcome.
- */
-export function createTaskTool(
-	runTask: (
-		params: TaskToolParams,
-		signal?: AbortSignal,
-		toolCallId?: string,
-	) => Promise<AgentToolResult<TaskToolResultDetails | TaskToolUndeclaredAgentDetails>>,
-): AgentTool<typeof TaskParams> {
-	return {
-		name: 'task',
-		label: 'Run Task',
-		description:
-			'Delegate a focused task to a detached child agent with its own context. ' +
-			'Use this for independent research, file exploration, or parallel work. ' +
-			'Pass attachment IDs shown in the conversation to include those images. ' +
-			'The task returns only its final answer to this conversation. ' +
-			'Agents available for delegation are listed under "Available Agents" in the system prompt.',
-		parameters: TaskParams,
-		async execute(toolCallId: string, params: Static<typeof TaskParams>, signal?: AbortSignal) {
-			throwIfAborted(signal);
-			return runTask(params, signal, toolCallId);
-		},
-	};
-}
-
-/**
- * The `name` schema is a plain string, validated at run time — a literal
- * union of skill names would rewrite the tool spec (and invalidate the
- * provider's prompt cache) every time a dynamically declared skill flips.
- * An unknown name returns a factual miss listing the available skills.
+ * `activate_skill` as a pi-agent-core tool, a thin wrapper over the Pi
+ * registration (`pi/skills.ts`): same schema, same catalog lookup and miss,
+ * and the same `formatSkillInvocation` answer.
  */
 export function createActivateSkillTool(
-	activate: (name: string, signal?: AbortSignal) => Promise<string>,
+	skills: () => readonly RegisteredSkill[],
+	env?: () => ExecutionEnv | undefined,
 ): AgentTool<any> {
-	const ActivateSkillParams = Type.Object({
-		name: Type.String({ description: 'Name of the skill to activate' }),
-	});
-
+	const registration = activateSkillRegistration(async () => skills());
 	return {
-		name: 'activate_skill',
+		name: registration.name,
 		label: 'Activate Skill',
-		description:
-			'Load the full instructions for one available skill before performing work that matches its description. Supporting resources remain lazy until explicitly read.',
-		parameters: ActivateSkillParams,
-		async execute(_toolCallId: string, params: unknown, signal?: AbortSignal) {
+		description: registration.description,
+		parameters: registration.parameters,
+		async execute(toolCallId: string, params: unknown, signal?: AbortSignal) {
 			throwIfAborted(signal);
-			const name =
-				typeof params === 'object' &&
-				params !== null &&
-				'name' in params &&
-				typeof params.name === 'string'
-					? params.name
-					: '';
+			const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+			const api = {
+				callId: toolCallId,
+				conversationId: 0,
+				env: env?.(),
+			} as unknown as ToolExecutionApi;
+			const result = await registration.execute(params as never, api, context);
 			return {
-				content: [{ type: 'text', text: await activate(name, signal) }],
-				details: { skill: name },
+				content: result.content ?? [],
+				details: result.details,
 			};
 		},
 	};

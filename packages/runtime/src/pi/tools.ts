@@ -56,11 +56,26 @@ export interface FlueToolHarnessScope {
 export interface FlueToolDeps {
 	/** Materialize the harness of a `harness: true` tool call. Absent: such tools fail with an error result. */
 	readonly harness?: (
-		call: { readonly tool: string; readonly api: ToolExecutionApi; readonly signal: AbortSignal | undefined },
+		call: {
+			readonly tool: string;
+			readonly api: ToolExecutionApi;
+			readonly signal: AbortSignal | undefined;
+		},
 		context: Context,
 	) => Promise<FlueToolHarnessScope>;
 	/** Progress logger of one call (`ctx.log`); never model-visible. Default: discard. */
 	readonly logger?: (tool: string, callId: string) => FlueLogger;
+	/**
+	 * Runs around every Flue tool execution: tracing interception and the
+	 * flush of what the call wrote through hooks (`usePersistentState`,
+	 * `useDataWriter`), committed through the call's own `api` before its
+	 * result entry.
+	 */
+	readonly around?: <T>(
+		call: { readonly tool: string; readonly api: ToolExecutionApi },
+		run: () => Promise<T>,
+		context: Context,
+	) => Promise<T>;
 }
 
 const NOOP_LOGGER: FlueLogger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -81,7 +96,9 @@ function createMemoStep(toolName: string, api: ToolExecutionApi, context: Contex
 			const value = cloneStepValue(await fn(), toolName, stepName);
 			const winner = await api.memo<Recorded>(
 				key,
-				value === undefined ? { defined: false, value: null } : { defined: true, value: value as JsonValue },
+				value === undefined
+					? { defined: false, value: null }
+					: { defined: true, value: value as JsonValue },
 				context,
 			);
 			return (winner.defined ? winner.value : undefined) as never;
@@ -92,7 +109,10 @@ function createMemoStep(toolName: string, api: ToolExecutionApi, context: Contex
 const EMPTY_PARAMETERS = { type: 'object', properties: {}, additionalProperties: false };
 
 /** Convert one Flue `ToolDefinition` into a Pi `ToolRegistration`. */
-export function flueToolRegistration(tool: ToolDefinition, deps: FlueToolDeps = {}): ToolRegistration {
+export function flueToolRegistration(
+	tool: ToolDefinition,
+	deps: FlueToolDeps = {},
+): ToolRegistration {
 	const prepared = getPreparedToolAdapter(tool);
 	if (!prepared) assertToolDefinition(tool, `Tool "${tool.name}"`);
 	const parameters = (prepared?.parameters ??
@@ -105,45 +125,62 @@ export function flueToolRegistration(tool: ToolDefinition, deps: FlueToolDeps = 
 		// interrupted call may rerun; everything else settles as interrupted.
 		replay: tool.durable ? 'safe' : 'unsafe',
 		async execute(args, api, context): Promise<ToolExecutionResult> {
-			const { mergedSignal } = composeTimeoutSignal(tool.timeoutMs, context.abortSignal);
-			if (prepared) {
-				const text = await prepared.execute(args as Record<string, unknown>, mergedSignal);
-				return { content: [{ type: 'text', text }], details: { customTool: tool.name } };
-			}
-			const log = deps.logger?.(tool.name, api.callId) ?? NOOP_LOGGER;
-			const parsed = parseToolInput(tool, args, mergedSignal, {
-				log,
-				toolCallId: api.callId,
-				...(tool.durable ? { step: createMemoStep(tool.name, api, context) } : {}),
-			});
-			let scope: FlueToolHarnessScope | undefined;
-			if (tool.harness) {
-				if (!deps.harness) {
-					throw new Error(
-						`[flue] Tool "${tool.name}" declares \`harness: true\`, but this host has no harness binding.`,
-					);
-				}
-				scope = await deps.harness({ tool: tool.name, api, signal: mergedSignal }, context);
-			}
-			try {
-				const runContext = scope
-					? ({ ...parsed.context, harness: scope.harness } as unknown as typeof parsed.context)
-					: parsed.context;
-				const resolved = resolveToolRun(
-					tool,
-					await raceToolWithDeadline(() => tool.run(runContext), mergedSignal, tool.timeoutMs, tool.name),
-				);
-				const output = resolved.output as JsonValue | undefined;
-				return {
-					content: [{ type: 'text', text: output === undefined ? 'null' : JSON.stringify(output) }],
-					details: { customTool: tool.name, ...(output !== undefined ? { output } : {}) },
-					...(resolved.terminate ? { control: { terminate: true } } : {}),
-				};
-			} finally {
-				await scope?.close();
-			}
+			const run = () => executeFlueTool(tool, prepared, deps, args, api, context);
+			return deps.around ? deps.around({ tool: tool.name, api }, run, context) : run();
 		},
 	};
+}
+
+async function executeFlueTool(
+	tool: ToolDefinition,
+	prepared: ReturnType<typeof getPreparedToolAdapter>,
+	deps: FlueToolDeps,
+	args: JsonValue,
+	api: ToolExecutionApi,
+	context: Context,
+): Promise<ToolExecutionResult> {
+	const { mergedSignal } = composeTimeoutSignal(tool.timeoutMs, context.abortSignal);
+	if (prepared) {
+		const text = await prepared.execute(args as Record<string, unknown>, mergedSignal);
+		return { content: [{ type: 'text', text }], details: { customTool: tool.name } };
+	}
+	const log = deps.logger?.(tool.name, api.callId) ?? NOOP_LOGGER;
+	const parsed = parseToolInput(tool, args, mergedSignal, {
+		log,
+		toolCallId: api.callId,
+		...(tool.durable ? { step: createMemoStep(tool.name, api, context) } : {}),
+	});
+	let scope: FlueToolHarnessScope | undefined;
+	if (tool.harness) {
+		if (!deps.harness) {
+			throw new Error(
+				`[flue] Tool "${tool.name}" declares \`harness: true\`, but this host has no harness binding.`,
+			);
+		}
+		scope = await deps.harness({ tool: tool.name, api, signal: mergedSignal }, context);
+	}
+	try {
+		const runContext = scope
+			? ({ ...parsed.context, harness: scope.harness } as unknown as typeof parsed.context)
+			: parsed.context;
+		const resolved = resolveToolRun(
+			tool,
+			await raceToolWithDeadline(
+				() => tool.run(runContext),
+				mergedSignal,
+				tool.timeoutMs,
+				tool.name,
+			),
+		);
+		const output = resolved.output as JsonValue | undefined;
+		return {
+			content: [{ type: 'text', text: output === undefined ? 'null' : JSON.stringify(output) }],
+			details: { customTool: tool.name, ...(output !== undefined ? { output } : {}) },
+			...(resolved.terminate ? { control: { terminate: true } } : {}),
+		};
+	} finally {
+		await scope?.close();
+	}
 }
 
 /**
@@ -155,14 +192,21 @@ export function agentToolRegistration(
 	tool: AgentTool<any>,
 	options: { readonly replay?: 'safe' | 'unsafe'; readonly executionMode?: ToolExecutionMode } = {},
 ): ToolRegistration {
+	const executionMode =
+		options.executionMode ??
+		(tool as AgentTool<any> & { executionMode?: ToolExecutionMode }).executionMode;
 	return {
 		name: tool.name,
 		description: tool.description,
 		parameters: tool.parameters,
 		...(options.replay !== undefined ? { replay: options.replay } : {}),
-		...(options.executionMode !== undefined ? { executionMode: options.executionMode } : {}),
+		...(executionMode !== undefined ? { executionMode } : {}),
 		async execute(args, api, context) {
-			const result: AgentToolResult<unknown> = await tool.execute(api.callId, args, context.abortSignal);
+			const result: AgentToolResult<unknown> = await tool.execute(
+				api.callId,
+				args,
+				context.abortSignal,
+			);
 			return {
 				content: result.content,
 				...(result.details !== undefined ? { details: result.details as JsonValue } : {}),

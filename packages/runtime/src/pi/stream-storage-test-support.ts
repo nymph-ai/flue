@@ -76,7 +76,9 @@ export async function openStreamStorage(
 		readonly log: DurableStreamLog;
 		readonly entity?: EntityAddress;
 		readonly path?: string;
-	} & Partial<Omit<StreamStorageOptions, 'database' | 'log' | 'entity' | 'onFenced' | 'onReport' | 'path'>>,
+	} & Partial<
+		Omit<StreamStorageOptions, 'database' | 'log' | 'entity' | 'onFenced' | 'onReport' | 'path'>
+	>,
 ): Promise<OpenedStorage> {
 	const fences: { epoch: number; reason: FenceReason }[] = [];
 	const reports: unknown[] = [];
@@ -103,7 +105,10 @@ export async function openStreamStorage(
 // ─── Reading the log ────────────────────────────────────────────────────────
 
 /** Every envelope on the log, reassembled, in order. */
-export async function loggedEnvelopes(log: DurableStreamLog, path: string): Promise<PiCommitEnvelope[]> {
+export async function loggedEnvelopes(
+	log: DurableStreamLog,
+	path: string,
+): Promise<PiCommitEnvelope[]> {
 	const envelopes: PiCommitEnvelope[] = [];
 	const assembler = new CommitAssembler();
 	let offset: StreamOffset = STREAM_START;
@@ -136,7 +141,11 @@ export class CrashError extends Error {
  */
 export class FaultyLog implements DurableStreamLog {
 	readonly inner: DurableStreamLog;
-	readonly appends: { readonly producer: ProducerClaim; readonly streamSeq?: string; outcome?: string }[] = [];
+	readonly appends: {
+		readonly producer: ProducerClaim;
+		readonly streamSeq?: string;
+		outcome?: string;
+	}[] = [];
 	private next: 'before-append' | 'drop-ack' | undefined;
 	private dead = false;
 	private blocked = false;
@@ -166,7 +175,11 @@ export class FaultyLog implements DurableStreamLog {
 
 	async append(
 		path: string,
-		input: { readonly messages: readonly unknown[]; readonly producer: ProducerClaim; readonly streamSeq?: string },
+		input: {
+			readonly messages: readonly unknown[];
+			readonly producer: ProducerClaim;
+			readonly streamSeq?: string;
+		},
 		signal?: AbortSignal,
 	): Promise<AppendOutcome> {
 		this.assertAlive();
@@ -198,7 +211,11 @@ export class FaultyLog implements DurableStreamLog {
 	read(
 		path: string,
 		from: StreamOffset,
-		options?: { readonly live?: false | 'long-poll' | 'sse'; readonly cursor?: string; readonly signal?: AbortSignal },
+		options?: {
+			readonly live?: false | 'long-poll' | 'sse';
+			readonly cursor?: string;
+			readonly signal?: AbortSignal;
+		},
 	): Promise<ReadBatch> {
 		this.assertAlive();
 		return this.inner.read(path, from, options);
@@ -274,7 +291,9 @@ export async function runHarnessSession(storage: Storage): Promise<void> {
 		}),
 	});
 	faux.setResponses([
-		fauxAssistantMessage([fauxToolCall('echo', { text: 'hello' }, { id: 'call-1' })], { stopReason: 'toolUse' }),
+		fauxAssistantMessage([fauxToolCall('echo', { text: 'hello' }, { id: 'call-1' })], {
+			stopReason: 'toolUse',
+		}),
 		fauxAssistantMessage([fauxText(`The echo said hello. ${'Streaming text. '.repeat(40)}`)]),
 		fauxAssistantMessage('Second answer.'),
 		fauxAssistantMessage('After the reset.'),
@@ -287,14 +306,20 @@ export async function runHarnessSession(storage: Storage): Promise<void> {
 			},
 		});
 		harness.resume();
-		const first = await root.submit({ type: 'input', content: 'say hello', requestId: 'req-1' }, context);
+		const first = await root.submit(
+			{ type: 'input', content: 'say hello', requestId: 'req-1' },
+			context,
+		);
 		expect((await first.wait(context)).status).toBe('done');
 		await root.commit(async (tx) => {
 			const notes = await tx.doc(Notes, root.id);
 			notes.text = 'first note';
 			notes.revisions += 1;
 		}, context);
-		const second = await root.submit({ type: 'input', content: 'again', requestId: 'req-2' }, context);
+		const second = await root.submit(
+			{ type: 'input', content: 'again', requestId: 'req-2' },
+			context,
+		);
 		expect((await second.wait(context)).status).toBe('done');
 		await root.commit(async (tx) => {
 			const notes = await tx.doc(Notes, root.id);
@@ -308,7 +333,11 @@ export async function runHarnessSession(storage: Storage): Promise<void> {
 					requestId: 'send-1',
 					entry: {
 						kind: A2A_SEND_ENTRY_KIND,
-						data: { target: { type: 'reviewer', id: 'bob' }, messageId: 'msg-1', message: { text: 'hi bob' } },
+						data: {
+							target: { type: 'reviewer', id: 'bob' },
+							messageId: 'msg-1',
+							message: { text: 'hi bob' },
+						},
 					},
 				},
 				context,
@@ -325,7 +354,10 @@ export async function runHarnessSession(storage: Storage): Promise<void> {
 			)
 		).wait(context);
 		await root.reset(undefined, context);
-		const third = await root.submit({ type: 'input', content: 'after reset', requestId: 'req-3' }, context);
+		const third = await root.submit(
+			{ type: 'input', content: 'after reset', requestId: 'req-3' },
+			context,
+		);
 		expect((await third.wait(context)).status).toBe('done');
 		await harness.waitForIdle(context);
 	} finally {
@@ -364,7 +396,9 @@ export function recordedBatches(): Promise<StorageWrite[][]> {
 // ─── Snapshot of every Pi read ──────────────────────────────────────────────
 
 async function scanAll<T>(
-	scan: (cursor: Cursor | undefined) => Promise<{ readonly items: readonly T[]; readonly next?: Cursor }>,
+	scan: (
+		cursor: Cursor | undefined,
+	) => Promise<{ readonly items: readonly T[]; readonly next?: Cursor }>,
 ): Promise<T[]> {
 	const items: T[] = [];
 	let cursor: Cursor | undefined;
@@ -388,21 +422,32 @@ async function settle<T>(read: () => Promise<T>): Promise<T | { readonly error: 
  * Every Pi read API over everything `storage` holds, including historical
  * document reads at every seq up to `lastSeq`. Small pages exercise cursors.
  */
-export async function snapshotReads(storage: Storage, lastSeq: number): Promise<Record<string, unknown>> {
+export async function snapshotReads(
+	storage: Storage,
+	lastSeq: number,
+): Promise<Record<string, unknown>> {
 	const snapshot: Record<string, unknown> = {};
-	const conversations = await scanAll((cursor) => storage.scanConversations({}, 2, cursor, context));
+	const conversations = await scanAll((cursor) =>
+		storage.scanConversations({}, 2, cursor, context),
+	);
 	snapshot.conversations = conversations;
 	const scopes: { kind: string; [key: string]: unknown }[] = [{ kind: 'session' }];
 	for (const conversation of conversations) {
 		const id = conversation.id;
 		scopes.push({ kind: 'conversation', conversationId: id });
-		const entries = await scanAll((cursor) => storage.scanEntries({ conversationId: id }, 3, cursor, context));
+		const entries = await scanAll((cursor) =>
+			storage.scanEntries({ conversationId: id }, 3, cursor, context),
+		);
 		snapshot[`entries:${id}`] = entries;
 		snapshot[`head:${id}`] = await storage.findLatestHeadMarker(id, undefined, context);
 		for (const entry of entries) {
 			snapshot[`entry:${entry.id}`] = await storage.entry(entry.id, context);
 			snapshot[`entry:${id}/${entry.id}`] = await storage.entry(id, entry.id, context);
-			snapshot[`head:${id}@${entry.id}`] = await storage.findLatestHeadMarker(id, entry.id, context);
+			snapshot[`head:${id}@${entry.id}`] = await storage.findLatestHeadMarker(
+				id,
+				entry.id,
+				context,
+			);
 		}
 	}
 	const tasks = await scanAll((cursor) => storage.scanTasks({}, 2, cursor, context));
@@ -412,7 +457,9 @@ export async function snapshotReads(storage: Storage, lastSeq: number): Promise<
 		scopes.push({ kind: 'task', taskId: task.id });
 	}
 	for (const status of ['pending', 'running', 'waiting', 'completing', 'terminal'] as const) {
-		snapshot[`tasks:${status}`] = await scanAll((cursor) => storage.scanTasks({ status }, 2, cursor, context));
+		snapshot[`tasks:${status}`] = await scanAll((cursor) =>
+			storage.scanTasks({ status }, 2, cursor, context),
+		);
 	}
 	const submissions = await scanAll((cursor) => storage.scanSubmissions({}, 2, cursor, context));
 	snapshot.submissions = submissions;
@@ -423,7 +470,10 @@ export async function snapshotReads(storage: Storage, lastSeq: number): Promise<
 				await storage.submissionByRequest(submission.conversationId, submission.requestId, context);
 		}
 	}
-	const points = ['current' as const, ...Array.from({ length: lastSeq }, (_, index) => (index + 1) as Seq)];
+	const points = [
+		'current' as const,
+		...Array.from({ length: lastSeq }, (_, index) => (index + 1) as Seq),
+	];
 	for (const scope of scopes) {
 		for (const at of points) {
 			const documents = await scanAll((cursor) =>
@@ -432,7 +482,9 @@ export async function snapshotReads(storage: Storage, lastSeq: number): Promise<
 			const key = `${JSON.stringify(scope)}@${at}`;
 			snapshot[`docs:${key}`] = documents;
 			for (const document of documents) {
-				snapshot[`doc:${document.id}@${at}`] = await settle(() => storage.document(document.id, at, context));
+				snapshot[`doc:${document.id}@${at}`] = await settle(() =>
+					storage.document(document.id, at, context),
+				);
 				snapshot[`find:${key}/${document.kind}/${document.key ?? ''}`] = await settle(() =>
 					storage.findDocument(
 						{
@@ -468,7 +520,8 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 	describe(label, () => {
 		const opened: StreamStorage[] = [];
 		let counter = 0;
-		const freshPath = () => `${backend.pathPrefix}${crypto.randomUUID().slice(0, 8)}-${counter++}/pi`;
+		const freshPath = () =>
+			`${backend.pathPrefix}${crypto.randomUUID().slice(0, 8)}-${counter++}/pi`;
 
 		async function open(options: Parameters<typeof openStreamStorage>[0]): Promise<OpenedStorage> {
 			const result = await openStreamStorage(options);
@@ -482,7 +535,12 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			await removeTempFiles();
 		});
 
-		async function commitAll(storage: StreamStorage, batches: readonly StorageWrite[][], from: number, to: number) {
+		async function commitAll(
+			storage: StreamStorage,
+			batches: readonly StorageWrite[][],
+			from: number,
+			to: number,
+		) {
 			for (let index = from; index < to; index++) {
 				const seq = await storage.commit(batches[index] as StorageWrite[], context);
 				expect(seq).toBe(index + 1);
@@ -490,10 +548,17 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 		}
 
 		function expectEachSeqOnce(envelopes: readonly PiCommitEnvelope[], count: number): void {
-			expect(envelopes.map((envelope) => envelope.seq)).toEqual(Array.from({ length: count }, (_, i) => i + 1));
+			expect(envelopes.map((envelope) => envelope.seq)).toEqual(
+				Array.from({ length: count }, (_, i) => i + 1),
+			);
 		}
 
-		async function expectRebuildsIdentically(log: DurableStreamLog, path: string, expected: unknown, seqs: number) {
+		async function expectRebuildsIdentically(
+			log: DurableStreamLog,
+			path: string,
+			expected: unknown,
+			seqs: number,
+		) {
 			const fresh = await open({ file: await tempFile(), log, path });
 			expect(await snapshotReads(fresh.storage, seqs)).toEqual(expected);
 		}
@@ -507,7 +572,9 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			const first = await open({ database, log, path, publish: 'await' });
 			await commitAll(first.storage, batches, 0, 3);
 			database.failNextTransaction = true;
-			await expect(first.storage.commit(batches[3] as StorageWrite[], context)).rejects.toThrow(CrashError);
+			await expect(first.storage.commit(batches[3] as StorageWrite[], context)).rejects.toThrow(
+				CrashError,
+			);
 			await first.storage.close(context);
 
 			const second = await open({ file, log, path, publish: 'await' });
@@ -535,7 +602,9 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			expectEachSeqOnce(await loggedEnvelopes(inner, path), 3);
 
 			const second = await open({ file, log: inner, path, publish: 'await' });
-			expect(await second.storage.drain()).toMatchObject({ status: expect.stringMatching(/idle|published/) });
+			expect(await second.storage.drain()).toMatchObject({
+				status: expect.stringMatching(/idle|published/),
+			});
 			expect(second.storage.outbox.pending()).toBe(0);
 			expectEachSeqOnce(await loggedEnvelopes(inner, path), 4);
 			expect(await snapshotReads(second.storage, 4)).toEqual(before);
@@ -564,7 +633,10 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			await second.storage.drain();
 			expect(second.storage.outbox.pending()).toBe(0);
 			// Same epoch, same producer seq: the server answered duplicate.
-			expect(recording.appends[0]).toMatchObject({ producer: { epoch: 0, seq: 3 }, outcome: 'duplicate' });
+			expect(recording.appends[0]).toMatchObject({
+				producer: { epoch: 0, seq: 3 },
+				outcome: 'duplicate',
+			});
 			expectEachSeqOnce(await loggedEnvelopes(inner, path), 4);
 			expect(await snapshotReads(second.storage, 4)).toEqual(before);
 			await commitAll(second.storage, batches, 4, 6);
@@ -592,7 +664,9 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			await second.storage.rebuild(context);
 			expect(await snapshotReads(second.storage, 4)).toEqual(before);
 			expect(second.storage.outbox.requireProducer()).toMatchObject({ epoch: 1, publishedSeq: 4 });
-			expect(second.storage.outbox.pendingRows().map((row) => [row.seq, row.producerSeq])).toEqual([[4, 0]]);
+			expect(second.storage.outbox.pendingRows().map((row) => [row.seq, row.producerSeq])).toEqual([
+				[4, 0],
+			]);
 			expect(await second.storage.commit(batches[4] as StorageWrite[], context)).toBe(5);
 			expect(second.storage.outbox.pendingRows().map((row) => [row.seq, row.producerSeq])).toEqual([
 				[4, 0],
@@ -607,7 +681,14 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			// Seq 4: a stream-seq conflict consumes nothing, so seq 5 goes out
 			// as (epoch 1, producer seq 0) again — never 1, which a new epoch
 			// could not start at.
-			expect(blocked.appends.map((append) => [append.streamSeq, append.producer.epoch, append.producer.seq, append.outcome])).toEqual([
+			expect(
+				blocked.appends.map((append) => [
+					append.streamSeq,
+					append.producer.epoch,
+					append.producer.seq,
+					append.outcome,
+				]),
+			).toEqual([
 				['0000000000000004', 1, 0, 'stream-seq-conflict'],
 				['0000000000000005', 1, 0, 'appended'],
 			]);
@@ -631,7 +712,10 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			expect(await snapshotReads(second.storage, 4)).toEqual(reads);
 			expect(second.storage.outbox.requireProducer().epoch).toBe(1);
 			await commitAll(second.storage, batches, 4, 5);
-			expect(recording.appends.at(-1)).toMatchObject({ producer: { epoch: 1, seq: 0 }, outcome: 'appended' });
+			expect(recording.appends.at(-1)).toMatchObject({
+				producer: { epoch: 1, seq: 0 },
+				outcome: 'appended',
+			});
 			expectEachSeqOnce(await loggedEnvelopes(log, path), 5);
 		});
 
@@ -650,7 +734,9 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			expect(await older.storage.commit(batches[3] as StorageWrite[], context)).toBe(4);
 			expect(older.fences).toEqual([{ epoch: 1, reason: 'epoch' }]);
 			expect(older.storage.fenced).toBeInstanceOf(Error);
-			await expect(older.storage.commit(batches[4] as StorageWrite[], context)).rejects.toThrow(/fenced/);
+			await expect(older.storage.commit(batches[4] as StorageWrite[], context)).rejects.toThrow(
+				/fenced/,
+			);
 			const envelopes = await loggedEnvelopes(log, path);
 			expectEachSeqOnce(envelopes, 4);
 		});
@@ -685,7 +771,9 @@ export function defineStreamStorageCrashTests(label: string, backend: CrashSuite
 			// The database was published to `path`; pointing it at a log of another incarnation fails.
 			const moved = await openNodeSqliteDatabase(file);
 			moved.exec(`UPDATE flue_pi_producer SET path = '${otherPath}'`);
-			await expect(openStreamStorage({ database: moved, log, path: otherPath })).rejects.toThrow(/incarnation/);
+			await expect(openStreamStorage({ database: moved, log, path: otherPath })).rejects.toThrow(
+				/incarnation/,
+			);
 		});
 	});
 }

@@ -34,6 +34,9 @@ import {
 	InvalidRequestError,
 	SubmissionConflictError,
 } from '../errors.ts';
+import type { ImageContent } from '@earendil-works/pi-ai';
+import { decodeBase64 } from '../base64.ts';
+import { isDocumentMimeType } from '../document-attachments.ts';
 import { renderSignalMessage } from '../message-rendering.ts';
 import { generateInstanceUid } from '../runtime/ids.ts';
 import type { DeliveredMessage, DispatchReceipt } from '../types.ts';
@@ -46,6 +49,7 @@ import {
 	FlueSessions,
 } from './docs.ts';
 import { ATTACHMENT_PLACEHOLDER_PREFIX, type FlueAttachmentPort } from './hooks.ts';
+import type { DisplayMessage } from './projection.ts';
 import { resultFromToolDetails } from './tools.ts';
 
 /** One Flue delivery, as the coordinators hand it to the host (§2.1). */
@@ -119,7 +123,10 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** SHA-256 of the submission identity `{kind, agent, id, message, initialData}`. */
-export async function submissionDigest(target: ReceiptTarget, admission: FlueAdmission): Promise<string> {
+export async function submissionDigest(
+	target: ReceiptTarget,
+	admission: FlueAdmission,
+): Promise<string> {
 	const identity = canonicalJson({
 		kind: admission.kind,
 		agent: target.type,
@@ -132,38 +139,73 @@ export async function submissionDigest(target: ReceiptTarget, admission: FlueAdm
 }
 
 /**
- * The Pi user content of a delivered message. Signals render as Flue's
- * signal envelope; attachments become `flue-attachment:<id>` placeholders
- * when an attachment port is present (rehydrated per request by the hooks).
+ * The Pi user content of a delivered message plus its display form for the
+ * public conversation (`DisplayMessage`: attachment bytes replaced by refs).
  */
-export async function deliveredMessageContent(
+export async function deliveredMessage(
 	message: DeliveredMessage,
 	submissionId: string,
 	attachments: FlueAttachmentPort | undefined,
-): Promise<UserInput> {
+): Promise<{ content: UserInput; display: DisplayMessage }> {
 	if (message.kind === 'signal') {
-		return [
-			{
-				type: 'text',
-				text: renderSignalMessage({
-					role: 'signal',
-					type: message.type,
-					content: message.body,
-					...(message.attributes ? { attributes: message.attributes } : {}),
-					...(message.tagName ? { tagName: message.tagName } : {}),
-					timestamp: 0,
-				}),
-			},
-		];
+		const display: DisplayMessage = {
+			kind: 'signal',
+			type: message.type,
+			body: message.body,
+			...(message.attributes ? { attributes: { ...message.attributes } } : {}),
+			...(message.tagName ? { tagName: message.tagName } : {}),
+		};
+		return {
+			display,
+			content: [
+				{
+					type: 'text',
+					text: renderSignalMessage({
+						role: 'signal',
+						type: message.type,
+						content: message.body,
+						...(message.attributes ? { attributes: message.attributes } : {}),
+						...(message.tagName ? { tagName: message.tagName } : {}),
+						timestamp: 0,
+					}),
+				},
+			],
+		};
 	}
-	const content: Exclude<UserInput, string> = [{ type: 'text', text: message.body }];
+	const content: Exclude<UserInput, string> = [];
+	const refs: NonNullable<Extract<DisplayMessage, { kind: 'user' }>['attachments']> = [];
 	for (const [index, attachment] of (message.attachments ?? []).entries()) {
-		const data = attachments
-			? `${ATTACHMENT_PLACEHOLDER_PREFIX}${await attachments.put(submissionId, index, attachment)}`
-			: attachment.data;
-		content.push({ type: 'image', data, mimeType: attachment.mimeType });
+		const id = attachments ? await attachments.put(submissionId, index, attachment) : undefined;
+		const data = id !== undefined ? `${ATTACHMENT_PLACEHOLDER_PREFIX}${id}` : attachment.data;
+		// Documents ride Pi's image carrier (`document-attachments.ts`); their
+		// filename travels with them for the provider payload rewrite.
+		const filename =
+			attachment.filename && isDocumentMimeType(attachment.mimeType)
+				? { filename: attachment.filename }
+				: {};
+		content.push({
+			type: 'image',
+			data,
+			mimeType: attachment.mimeType,
+			...filename,
+		} as ImageContent);
+		refs.push({
+			id: id ?? `att_${submissionId}_${index}`,
+			mimeType: attachment.mimeType,
+			size: decodeBase64(attachment.data).byteLength,
+			...(attachment.filename ? { filename: attachment.filename } : {}),
+		});
 	}
-	return content;
+	// The model sees the attachment manifest after the text, as before.
+	content.unshift({ type: 'text', text: withAttachmentManifest(message.body, refs) });
+	return {
+		content,
+		display: {
+			kind: 'user',
+			body: message.body,
+			...(refs.length > 0 ? { attachments: refs } : {}),
+		},
+	};
 }
 
 // ─── Admission ───────────────────────────────────────────────────────────────
@@ -189,21 +231,28 @@ export async function beginAdmission(
 	const digest = await submissionDigest(target, admission);
 	const existing = await harness.snapshot(FlueReceipts, admission.submissionId, context);
 	if (existing !== undefined && existing.status !== 'absent') {
-		if (existing.digest !== digest) throw new SubmissionConflictError({ submissionId: admission.submissionId });
+		if (existing.digest !== digest)
+			throw new SubmissionConflictError({ submissionId: admission.submissionId });
 		return { receipt: existing as FlueReceiptState, deduplicated: true };
 	}
-	const content = await deliveredMessageContent(admission.message, admission.submissionId, options.attachments);
+	const { content, display } = await deliveredMessage(
+		admission.message,
+		admission.submissionId,
+		options.attachments,
+	);
 	return harness.commit(async (tx) => {
 		const receipt = await tx.doc(FlueReceipts, admission.submissionId, null);
 		if (receipt.status !== 'absent') {
 			// A concurrent admission of the same id won the line.
-			if (receipt.digest !== digest) throw new SubmissionConflictError({ submissionId: admission.submissionId });
+			if (receipt.digest !== digest)
+				throw new SubmissionConflictError({ submissionId: admission.submissionId });
 			return { receipt: plain<FlueReceiptState>(receipt), deduplicated: true };
 		}
 		const instance = await tx.doc(FlueInstance);
 		const exists = instance.uid !== null;
 		if (typeof admission.uid === 'string') {
-			if (!exists || instance.uid !== admission.uid) throw new AgentInstanceNotFoundError({ id: target.id });
+			if (!exists || instance.uid !== admission.uid)
+				throw new AgentInstanceNotFoundError({ id: target.id });
 		} else if (admission.uid === null && exists) {
 			throw new AgentInstanceExistsError({ id: target.id, uid: instance.uid as string });
 		}
@@ -232,12 +281,15 @@ export async function beginAdmission(
 		receipt.uid = instance.uid as string;
 		receipt.whenBusy = admission.whenBusy;
 		receipt.content = content as JsonValue;
+		receipt.message = display as unknown as JsonValue;
 		receipt.attempts = 1;
 		if (admission.limits?.timeoutAt !== undefined) receipt.timeoutAt = admission.limits.timeoutAt;
-		if (admission.limits?.maxAttempts !== undefined) receipt.maxAttempts = admission.limits.maxAttempts;
+		if (admission.limits?.maxAttempts !== undefined)
+			receipt.maxAttempts = admission.limits.maxAttempts;
 		if (admission.traceCarrier !== undefined) receipt.traceCarrier = { ...admission.traceCarrier };
 		const index = await tx.doc(FlueReceiptIndex);
-		if (!index.admitting.includes(admission.submissionId)) index.admitting.push(admission.submissionId);
+		if (!index.admitting.includes(admission.submissionId))
+			index.admitting.push(admission.submissionId);
 		return { receipt: plain<FlueReceiptState>(receipt), deduplicated: false };
 	}, context);
 }
@@ -257,7 +309,10 @@ export async function completeAdmission(
 		throw new Error(`[flue] invariant: submission ${submissionId} has no receipt to admit.`);
 	}
 	if (receipt.status === 'admitted') return receipt as FlueReceiptState;
-	const conversation = await harness.conversation(receipt.conversationId as ConversationId, context);
+	const conversation = await harness.conversation(
+		receipt.conversationId as ConversationId,
+		context,
+	);
 	if (!conversation) {
 		throw new Error(`[flue] invariant: receipt ${submissionId} names a missing conversation.`);
 	}
@@ -283,6 +338,28 @@ export async function completeAdmission(
 	}, context);
 }
 
+/** `text` followed by the `<attachments>` manifest the model reads attachment ids from. */
+function withAttachmentManifest(
+	text: string,
+	refs: readonly { id: string; mimeType: string; filename?: string }[],
+): string {
+	if (refs.length === 0) return text;
+	const escapeAttribute = (value: string) =>
+		value
+			.replaceAll('&', '&amp;')
+			.replaceAll('<', '&lt;')
+			.replaceAll('>', '&gt;')
+			.replaceAll('"', '&quot;');
+	const manifest = refs
+		.map((ref) =>
+			isDocumentMimeType(ref.mimeType)
+				? `<document id="${ref.id}" mimeType="${ref.mimeType}"${ref.filename ? ` filename="${escapeAttribute(ref.filename)}"` : ''} />`
+				: `<image id="${ref.id}" mimeType="${ref.mimeType}" />`,
+		)
+		.join('\n');
+	return `${text}\n\n<attachments>\n${manifest}\n</attachments>`;
+}
+
 /** Admit one Flue delivery: commit A, then commit B (also on a dedup that found it `admitting`). */
 export async function admitSubmission(
 	harness: Harness,
@@ -291,8 +368,15 @@ export async function admitSubmission(
 	options: AdmissionOptions,
 	context: Context,
 ): Promise<DispatchReceipt> {
-	const { receipt, deduplicated } = await beginAdmission(harness, target, admission, options, context);
-	if (receipt.status === 'admitting') await completeAdmission(harness, admission.submissionId, context);
+	const { receipt, deduplicated } = await beginAdmission(
+		harness,
+		target,
+		admission,
+		options,
+		context,
+	);
+	if (receipt.status === 'admitting')
+		await completeAdmission(harness, admission.submissionId, context);
 	return {
 		submissionId: admission.submissionId,
 		acceptedAt: receipt.acceptedAt,
@@ -337,7 +421,12 @@ async function resultOfAnswer(
 ): Promise<{ result?: unknown; gaveUp?: string; settledAt?: number }> {
 	const conversation = await harness.conversation(conversationId, context);
 	if (!conversation) return {};
-	const page = await conversation.entries({ minEntryId: answer as EntryId }, 64, undefined, context);
+	const page = await conversation.entries(
+		{ minEntryId: answer as EntryId },
+		64,
+		undefined,
+		context,
+	);
 	const entries = [...page.items].reverse();
 	const assistant = entries.find((entry) => entry.id === answer);
 	const message = AssistantEntry.is(assistant) ? assistant.model?.[0] : undefined;
@@ -352,8 +441,10 @@ async function resultOfAnswer(
 		const result = entry?.model?.[0];
 		if (result?.role !== 'toolResult' || result.isError) continue;
 		const outcome = resultFromToolDetails(result.details);
-		if (outcome?.type === 'finished') return { result: outcome.value, ...(settledAt ? { settledAt } : {}) };
-		if (outcome?.type === 'gave_up') return { gaveUp: outcome.reason, ...(settledAt ? { settledAt } : {}) };
+		if (outcome?.type === 'finished')
+			return { result: outcome.value, ...(settledAt ? { settledAt } : {}) };
+		if (outcome?.type === 'gave_up')
+			return { gaveUp: outcome.reason, ...(settledAt ? { settledAt } : {}) };
 	}
 	return settledAt !== undefined ? { settledAt } : {};
 }
@@ -400,7 +491,10 @@ export async function readSettlement(
 		return {
 			submissionId,
 			outcome: 'failed',
-			error: { message: CLASSIFICATION_MESSAGES[receipt.classification], detail: { reason: receipt.classification } },
+			error: {
+				message: CLASSIFICATION_MESSAGES[receipt.classification],
+				detail: { reason: receipt.classification },
+			},
 			settledAt: fallbackAt,
 		};
 	}
@@ -421,7 +515,8 @@ export async function readSettlement(
 	const conversationId = receipt.conversationId as ConversationId;
 	const found = await resultOfAnswer(harness, conversationId, record.answer, context);
 	const host = await answerHost(harness, receipt.piSubmissionId, record.answer, context);
-	const settledAt = found.settledAt !== undefined ? new Date(found.settledAt).toISOString() : fallbackAt;
+	const settledAt =
+		found.settledAt !== undefined ? new Date(found.settledAt).toISOString() : fallbackAt;
 	if (found.gaveUp !== undefined) {
 		return {
 			submissionId,
@@ -461,7 +556,10 @@ export async function classifyAndAbort(
 	if (receipt.piSubmissionId === undefined) return;
 	const outcome = await harness.abortSubmission(receipt.piSubmissionId as SubmissionId, context);
 	if (outcome === 'already_placed') {
-		const conversation = await harness.conversation(receipt.conversationId as ConversationId, context);
+		const conversation = await harness.conversation(
+			receipt.conversationId as ConversationId,
+			context,
+		);
 		await conversation?.abort(context);
 	}
 }
@@ -501,7 +599,8 @@ export async function enforceTimeouts(
 	let next: number | undefined;
 	for (const { submissionId, receipt } of await liveReceipts(harness, context)) {
 		if (receipt.timeoutAt === undefined || receipt.classification !== undefined) continue;
-		if (receipt.timeoutAt <= now) await classifyAndAbort(harness, submissionId, 'exceeded_timeout', context);
+		if (receipt.timeoutAt <= now)
+			await classifyAndAbort(harness, submissionId, 'exceeded_timeout', context);
 		else next = next === undefined ? receipt.timeoutAt : Math.min(next, receipt.timeoutAt);
 	}
 	return next;

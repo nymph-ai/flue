@@ -36,10 +36,10 @@ export function thinkingLevelFor(level: ThinkingLevel | undefined): ThinkingLeve
 }
 
 /** Flue's model-aware compaction defaults (formerly `deriveCompactionDefaults`). */
-export function flueCompactionDefaults(input: {
-	contextWindow: number;
-	maxTokens: number;
-}): { reserveTokens: number; keepRecentTokens: number } {
+export function flueCompactionDefaults(input: { contextWindow: number; maxTokens: number }): {
+	reserveTokens: number;
+	keepRecentTokens: number;
+} {
 	const reserveCap = input.maxTokens > 0 ? input.maxTokens : DEFAULT_RESERVE_TOKENS;
 	let reserveTokens = Math.min(DEFAULT_RESERVE_TOKENS, reserveCap);
 	if (input.contextWindow > 0 && reserveTokens * 2 >= input.contextWindow) {
@@ -49,9 +49,9 @@ export function flueCompactionDefaults(input: {
 }
 
 /**
- * Map `useModel({ compaction })` onto a Pi `CompactionPolicy`. `false` keeps
- * overflow recovery and manual `compact()` (Pi ignores `enabled` for both)
- * and disables threshold compaction, exactly Flue's contract. `model` (a
+ * Map `useModel({ compaction })` onto a Pi `CompactionPolicy`. `false`
+ * disables threshold compaction and keeps overflow recovery and manual
+ * `compact()`, exactly Flue's contract (see below for how). `model` (a
  * summarizer override) has no Pi policy field; `compactionSummarizerFor`
  * reports it so the host can decide how to honour it.
  */
@@ -60,9 +60,21 @@ export function compactionPolicyFor(
 	model: { contextWindow: number; maxTokens: number } | undefined,
 ): CompactionPolicy {
 	const defaults = flueCompactionDefaults(model ?? { contextWindow: 0, maxTokens: 0 });
-	const overrides = config === false || config === undefined ? {} : config;
+	if (config === false) {
+		// Pi's `enabled` gates threshold AND overflow compaction; Flue's `false`
+		// disables only the threshold. Keep it enabled with no reserve: Pi then
+		// compacts only a context that would not fit the window at all — the
+		// overflow it would otherwise fail on.
+		return {
+			enabled: true,
+			reserveTokens: 0,
+			keepRecentTokens: defaults.keepRecentTokens,
+			backgroundTokens: 0,
+		};
+	}
+	const overrides = config ?? {};
 	return {
-		enabled: config !== false,
+		enabled: true,
 		reserveTokens: overrides.reserveTokens ?? defaults.reserveTokens,
 		keepRecentTokens: overrides.keepRecentTokens ?? defaults.keepRecentTokens,
 		backgroundTokens: 0,
