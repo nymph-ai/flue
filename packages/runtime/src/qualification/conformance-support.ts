@@ -157,8 +157,18 @@ export class Incarnation {
 		this.#acked = 0;
 	}
 
+	/** Calls the dead process still made: a dead incarnation that keeps looping shows up here. */
+	deadCalls = 0;
+
 	alive(): void {
-		if (this.dead) throw new CrashError('the process is dead');
+		if (!this.dead) return;
+		this.deadCalls++;
+		if (process.env.QUAL_TRACE && (this.deadCalls === 1000 || this.deadCalls === 100_000)) {
+			process.stderr.write(
+				`[conformance] a dead incarnation made ${this.deadCalls} calls; one came from:\n${new Error('probe').stack?.split('\n').slice(2, 40).join('\n')}\n`,
+			);
+		}
+		throw new CrashError('the process is dead');
 	}
 
 	matches(path: string): boolean {

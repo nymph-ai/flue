@@ -227,14 +227,26 @@ describe.each(backends())('conformance over $name', (backend) => {
 			'aborted after %i acknowledged commits, the turn resumes with nothing lost or done twice',
 			async (after) => {
 				const qw = await setup(backend);
-				const { alice, settlement } = await crashAndRecover(
+				const { alice, first, second, settlement } = await crashAndRecover(
 					qw,
 					{ kind: 'abort-after-commits', after, stream: 'pi' },
 					'chain 3',
 				);
 				expect(settlement.outcome).toBe('completed');
 				// Each round's event went out exactly once.
-				expect(await events(qw, alice.ref)).toEqual([1, 2, 3]);
+				const rounds = await events(qw, alice.ref);
+				if (rounds.length !== 3) {
+					trace(`events: ${JSON.stringify(await readAll(qw.log, eventsPath(alice.ref)))}`);
+					for (const [name, incarnation] of [
+						['first', first],
+						['second', second],
+					] as const) {
+						trace(
+							`${name} incarnation appends: ${JSON.stringify(incarnation.appends.map((append) => [append.path.split('/').at(-1), append.producer, append.streamSeq ?? null, append.outcome]))}`,
+						);
+					}
+				}
+				expect(rounds).toEqual([1, 2, 3]);
 				const texts = (await transcript(alice)).map((entry) => entry.text);
 				expect(texts.filter((text) => text === 'Chain of 3 published.')).toHaveLength(1);
 				await expectEachCommitOnce(qw, alice);
