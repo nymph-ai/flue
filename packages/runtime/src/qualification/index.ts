@@ -94,9 +94,24 @@ export function indexedSeq(sql: DurableObjectSqliteStorage['sql']): number {
 export async function snapshotDurableObjectIndex(
 	storage: DurableObjectSqliteStorage,
 	lastSeq: number,
+	points?: readonly number[],
 ): Promise<Record<string, unknown>> {
 	const index = await SqliteStorage.open(doSqliteDatabase(storage));
-	return snapshotReads(index, lastSeq);
+	return snapshotReads(index, lastSeq, points ? { points } : {});
+}
+
+/**
+ * The historical points a live comparison reads at: every seq of a short log,
+ * else the last 24 and an even spread of the rest (a full sweep is quadratic
+ * in the log and would not fit one Durable Object invocation's CPU).
+ */
+export function comparisonPoints(lastSeq: number, budget = 64): number[] {
+	if (lastSeq <= budget) return Array.from({ length: lastSeq }, (_, index) => index + 1);
+	const tail = Array.from({ length: 24 }, (_, index) => lastSeq - 23 + index);
+	const step = Math.ceil((lastSeq - 24) / (budget - 24));
+	const spread: number[] = [];
+	for (let seq = 1; seq <= lastSeq - 24; seq += step) spread.push(seq);
+	return [...spread, ...tail];
 }
 
 /**
@@ -111,6 +126,7 @@ export async function rebuildAndSnapshot(options: {
 	readonly log: DurableStreamLog;
 	readonly entity: EntityAddress;
 	readonly lastSeq: number;
+	readonly points?: readonly number[];
 }): Promise<{ readonly snapshot: Record<string, unknown>; readonly rebuiltSeq: number }> {
 	const fences: string[] = [];
 	const rebuilt = await StreamStorage.open(
@@ -126,7 +142,14 @@ export async function rebuildAndSnapshot(options: {
 	try {
 		if (fences.length > 0) throw new Error(`rebuild was fenced: ${fences.join(', ')}`);
 		const rebuiltSeq = indexedSeq(options.storage.sql);
-		return { snapshot: await snapshotReads(rebuilt, options.lastSeq), rebuiltSeq };
+		return {
+			snapshot: await snapshotReads(
+				rebuilt,
+				options.lastSeq,
+				options.points ? { points: options.points } : {},
+			),
+			rebuiltSeq,
+		};
 	} finally {
 		await rebuilt.close(qualificationContext);
 	}

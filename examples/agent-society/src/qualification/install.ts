@@ -38,7 +38,7 @@ interface AgentStub {
 
 /** `replica.ts`. */
 interface ReplicaStub {
-	rebuild(entity: EntityAddress, lastSeq: unknown): Promise<Result>;
+	rebuild(entity: EntityAddress, lastSeq: unknown, points?: unknown): Promise<Result>;
 	logSeqs(entity: EntityAddress): Promise<Result>;
 	producerProbe(path: string): Promise<Result>;
 	splitBrain(entity: EntityAddress): Promise<Result>;
@@ -174,6 +174,7 @@ export function installQualification(app: Hono): void {
 		const rebuilt = await replica(source, `rebuild/${agent}/${id}/${crypto.randomUUID()}`).rebuild(
 			entity,
 			live.lastSeq,
+			live.points,
 		);
 		const diff = diffDigests(
 			(live.keys ?? {}) as Record<string, string>,
@@ -187,6 +188,7 @@ export function installQualification(app: Hono): void {
 			liveDigest: live.digest,
 			rebuiltDigest: rebuilt.digest,
 			keys: Object.keys((live.keys ?? {}) as object).length,
+			points: Array.isArray(live.points) ? live.points.length : null,
 			diff: diff.slice(0, 25),
 			rebuildMs: rebuilt.ms,
 		});

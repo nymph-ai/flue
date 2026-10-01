@@ -17,6 +17,9 @@
 		{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }
 	],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	// A busy instance publishes one Electric POST per Pi commit from the
+	// invocation running its turn (GH #3797): lift the per-invocation budget.
+	"limits": { "subrequests": 1000000, "cpu_ms": 300000 },
 	"durable_objects": {
 		"bindings": [{ "name": "QUAL_REPLICA", "class_name": "QualReplica" }]
 	},

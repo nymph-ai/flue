@@ -13,6 +13,7 @@
  *   storage stays: a forced eviction.
  */
 import {
+	comparisonPoints,
 	digestSnapshot,
 	indexedSeq,
 	snapshotDurableObjectIndex,
@@ -171,12 +172,14 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 			const producer = rows(ctx, 'SELECT published_seq FROM flue_pi_producer')[0];
 			const pending = Number(rows(ctx, 'SELECT count(*) AS n FROM flue_pi_outbox')[0]?.n ?? 0);
 			if (lastSeq === 0) return { lastSeq, publishedSeq: 0, pending, digest: null, keys: {} };
-			const snapshot = await snapshotDurableObjectIndex(ctx.storage as never, lastSeq);
+			const points = comparisonPoints(lastSeq);
+			const snapshot = await snapshotDurableObjectIndex(ctx.storage as never, lastSeq, points);
 			const digests = await digestSnapshot(snapshot);
 			return {
 				lastSeq,
 				publishedSeq: Number(producer?.published_seq ?? 0),
 				pending,
+				points,
 				digest: digests.digest,
 				keys: digests.keys,
 			};
