@@ -104,6 +104,18 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 			recordActivity(ctx, bootOf(this).id, 'boot');
 		}
 
+		/** Raw Pi records for diagnosis: every submission and task, the newest entries. */
+		async __qualRecords(): Promise<Record<string, unknown>> {
+			const ctx = (this as unknown as DurableObjectLike).ctx;
+			const parse = (list: Row[]) =>
+				list.map((row) => ({ ...row, record: JSON.parse(String(row.record ?? 'null')) }));
+			return {
+				submissions: parse(rows(ctx, 'SELECT id, status, record FROM submissions ORDER BY id')),
+				tasks: parse(rows(ctx, 'SELECT id, kind, status, record FROM tasks ORDER BY id DESC LIMIT 20')),
+				entries: parse(rows(ctx, 'SELECT id, conversation_id, commit_seq, record FROM entries ORDER BY id DESC LIMIT 20')),
+			};
+		}
+
 		async __qualInspect(): Promise<Record<string, unknown>> {
 			const self = this as unknown as DurableObjectLike;
 			const ctx = self.ctx;
