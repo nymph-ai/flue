@@ -12,7 +12,10 @@
  * - `flue_pi_offsets` — Pi seq → `Stream-Next-Offset` after it (a cache).
  * - `flue_relay_outbox` / `flue_relay_producer` — A2A sends and publishes
  *   produced by the same commit, with per-target contiguous producer seqs.
- *   Their drainer is a later step; the co-transactional insert is here.
+ *   The co-transactional insert is here; `relay-drainer.ts` posts them.
+ * - `flue_entity_cursors` — advisory entity-layer cursors (inbox read
+ *   positions, last wake generation per subscription). Losing them only
+ *   costs a re-read: admission is idempotent by request id.
  *
  * Drain outcomes, with the protocol as the reference servers implement it
  * (`streams/log.ts`):
@@ -58,8 +61,12 @@ export type DrainResult =
 	| { readonly status: 'fenced'; readonly currentEpoch: number; readonly reason: FenceReason }
 	| { readonly status: 'closed' };
 
-/** `epoch`: the server answered 403. `diverged`: the log holds a different commit at one of our seqs. */
-export type FenceReason = 'epoch' | 'diverged';
+/**
+ * `epoch`: the server answered 403. `diverged`: the log holds a different
+ * commit at one of our seqs. `relay`: a relay target answered 403 — a newer
+ * writer of this entity owns one of its relay producers.
+ */
+export type FenceReason = 'epoch' | 'diverged' | 'relay';
 
 export interface CommitOutbox {
 	/** Must be called synchronously inside the index transaction. */
@@ -138,6 +145,10 @@ const SCHEMA = [
 		epoch INTEGER NOT NULL,
 		next_producer_seq INTEGER NOT NULL,
 		PRIMARY KEY (target, producer_id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS flue_entity_cursors (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
 	)`,
 ];
 
@@ -285,7 +296,10 @@ export class SqliteCommitOutbox implements CommitOutbox {
 				)
 				.get<RelayProducerRow>(item.target, item.producerId);
 			// A relay producer follows the Pi producer's epoch: a rebuilt index
-			// starts every relay target over at seq 0 of the new epoch.
+			// starts every relay target over at seq 0 of the new epoch. That is
+			// safe only because the relay drainer never posts a row before its
+			// Pi commit is on the log (relay-drainer.ts): every epoch a relay
+			// producer used is then on the log, and a fresh rebuild moves above it.
 			const sameEpoch = relay !== undefined && Number(relay.epoch) === producer.epoch;
 			const producerSeq = sameEpoch ? Number(relay.next_producer_seq) : 0;
 			this.db

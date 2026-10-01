@@ -64,6 +64,12 @@ export interface FlueAdmission {
 	readonly whenBusy: 'steer' | 'followUp';
 	readonly limits?: { readonly timeoutAt?: number; readonly maxAttempts?: number };
 	readonly traceCarrier?: Record<string, string>;
+	/**
+	 * The uid recorded if this admission creates the instance (default: a
+	 * fresh `inst_…`). A spawning parent derives it, so it can name the
+	 * child's incarnation before the child has run (`entity/facet.ts`).
+	 */
+	readonly birthUid?: string;
 }
 
 /** Terminal Flue outcome of one submission (§3 settlement mapping). */
@@ -203,7 +209,7 @@ export async function beginAdmission(
 		}
 		if (!exists) {
 			const parsed = (options.parseInitialData ?? ((data: unknown) => data))(admission.initialData);
-			instance.uid = generateInstanceUid();
+			instance.uid = admission.birthUid ?? generateInstanceUid();
 			instance.createdAt = admission.acceptedAt;
 			if (parsed !== undefined) instance.initialData = { value: parsed as JsonValue };
 		}

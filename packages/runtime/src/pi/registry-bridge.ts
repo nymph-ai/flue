@@ -26,6 +26,7 @@ import type {
 	Registry,
 	ToolRegistration,
 } from '@earendil-works/pi-durable';
+import { ENTITY_TOOL_NAMES } from '../entity/tool-names.ts';
 import { ToolNameConflictError } from '../errors.ts';
 import type { AgentOutputChannel } from '../message-output.ts';
 import type { McpConnectionDefinition } from '../mcp-types.ts';
@@ -259,6 +260,8 @@ export class RegistryBridge {
 			TASK_TOOL_NAME,
 			ACTIVATE_SKILL_TOOL_NAME,
 			...(names.includes('read_skill_resource') ? ['read_skill_resource'] : []),
+			// A2A entity tools, once `entity/tools-facet.ts` registered them.
+			...ENTITY_TOOL_NAMES.filter((name) => names.includes(name)),
 		];
 	}
 
@@ -268,7 +271,12 @@ export class RegistryBridge {
 	 * governed conversation.
 	 */
 	async apply(render: RenderedAgent, conversations: readonly Conversation[], context: Context): Promise<void> {
-		const reserved = new Set([...SANDBOX_TOOL_NAMES, ...FRAMEWORK_TOOLS]);
+		const registered = this.#options.registry.snapshot().toolNames();
+		const reserved = new Set<string>([
+			...SANDBOX_TOOL_NAMES,
+			...FRAMEWORK_TOOLS,
+			...ENTITY_TOOL_NAMES.filter((name) => registered.includes(name)),
+		]);
 		const seen = new Set<string>();
 		for (const tool of render.tools) {
 			if (reserved.has(tool.name)) {

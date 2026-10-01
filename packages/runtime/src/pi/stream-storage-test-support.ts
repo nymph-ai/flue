@@ -86,6 +86,8 @@ export async function openStreamStorage(
 		{
 			// Retries in these tests are driven explicitly with drain().
 			backoff: { initialMs: 60_000, maxMs: 60_000 },
+			// These suites are about the Pi log; the relay has its own (entity/*.test.ts).
+			relay: false,
 			...rest,
 			database: db,
 			log,

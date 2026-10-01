@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { encodeBase64 } from '../base64.ts';
 import {
+	acknowledgeWakeNotice,
 	acknowledgeWebhookWake,
 	jwksWebhookKeys,
 	parseWebhookBody,
+	parseWakeNotice,
 	parseWebhookSignatureHeader,
+	receiveWakeNotice,
 	receiveWebhook,
 	staticWebhookKeys,
 	verifyWebhookSignature,
@@ -142,6 +145,7 @@ describe('webhook signatures', () => {
 		const signature = base64Url(new Uint8Array(64).fill(7));
 		expect(parseWebhookSignatureHeader(`ed25519=${signature}, kid=ds_k ,t=12`)).toEqual({
 			timestamp: 12,
+			timestampText: '12',
 			kid: 'ds_k',
 			signature: new Uint8Array(64).fill(7),
 		});
@@ -281,5 +285,110 @@ describe('webhook bodies', () => {
 				},
 			),
 		).rejects.toThrow(/TOKEN_INVALID/);
+	});
+});
+
+/**
+ * What Electric's agents-server 0.6.4 forwards for the same wake
+ * (`routing/internal-router.ts` `subscriptionWebhook`): the backend body,
+ * `streams` cut to the first pending stream as `{ path: "/…", offset }`, and
+ * the claim fields it adds; re-signed with its own key.
+ */
+const proxiedBody = JSON.stringify({
+	...JSON.parse(wakeBody),
+	callback: 'https://agents.test/_electric/wake-callbacks/w_0123456789abcdef01234567',
+	consumerId: 'w_0123456789abcdef01234567',
+	epoch: 7,
+	wakeId: 'w_0123456789abcdef01234567',
+	streamPath: '/flue/v1/support/alice/inbox',
+	streams: [{ path: '/flue/v1/support/alice/inbox', offset: '0000000000000000_0000000000000084' }],
+	claimToken: 'eyJ.token',
+});
+
+describe('wake notices (agents-server first, bare Durable Streams second)', () => {
+	it('normalizes both wake formats', () => {
+		expect(parseWakeNotice(proxiedBody)).toEqual({
+			format: 'agents-server',
+			subscriptionId: 'flue-inbox',
+			wakeId: 'w_0123456789abcdef01234567',
+			generation: 7,
+			streams: [{ path: 'flue/v1/support/alice/inbox', tailOffset: '0000000000000000_0000000000000084', pending: true }],
+			callback: { url: 'https://agents.test/_electric/wake-callbacks/w_0123456789abcdef01234567', token: 'eyJ.token' },
+		});
+		expect(parseWakeNotice(wakeBody)).toEqual({
+			format: 'durable-streams',
+			subscriptionId: 'flue-inbox',
+			wakeId: 'w_0123456789abcdef01234567',
+			generation: 7,
+			streams: [{ path: 'flue/v1/support/alice/inbox', tailOffset: '0000000000000000_0000000000000084', pending: true }],
+			callback: { url: 'https://ds.test/v1/stream/__ds/subscriptions/flue-inbox/callback', token: 'eyJ.token' },
+		});
+		expect(() => parseWakeNotice('{"wakeId":"w","callback":"c","claimToken":"t","streams":[{}]}')).toThrow(
+			/path/,
+		);
+	});
+
+	it('verifies the agents-server signature over the body it forwards', async () => {
+		const agentsKey = await signingKey();
+		const backendKey = await signingKey();
+		const keys = staticWebhookKeys({ keys: [agentsKey.jwk] });
+		const request = (body: string, header: string) =>
+			new Request('https://flue.test/__flue/streams/wake', {
+				method: 'POST',
+				headers: { 'webhook-signature': header },
+				body,
+			});
+		const received = await receiveWakeNotice(request(proxiedBody, await sign(agentsKey, proxiedBody, now)), {
+			keys,
+			now: clock,
+		});
+		expect(received).toMatchObject({ ok: true, notice: { format: 'agents-server', generation: 7 } });
+		// The backend's own signature does not carry over to the rewritten body.
+		expect(
+			await receiveWakeNotice(request(proxiedBody, await sign(backendKey, wakeBody, now)), { keys, now: clock }),
+		).toEqual({ ok: false, status: 401, reason: 'unknown-key' });
+		// A verified body that is not a wake is a 400.
+		expect(await receiveWakeNotice(request('{}', await sign(agentsKey, '{}', now)), { keys, now: clock })).toMatchObject(
+			{ ok: false, status: 400 },
+		);
+	});
+
+	it('acks an agents-server wake in the shape its callback forwards', async () => {
+		const notice = parseWakeNotice(proxiedBody);
+		const requests: Request[] = [];
+		const fetch = async (url: string, init?: RequestInit) => {
+			requests.push(new Request(url, init));
+			return Response.json({ ok: true, next_wake: false });
+		};
+		expect(
+			await acknowledgeWakeNotice(
+				notice,
+				{ acks: [{ stream: '/flue/v1/support/alice/inbox', offset: '0000000000000000_0000000000000084' }], done: true },
+				{ fetch },
+			),
+		).toEqual({ status: 'ok', nextWake: false });
+		await acknowledgeWakeNotice(
+			notice,
+			{ acks: [{ stream: 'flue/v1/support/alice/inbox', offset: '0000000000000000_0000000000000042' }] },
+			{ fetch },
+		);
+		expect(requests.map((request) => request.url)).toEqual([notice.callback.url, notice.callback.url]);
+		expect(requests[0]?.headers.get('authorization')).toBe('Bearer eyJ.token');
+		expect(await requests[0]?.json()).toEqual({
+			generation: 7,
+			acks: [{ stream: 'flue/v1/support/alice/inbox', offset: '0000000000000000_0000000000000084' }],
+			done: true,
+			wake_id: 'w_0123456789abcdef01234567',
+		});
+		// Without `done`, no wake id: the agents-server would read one as a claim and not forward the acks.
+		expect(await requests[1]?.json()).toEqual({
+			generation: 7,
+			acks: [{ stream: 'flue/v1/support/alice/inbox', offset: '0000000000000000_0000000000000042' }],
+		});
+		expect(
+			await acknowledgeWakeNotice(notice, { acks: [], done: true }, {
+				fetch: async () => Response.json({ error: { code: 'FENCED' } }, { status: 409 }),
+			}),
+		).toEqual({ status: 'fenced' });
 	});
 });

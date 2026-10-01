@@ -24,6 +24,16 @@ export interface EntityAddress {
 	readonly id: string;
 }
 
+/**
+ * What a relayed message asks the target to do besides being delivered:
+ * `schedule` — arm (or cancel) a schedule on the target instead of admitting
+ * now; `spawn` — create the target instance (create-only) with this seed.
+ */
+export type A2aDirective =
+	| { readonly kind: 'schedule'; readonly scheduleId: string; readonly atMs: number }
+	| { readonly kind: 'cancel-schedule'; readonly scheduleId: string }
+	| { readonly kind: 'spawn'; readonly uid: string; readonly initialData?: JsonValue };
+
 /** `data` of a `flue.a2a.send` entry. */
 export interface A2aSendEntryData {
 	readonly target: EntityAddress;
@@ -31,6 +41,7 @@ export interface A2aSendEntryData {
 	readonly messageId: string;
 	/** The JSON form of a `DeliveredMessage`. */
 	readonly message: JsonValue;
+	readonly directive?: A2aDirective;
 }
 
 /** `data` of a `flue.publish` entry. */
@@ -45,6 +56,7 @@ export interface A2aInboxMessage {
 	readonly from: EntityAddress;
 	readonly messageId: string;
 	readonly message: JsonValue;
+	readonly directive?: A2aDirective;
 }
 
 /** What the relay posts to this entity's events stream (one message per publish). */
@@ -90,6 +102,36 @@ function isAddress(value: unknown): value is EntityAddress {
 	);
 }
 
+function isDirective(value: unknown): value is A2aDirective {
+	if (!isRecord(value)) return false;
+	switch (value.kind) {
+		case 'schedule':
+			return typeof value.scheduleId === 'string' && value.scheduleId.length > 0 && Number.isFinite(value.atMs);
+		case 'cancel-schedule':
+			return typeof value.scheduleId === 'string' && value.scheduleId.length > 0;
+		case 'spawn':
+			return typeof value.uid === 'string' && value.uid.length > 0;
+		default:
+			return false;
+	}
+}
+
+/** Validate a relayed inbox message; `undefined` for anything else on an inbox stream. */
+export function parseA2aInboxMessage(value: unknown): A2aInboxMessage | undefined {
+	if (
+		!isRecord(value) ||
+		value.type !== 'flue.a2a.message' ||
+		!isAddress(value.from) ||
+		typeof value.messageId !== 'string' ||
+		value.messageId.length === 0 ||
+		!('message' in value) ||
+		(value.directive !== undefined && !isDirective(value.directive))
+	) {
+		return undefined;
+	}
+	return value as unknown as A2aInboxMessage;
+}
+
 /** Validate a `flue.a2a.send` payload; throws on anything else. */
 export function parseA2aSendEntryData(data: unknown): A2aSendEntryData {
 	if (
@@ -97,7 +139,8 @@ export function parseA2aSendEntryData(data: unknown): A2aSendEntryData {
 		!isAddress(data.target) ||
 		typeof data.messageId !== 'string' ||
 		data.messageId.length === 0 ||
-		!('message' in data)
+		!('message' in data) ||
+		(data.directive !== undefined && !isDirective(data.directive))
 	) {
 		throw new TypeError(`[flue] Malformed ${A2A_SEND_ENTRY_KIND} entry data.`);
 	}
@@ -137,6 +180,7 @@ export function relayItemsFor(writes: readonly StorageWrite[], self: EntityAddre
 					from: { type: self.type, id: self.id },
 					messageId: data.messageId,
 					message: data.message,
+					...(data.directive === undefined ? {} : { directive: data.directive }),
 				},
 			});
 		} else if (entry.kind === PUBLISH_ENTRY_KIND) {
