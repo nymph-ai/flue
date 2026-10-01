@@ -22,7 +22,23 @@ import type { Hono } from 'hono';
 import { faultInjectingFetch, isFaultPlan } from './faults.ts';
 
 type Vars = Record<string, unknown>;
-type Stub = Record<string, (...args: unknown[]) => Promise<Record<string, unknown>>>;
+type Result = Record<string, unknown>;
+
+/** The RPC hooks `agent-hooks.ts` adds to every agent's Durable Object. */
+interface AgentStub {
+	__qualInspect(): Promise<Result>;
+	__qualSnapshot(): Promise<Result>;
+	__qualArmFault(plan: unknown): Promise<Result>;
+	__qualEvict(): Promise<Result>;
+}
+
+/** `replica.ts`. */
+interface ReplicaStub {
+	rebuild(entity: EntityAddress, lastSeq: unknown): Promise<Result>;
+	logSeqs(entity: EntityAddress): Promise<Result>;
+	producerProbe(path: string): Promise<Result>;
+	splitBrain(entity: EntityAddress): Promise<Result>;
+}
 
 const vars = env as unknown as Vars;
 
@@ -56,16 +72,16 @@ function bindingOf(agent: string): string {
 	return `FLUE_${agent.replace(/-/g, '_').toUpperCase()}_AGENT`;
 }
 
-async function agentStub(source: Vars, agent: string, id: string): Promise<Stub> {
+async function agentStub(source: Vars, agent: string, id: string): Promise<AgentStub> {
 	const namespace = source[bindingOf(agent)];
 	if (!namespace) throw new Error(`no agent "${agent}"`);
-	return (await getAgentByName(namespace as never, id)) as unknown as Stub;
+	return (await getAgentByName(namespace as never, id)) as AgentStub;
 }
 
-function replica(source: Vars, name: string): Stub {
+function replica(source: Vars, name: string): ReplicaStub {
 	const namespace = source.QUAL_REPLICA as DurableObjectNamespace | undefined;
 	if (!namespace) throw new Error('no QUAL_REPLICA binding');
-	return namespace.get(namespace.idFromName(name)) as unknown as Stub;
+	return namespace.get(namespace.idFromName(name)) as unknown as ReplicaStub;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
