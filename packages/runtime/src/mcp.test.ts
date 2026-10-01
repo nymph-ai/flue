@@ -292,6 +292,7 @@ describe('stateless MCP (2026-07-28)', () => {
 							jsonrpc: '2.0',
 							id: body.id,
 							result: {
+								resultType: 'complete',
 								content: [
 									{
 										type: 'text',
