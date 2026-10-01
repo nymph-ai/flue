@@ -111,8 +111,15 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 				list.map((row) => ({ ...row, record: JSON.parse(String(row.record ?? 'null')) }));
 			return {
 				submissions: parse(rows(ctx, 'SELECT id, status, record FROM submissions ORDER BY id')),
-				tasks: parse(rows(ctx, 'SELECT id, kind, status, record FROM tasks ORDER BY id DESC LIMIT 20')),
-				entries: parse(rows(ctx, 'SELECT id, conversation_id, commit_seq, record FROM entries ORDER BY id DESC LIMIT 20')),
+				tasks: parse(
+					rows(ctx, 'SELECT id, kind, status, record FROM tasks ORDER BY id DESC LIMIT 20'),
+				),
+				entries: parse(
+					rows(
+						ctx,
+						'SELECT id, conversation_id, commit_seq, record FROM entries ORDER BY id DESC LIMIT 20',
+					),
+				),
 			};
 		}
 

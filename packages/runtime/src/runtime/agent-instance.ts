@@ -178,8 +178,7 @@ export class FlueAgentInstance {
 		tools?: readonly ToolRegistration[];
 	} = { factory: undefined, cwd: undefined, current: undefined };
 	#workspace:
-		| { sandbox: Sandbox | undefined; context: string; skills: RegisteredSkill[] }
-		| undefined;
+		{ sandbox: Sandbox | undefined; context: string; skills: RegisteredSkill[] } | undefined;
 	readonly #sandboxProxy: Sandbox;
 	#toolDeps: FlueToolDeps | undefined;
 	readonly #envProxy: ExecutionEnv;
@@ -449,7 +448,11 @@ export class FlueAgentInstance {
 	/** What `admit()` does before `host.admit`: the delivery cursor, and creation data for a birth. */
 	async #renderForAdmission(
 		host: FluePiHost,
-		input: { readonly message: DeliveredMessage; readonly initialData?: unknown; readonly uid?: string | null },
+		input: {
+			readonly message: DeliveredMessage;
+			readonly initialData?: unknown;
+			readonly uid?: string | null;
+		},
 	): Promise<void> {
 		const context = BACKGROUND_CONTEXT;
 		this.#delivery = input.message;

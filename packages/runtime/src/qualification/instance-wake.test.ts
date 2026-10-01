@@ -53,7 +53,10 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 	it('renders before it admits, runs Pi on the message and answers', async () => {
 		const faux = fauxProvider({ provider: 'qual', models: [{ id: 'bob-1' }] });
 		faux.setResponses(
-			Array.from({ length: 20 }, () => (request: { messages: Message[] }) => bobResponder(request.messages)) as never,
+			Array.from(
+				{ length: 20 },
+				() => (request: { messages: Message[] }) => bobResponder(request.messages),
+			) as never,
 		);
 		setProvider(faux.provider);
 		const Bob = (() => {
@@ -66,7 +69,12 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 		worlds.push(world);
 		const alice = world.entity({ type: 'alice', id: 'a1' });
 		const runtime = await alice.open();
-		const sent = await runtime.messaging.send({ type: 'bob', id: 'p/b1' }, { text: 'ping' }, { messageId: 'm1' }, context);
+		const sent = await runtime.messaging.send(
+			{ type: 'bob', id: 'p/b1' },
+			{ text: 'ping' },
+			{ messageId: 'm1' },
+			context,
+		);
 		await alice.flush();
 
 		const file = await tempFile('bob.sqlite');
@@ -100,7 +108,11 @@ describe('an entity woken for the first time (FlueAgentInstance)', () => {
 		expect(await log.head('flue/v1/bob/p%2Fb1/pi')).not.toBeNull();
 		expect(await log.head('flue/v1/bob/p/b1/pi')).toBeNull();
 		expect(await readAll(log, inboxPath({ type: 'alice', id: 'a1' }))).toEqual([
-			expect.objectContaining({ type: 'flue.a2a.message', from: { type: 'bob', id: 'p/b1' }, message: { text: 'pong' } }),
+			expect.objectContaining({
+				type: 'flue.a2a.message',
+				from: { type: 'bob', id: 'p/b1' },
+				message: { text: 'pong' },
+			}),
 		]);
 	});
 });
