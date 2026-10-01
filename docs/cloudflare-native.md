@@ -73,6 +73,12 @@ is uninteresting by design.
    Electric and park the call durably; the answer arrives in the agent's inbox,
    rings the doorbell, and the call is retried with the answers and the
    server's `requestState`. Humans are participants on streams like agents.
+   The call parks inside Pi Durable — a `flue.question` task owned by the
+   asking tool task, with the turn left open and no model round trip — and
+   Pi's rerun of the tool call continues it after an eviction
+   (`packages/runtime/src/pi/questions.ts`). The `input-requested` event goes
+   to `flue/v1/{type}/{id}/questions` (and to a configured responder's
+   inbox); the answer is an `input-answered` inbox event.
 8. **No always-on connections from an AgentDO.** Nothing that defeats
    hibernation: no outbound WebSockets, no long-lived MCP listen streams.
    Freshness comes from wakes and cacheable list results.

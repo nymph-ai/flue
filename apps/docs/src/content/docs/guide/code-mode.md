@@ -77,7 +77,42 @@ useCodeMode({
 
 When a script reaches such a call, the runtime logs it as pending and stops the script. Once the question is answered, the same script runs again: every call already made is served from the log instead of being repeated, the approved call runs for real, and the script carries on. A rejection ends the execution; calls made before it are not undone. Because the script is replayed, everything outside method calls must be deterministic: wrap random values and timestamps in `codemode.step()`, and await method calls one at a time.
 
-Questions to people are published as entity events, so a person (or another agent) answers on the agent's streams. That channel is not wired yet: for now a call that needs approval is refused with an error saying so, and the execution ends without running it.
+### Answering approvals
+
+An approval is a question, and questions to people are entity events: they need the agent's entity streams (Electric). While it waits, the `codemode` call stays open inside the agent's turn — the model is not called again — and nothing runs; the agent can hibernate or be evicted, and the call continues where it stopped once the answer arrives.
+
+The question is published as one `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream, which a UI (or another agent) can watch. It carries the question (`kind: 'codemode-approval'`, the pending calls and their arguments), a one-line summary, and where to answer. Answer it with the SDK, or over HTTP on the agent's router:
+
+```ts
+import { createFlueClient } from '@flue/sdk';
+
+const client = createFlueClient({ url: 'https://example.com/agents/deployer/run-42' });
+const [question] = await client.questions();
+await client.answer(question.id, { kind: 'codemode-approval', decision: 'approve' });
+// or: { kind: 'codemode-approval', decision: 'reject', reason: 'Not on a Friday.' }
+```
+
+```sh
+curl https://example.com/agents/deployer/run-42/questions
+curl -X POST https://example.com/agents/deployer/run-42/questions/<id>/answer \
+  -H 'content-type: application/json' \
+  -d '{"answer":{"kind":"codemode-approval","decision":"approve"}}'
+```
+
+An answer is an `input-answered` event appended to the agent's inbox — the same path any participant's message takes — which wakes the agent. The first answer wins; a duplicate, a late answer, or an answer to an unknown question changes nothing and is logged. `useQuestions()` routes questions further and bounds the wait:
+
+```ts
+import { useQuestions } from '@flue/runtime';
+
+useQuestions({
+  // Also deliver every question to this agent's inbox; it answers with its answer_question tool.
+  responder: { type: 'reviewer', id: 'oncall' },
+  // Reject a question nobody answered within an hour (the agent's alarm fires at the deadline).
+  timeoutMs: 3_600_000,
+});
+```
+
+A question that expires fails the call like a rejection. The agent's own durability limit still applies to the whole turn, the wait included (one hour by default): set `durability.timeoutMs` on the agent when approvals may take longer.
 
 ## Snippets
 

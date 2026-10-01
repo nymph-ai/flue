@@ -131,7 +131,16 @@ Servers on earlier revisions are not supported. Flue does not fall back to the 2
 
 ### When a server asks for input
 
-A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue puts that request to the agent's question channel and, once answered, sends the call again with the answers and the server's `requestState`. Questions to people are published as entity events (see [Code Mode approvals](/docs/guide/code-mode/#approvals), which use the same channel). Until that is wired, nothing answers, and the call fails with `McpInputRequiredError`, whose message names what the server asked for.
+A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue turns that into a question to a person or another agent: an `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream (see [Answering approvals](/docs/guide/code-mode/#answering-approvals), which use the same channel). The tool call waits inside the agent's turn, durably — the agent may be evicted meanwhile — and once the answer arrives in the agent's inbox, Flue sends the call again on a fresh request with the answers as `inputResponses` and the server's `requestState` echoed byte for byte. The answer is keyed as the server keyed its input requests:
+
+```ts
+await client.answer(question.id, {
+  kind: 'mcp-input',
+  inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+});
+```
+
+Questions need the agent's entity streams (Electric). Without them, or when the question expires (`useQuestions({ timeoutMs })`), the call fails with `McpInputRequiredError`, whose message names what the server asked for.
 
 ## Specifying tools
 
