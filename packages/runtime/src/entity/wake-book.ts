@@ -6,9 +6,9 @@
  * - `cursor` — the committed cursor: every event through it is admitted.
  *
  * {@link EntityWakeBook.ring} is the doorbell: synchronous SQL only, so the
- * Durable Object writes it in the same synchronous turn as `setAlarm(now)`
- * and both land in one coalesced, atomic storage write. A crash after it
- * returns loses nothing: the alarm fires, and the pump drains from the
+ * Durable Object writes it in the same synchronous turn as the wake job it
+ * pushes, and both land in one coalesced, atomic storage write. A crash after
+ * it returns loses nothing: the alarm fires, and the pump drains from the
  * cursor toward the head. Ringing again with an older or equal head (a
  * duplicate or stale webhook) changes nothing.
  *

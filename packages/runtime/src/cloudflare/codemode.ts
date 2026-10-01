@@ -258,7 +258,9 @@ export function codemodeRuntime(): Pick<
 		ctx: agentState(),
 		name: CODEMODE_RUNTIME_NAME,
 		// Curation never runs code or reaches a connector.
-		executor: { execute: () => Promise.reject(new Error('[flue] codemodeRuntime() runs no code.')) },
+		executor: {
+			execute: () => Promise.reject(new Error('[flue] codemodeRuntime() runs no code.')),
+		},
 		connectors: [],
 	});
 	return {

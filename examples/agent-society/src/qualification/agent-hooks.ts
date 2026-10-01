@@ -162,7 +162,11 @@ export function qualifiedWrap<T extends new (...args: any[]) => any>(Final: T): 
 	};
 	wrap('__flueWake', 'doorbell', (args) => args[0]);
 	wrap('alarm', 'alarm');
-	wrap('__flueWakeAgentSubmissions', 'scheduled-wake', (args) => args[0]);
+	wrap(
+		'onJob',
+		'scheduled-wake',
+		(args) => (args[0] as { job?: { id?: string } } | undefined)?.job?.id,
+	);
 	wrap('onRequest', 'request', (args) => {
 		const request = args[0] as Request | undefined;
 		return request ? `${request.method} ${new URL(request.url).pathname}` : undefined;

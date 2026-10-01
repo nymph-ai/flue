@@ -86,7 +86,8 @@ export function generateCloudflareEntry(options: GenerateCloudflareEntryOptions)
 		.map((agent) =>
 			[
 				`export const ${agent.className} = createFlueAgentClass({`,
-				`\tAgentBase: Agent,`,
+				`\tDurableObject,`,
+				`\tLifecycle,`,
 				`\truntime: cloudflareAgents,`,
 				`\tclassName: ${JSON.stringify(agent.className)},`,
 				`\tagentName: ${JSON.stringify(agent.identity)},`,
@@ -115,7 +116,7 @@ export function generateCloudflareEntry(options: GenerateCloudflareEntryOptions)
 /* eslint-disable */
 // @ts-nocheck
 import { DurableObject, env } from 'cloudflare:workers';
-import { Agent, getAgentByName } from 'agents';
+import { Lifecycle } from 'agents/lifecycle';
 import {
 	configureFlueRuntime,
 	createCloudflareAgentRuntime,
@@ -223,13 +224,16 @@ function createAgentContextForRequest({ instance, agentName, request, submission
 	});
 }
 
+// Named addressing: the object reads its name from ctx.id.name. Its fetch and
+// its doorbell RPC start its Lifecycle themselves, so no warm-up call precedes
+// the request.
 async function fetchAgent(binding, instanceId, request) {
-	return (await getAgentByName(binding, instanceId)).fetch(request);
+	return binding.getByName(instanceId).fetch(request);
 }
 
 // Entity wakes (Electric webhooks) reach an instance through its RPC stub.
 function agentStub(binding, instanceId) {
-	return getAgentByName(binding, instanceId);
+	return binding.getByName(instanceId);
 }
 
 function runWithInstanceContext(doInstance, identity, fn) {

@@ -735,7 +735,7 @@ export class FlueAgentInstance {
 	 * Ring the doorbell: `stream` holds events through `head`. Records the
 	 * high-water mark in the wake book, then arms a wake now; the wake pumps.
 	 * (The Cloudflare coordinator rings the book itself, synchronously with
-	 * `setAlarm`, without opening the instance.)
+	 * its wake job, without opening the instance.)
 	 */
 	async ring(stream: string, head: string): Promise<void> {
 		(await this.#wakeBook()).ring(stream, head);

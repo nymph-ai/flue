@@ -26,7 +26,7 @@ export interface FlueDurableObjectIdentity {
 	bindingName: string;
 	/** Durable Object class name, e.g. "FlueDraftWorkflow". */
 	className: string;
-	/** Instance name passed to idFromName/getAgentByName. */
+	/** Instance name passed to getByName/idFromName. */
 	name: string;
 	/** Durable Object id rendered by DurableObjectState.id.toString(). */
 	id: string;
