@@ -14,7 +14,10 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai';
 import { createRegistry, defineDoc, Harness } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
-import { type DurableObjectSqliteStorage, doSqliteDatabase } from '../cloudflare/do-sqlite-database.ts';
+import {
+	type DurableObjectSqliteStorage,
+	doSqliteDatabase,
+} from '../cloudflare/do-sqlite-database.ts';
 import { entityKey, eventsPath, inboxPath, wirePath } from '../entity/paths.ts';
 import { type EntityAddress, entityStreamRoot } from '../pi/a2a-entries.ts';
 import { CommitAssembler, type PiCommitEnvelope } from '../pi/commit-envelope.ts';
@@ -69,9 +72,9 @@ export async function readPiLog(
 /** The highest Pi seq an index database holds (`durable_metadata.next_seq - 1`; 0 without an index). */
 export function indexedSeq(sql: DurableObjectSqliteStorage['sql']): number {
 	try {
-		const row = sql.exec('SELECT next_seq FROM durable_metadata WHERE singleton = 1').toArray()[0] as
-			| { next_seq?: unknown }
-			| undefined;
+		const row = sql
+			.exec('SELECT next_seq FROM durable_metadata WHERE singleton = 1')
+			.toArray()[0] as { next_seq?: unknown } | undefined;
 		const next = Number(row?.next_seq ?? 1);
 		return Number.isFinite(next) ? next - 1 : 0;
 	} catch {
@@ -200,7 +203,8 @@ export async function splitBrainCommit(options: {
 				mark.by = 'qualification split-brain probe';
 			}, context);
 			seq = indexedSeq(options.storage.sql);
-			if (seq !== before + 1) throw new Error(`expected one commit, the index moved ${before} → ${seq}`);
+			if (seq !== before + 1)
+				throw new Error(`expected one commit, the index moved ${before} → ${seq}`);
 		} finally {
 			await harness.close(context);
 		}

@@ -33,14 +33,17 @@ function enabled(source: Vars = vars): boolean {
 /** Route Electric traffic through the fault injector (module scope, before any request). */
 function installStreams(): void {
 	const baseUrl = vars.FLUE_STREAMS_URL;
-	const binding = vars.FLUE_STREAMS as { fetch?: (input: unknown, init?: unknown) => Promise<Response> } | undefined;
+	const binding = vars.FLUE_STREAMS as
+		{ fetch?: (input: unknown, init?: unknown) => Promise<Response> } | undefined;
 	if (!enabled() || typeof baseUrl !== 'string' || !binding?.fetch) return;
 	const jwksUrl = vars.FLUE_STREAMS_JWKS_URL;
 	const webhookUrl = vars.FLUE_STREAMS_WEBHOOK_URL;
 	setStreams(
 		electricStreams({
 			baseUrl,
-			fetch: faultInjectingFetch((input, init) => binding.fetch?.call(binding, input, init) as Promise<Response>),
+			fetch: faultInjectingFetch(
+				(input, init) => binding.fetch?.call(binding, input, init) as Promise<Response>,
+			),
 			webhook: {
 				...(typeof jwksUrl === 'string' && jwksUrl ? { jwksUrl } : {}),
 				...(typeof webhookUrl === 'string' && webhookUrl ? { url: webhookUrl } : {}),
@@ -140,7 +143,8 @@ export function installQualification(app: Hono): void {
 			await sleep(500);
 			live = await stub.__qualSnapshot();
 		}
-		if (Number(live.pending) > 0) return c.json({ equal: false, reason: 'outbox did not drain', live }, 409);
+		if (Number(live.pending) > 0)
+			return c.json({ equal: false, reason: 'outbox did not drain', live }, 409);
 		const entity: EntityAddress = { type: agent, id };
 		const rebuilt = await replica(source, `rebuild/${agent}/${id}/${crypto.randomUUID()}`).rebuild(
 			entity,
@@ -210,7 +214,9 @@ export function installQualification(app: Hono): void {
 		let body: unknown = text;
 		try {
 			// Nothing secret is expected here; anything token-shaped is dropped anyway.
-			body = JSON.parse(text, (key, value) => (/secret|token|private/i.test(key) ? '[redacted]' : value));
+			body = JSON.parse(text, (key, value) =>
+				/secret|token|private/i.test(key) ? '[redacted]' : value,
+			);
 		} catch {}
 		return c.json({ status: response.status, body });
 	});

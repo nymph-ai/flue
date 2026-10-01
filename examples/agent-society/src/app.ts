@@ -18,7 +18,11 @@ import { installQualification } from './qualification/install.ts';
 const app = new Hono<{ Bindings: Record<string, unknown> }>();
 
 app.get('/', (c) =>
-	c.json({ society: ['alice', 'bob', 'curator'], model: societyModel(), streams: Boolean(c.env.FLUE_STREAMS_URL) }),
+	c.json({
+		society: ['alice', 'bob', 'curator'],
+		model: societyModel(),
+		streams: Boolean(c.env.FLUE_STREAMS_URL),
+	}),
 );
 
 app.use('/agents/*', async (c, next) => {

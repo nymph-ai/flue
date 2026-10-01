@@ -182,7 +182,10 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	if (slow) {
 		const sentences = Math.max(1, Math.min(200, Number(slow[1])));
 		return fauxAssistantMessage(
-			Array.from({ length: sentences }, (_, index) => `Sentence ${index + 1} of a slow answer.`).join(' '),
+			Array.from(
+				{ length: sentences },
+				(_, index) => `Sentence ${index + 1} of a slow answer.`,
+			).join(' '),
 		);
 	}
 
@@ -190,7 +193,9 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	const calls = lines.flatMap((line) => commandCalls(line) ?? []);
 	if (calls.length > 0 && results.length === 0) return toolCalls(calls, messages);
 	if (results.length > 0) {
-		const failed = results.filter((result) => result.role === 'toolResult' && result.isError).length;
+		const failed = results.filter(
+			(result) => result.role === 'toolResult' && result.isError,
+		).length;
 		return fauxAssistantMessage(
 			`Done: ${results.length} tool call(s)${failed ? `, ${failed} failed` : ''}. ${textOf(results.at(-1)).slice(0, 160)}`,
 		);

@@ -57,7 +57,9 @@ export class QualReplica extends DurableObject<Record<string, unknown>> {
 		const seqs = envelopes.map((envelope) => envelope.seq);
 		const duplicates = seqs.filter((seq, index) => seqs.indexOf(seq) !== index);
 		const contiguous = seqs.every((seq, index) => seq === index + 1);
-		const epochs = [...new Set(envelopes.map((envelope) => (envelope as { epoch?: number }).epoch ?? null))];
+		const epochs = [
+			...new Set(envelopes.map((envelope) => (envelope as { epoch?: number }).epoch ?? null)),
+		];
 		return { count: seqs.length, last: seqs.at(-1) ?? 0, duplicates, contiguous, epochs, tail };
 	}
 

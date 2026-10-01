@@ -135,8 +135,12 @@ export interface Fault {
 /** One process lifetime of an entity: once killed, its database and log calls all throw. */
 export class Incarnation {
 	dead = false;
-	readonly appends: { path: string; producer: ProducerClaim; streamSeq?: string; outcome: string }[] =
-		[];
+	readonly appends: {
+		path: string;
+		producer: ProducerClaim;
+		streamSeq?: string;
+		outcome: string;
+	}[] = [];
 	#fault: Fault | undefined;
 	#seen = 0;
 	#acked = 0;
@@ -368,9 +372,8 @@ export function societyResponder(messages: readonly Message[]) {
 	const userIndex = messages.findLastIndex((message) => message.role === 'user');
 	const results = messages.slice(userIndex + 1).filter((message) => message.role === 'toolResult');
 	const text = textOf(messages[userIndex]);
-	const signal = /<signal [^>]*from_type="([^"]*)" from_id="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/signal>/.exec(
-		text,
-	);
+	const signal =
+		/<signal [^>]*from_type="([^"]*)" from_id="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/signal>/.exec(text);
 	const body = (signal ? (signal[3] as string) : text).trim();
 	const chain = /^chain (\d+)/.exec(body);
 	if (chain) {
