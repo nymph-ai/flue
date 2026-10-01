@@ -14,10 +14,6 @@ import {
 	ensureSqlConversationStreamTables,
 	SqliteConversationStreamStore,
 } from '../runtime/conversation-stream-store.ts';
-import {
-	createSqlAgentExecutionStoreFromSql,
-	ensureSqlAgentExecutionTables,
-} from '../sql-agent-execution-store.ts';
 import { ensureSqlAttachmentTable, SqliteAttachmentStore } from '../sql-attachment-store.ts';
 import type { SqlStorage } from '../sql-storage.ts';
 
@@ -121,14 +117,12 @@ export function sqlite(path?: string): PersistenceAdapter {
 	return {
 		migrate() {
 			const { sql } = ensureOpen();
-			ensureSqlAgentExecutionTables(sql);
 			ensureSqlConversationStreamTables(sql);
 			ensureSqlAttachmentTable(sql);
 		},
 		connect() {
 			const { sql, runTransaction } = ensureOpen();
 			return {
-				submissionStore: createSqlAgentExecutionStoreFromSql(sql, runTransaction),
 				conversationStreamStore: new SqliteConversationStreamStore(sql, runTransaction),
 				attachmentStore: new SqliteAttachmentStore(sql, runTransaction),
 			};

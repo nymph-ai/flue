@@ -214,6 +214,11 @@ async function fetchAgent(binding, instanceId, request) {
 	return (await getAgentByName(binding, instanceId)).fetch(request);
 }
 
+// Entity wakes (Electric webhooks) reach an instance through its RPC stub.
+function agentStub(binding, instanceId) {
+	return getAgentByName(binding, instanceId);
+}
+
 function runWithInstanceContext(doInstance, identity, fn) {
 	return runWithCloudflareContext(
 		{
@@ -249,10 +254,11 @@ ${agentClassExports}
 // and the \`agents\`-package fetch capability, which must stay out of the
 // runtime's import graph.
 
+const flueWorkerConfig = createCloudflareWorkerConfig({ env, agentIdentities, fetchAgent, agentStub });
 configureFlueRuntime({
 	target: 'cloudflare',
 	devMode: import.meta.env.DEV,
-	...createCloudflareWorkerConfig({ env, agentIdentities, fetchAgent }),
+	...flueWorkerConfig,
 });
 
 // ─── App composition ────────────────────────────────────────────────────────
@@ -268,7 +274,10 @@ if (!flueApp || typeof flueApp.fetch !== 'function') {
 
 export default {
 	...cloudflareHandlers,
-	fetch(request, env, ctx) {
+	async fetch(request, env, ctx) {
+		// The entity wake route (Electric webhooks), when streams are configured.
+		const wake = await flueWorkerConfig.streamsWake(request, env, ctx);
+		if (wake) return wake;
 		return flueApp.fetch(request, env, ctx);
 	},
 };

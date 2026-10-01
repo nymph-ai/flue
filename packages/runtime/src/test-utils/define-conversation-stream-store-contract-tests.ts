@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentSubmissionStore } from '../agent-execution-store.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
 import type { ConversationStreamStore } from '../runtime/conversation-stream-store.ts';
 import { compareOffsets } from '../streams/offset.ts';
 

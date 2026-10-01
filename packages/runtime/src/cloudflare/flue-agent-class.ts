@@ -9,8 +9,8 @@
  *   stores exist before the Agents SDK constructor can schedule work, then
  *   `runtime.attach(this, prepared)` binds the coordinator to the instance.
  * - `onStart` / `onRequest` / `onFiberRecovered` / the
- *   `__flueWakeAgentSubmissions` schedule target delegate to the shared
- *   Cloudflare agent runtime; `onStart`/`onFiberRecovered` forward to an
+ *   `__flueWakeAgentSubmissions` schedule target / the `__flueWake` RPC
+ *   delegate to the shared Cloudflare agent runtime; `onStart`/`onFiberRecovered` forward to an
  *   inherited implementation when the (possibly extended) base defines one.
  * - The module's `extend({ base, wrap })` export is resolved via
  *   `resolveCloudflareExtension`: `base` reshapes the superclass, `wrap`
@@ -76,16 +76,24 @@ export function createFlueAgentClass(options: CreateFlueAgentClassOptions): Exte
 		}
 
 		/**
-		 * Durable schedule target that owns submission supervision: armed at
-		 * zero delay by admission/abort/recovery/fiber-settle boundaries and
-		 * at 30s as the heartbeat while unsettled work exists. Dispatched
-		 * from the Durable Object's alarm invocation as one bounded,
-		 * storage-only pass that reconciles, enforces deadlines, and starts
-		 * attempt fibers detached — the fibers outlive the invocation on the
-		 * SDK's runFiber keepAlive/recovery machinery.
+		 * Durable schedule target of every wake Pi asks for: the commit-outbox
+		 * backoff, the live-task backstop, submission deadlines, and the
+		 * zero-delay wake after a restart. The payload is the wake reason.
+		 * Dispatched from the Durable Object's alarm invocation.
 		 */
-		__flueWakeAgentSubmissions() {
-			return runtime.drainSubmissions(this as unknown as CloudflareAgentInstance);
+		__flueWakeAgentSubmissions(payload?: unknown) {
+			return runtime.drainSubmissions(this as unknown as CloudflareAgentInstance, payload);
+		}
+
+		/**
+		 * RPC from the Worker's Electric wake route (`entity/webhook-route.ts`):
+		 * these streams — the instance's inbox, streams it observes — have new
+		 * data. Reconstructs the instance (StreamStorage + Harness + render) and
+		 * runs the entity wake handler (`entity/wake-handler.ts`), which admits
+		 * the new messages and reports how far it processed each stream.
+		 */
+		__flueWake(request: Parameters<CloudflareAgentRuntime['wake']>[1]) {
+			return runtime.wake(this as unknown as CloudflareAgentInstance, request);
 		}
 
 		onRequest(request: Request) {

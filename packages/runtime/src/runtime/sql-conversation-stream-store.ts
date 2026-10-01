@@ -1,5 +1,5 @@
 import { clampLimit } from '../adapter-helpers.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
 import { ConversationStreamStoreError } from '../errors.ts';
 import { parseSessionStorageKey } from '../session-identity.ts';
 import {
