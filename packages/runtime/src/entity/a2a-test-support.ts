@@ -20,6 +20,7 @@ import {
 	type EntryRecord,
 	ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable';
+import type { SqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { encodeBase64 } from '../base64.ts';
 import type { FenceReason } from '../pi/commit-outbox.ts';
@@ -117,14 +118,15 @@ export class TestEntity {
 		const armWake = async (atMs: number, reason: WakeReason) => {
 			this.wakes.push({ atMs, reason });
 		};
+		const log = this.world.wrapLog(this, this.world.log);
 		const host = createFluePiHost({
 			entity: this.ref,
 			models,
 			storage: async () => {
 				this.storage = await StreamStorage.open(
 					{
-						database: await openNodeSqliteDatabase(file),
-						log: this.world.log,
+						database: this.world.wrapDatabase(this, await openNodeSqliteDatabase(file)),
+						log,
 						entity: this.ref,
 						now: () => this.world.clock.now,
 						onFenced: (epoch, reason) => this.fences.push({ epoch, reason }),
@@ -143,7 +145,7 @@ export class TestEntity {
 		const runtime = await createEntityRuntime({
 			host,
 			entity: this.ref,
-			log: this.world.log,
+			log,
 			cursors: () => {
 				if (!this.storage) throw new Error('storage is not open');
 				return this.storage.cursors;
@@ -171,6 +173,18 @@ export class TestEntity {
 		await runtime?.dispose();
 		await host?.close(context);
 		this.storage = undefined;
+	}
+
+	/**
+	 * Crash: forget everything in memory without closing anything, as a killed
+	 * isolate does. Whatever the old incarnation still has in flight runs on
+	 * against the faults its wrappers inject; the next `open()` is a new one.
+	 */
+	abandon(): void {
+		this.runtime = undefined;
+		this.host = undefined;
+		this.storage = undefined;
+		this.#opening = undefined;
 	}
 
 	/** The coordinator's `__flueWake`: open (reconstruct) if asleep, then handle. */
@@ -214,6 +228,12 @@ export class TestWorld {
 	readonly entities = new Map<string, TestEntity>();
 	readonly woken: { entity: string; request: EntityWakeRequest }[] = [];
 	subscriptions: EntitySubscriptionPort | undefined;
+	/** Per-incarnation fault wrappers (crash tests); identity by default. */
+	wrapLog: (entity: TestEntity, log: DurableStreamLog) => DurableStreamLog = (_entity, log) => log;
+	wrapDatabase: (entity: TestEntity, database: SqliteDatabase) => SqliteDatabase = (
+		_entity,
+		database,
+	) => database;
 
 	constructor(log: DurableStreamLog) {
 		this.log = log;

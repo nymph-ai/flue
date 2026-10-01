@@ -12,6 +12,7 @@ export default defineConfig({
 		'src/cloudflare/index.ts',
 		'src/cloudflare/internal.ts',
 		'src/cloudflare/workers-ai-provider.ts',
+		'src/qualification/index.ts',
 		'src/node/index.ts',
 		'src/test-utils/define-store-contract-tests.ts',
 		'src/test-utils/define-attachment-store-contract-tests.ts',
