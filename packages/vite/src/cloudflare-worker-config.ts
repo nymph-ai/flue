@@ -22,7 +22,11 @@
  *     the `flue()` plugin (left alone when the user set their own `main`);
  *   - one Durable Object binding per scanned `'use agent'` agent;
  *   - the `LOADER` Worker Loader binding, when a module calls `useCodeMode()`
- *     (Code Mode runs scripts in Dynamic Workers);
+ *     (Code Mode runs scripts in Dynamic Workers), after checking the config
+ *     allows Code Mode's runtime facet (`ctx.exports` on, SQLite-backed
+ *     agent classes);
+ *   - the `FLUE_MCP_AUTH` Durable Object binding (class `FlueMcpAuth`), when a
+ *     module calls `mcpOAuth()` (MCP OAuth credentials live there);
  *   - the `nodejs_compat` compatibility flag (unioned in);
  *   - validation of a user-set `compatibility_date` against Flue's floor.
  *
@@ -41,7 +45,12 @@
  * its own `flue()` instance, concurrent Vite servers in one process never
  * cross-talk.
  */
-import { mergeCodeModeLoaderBinding } from './cloudflare-codemode.ts';
+import {
+	assertCodeModeWorkerConfig,
+	MCP_AUTH_CLASS_NAME,
+	mcpAuthBinding,
+	mergeCodeModeLoaderBinding,
+} from './cloudflare-codemode.ts';
 import { stackless } from './diagnostics.ts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -76,6 +85,8 @@ export interface FlueWorkerConfigSource {
 	readonly doBindings: readonly FlueDoBinding[];
 	/** Whether a module under the source root calls `useCodeMode()`. */
 	readonly codeMode: boolean;
+	/** Whether a module under the source root calls `mcpOAuth()`. */
+	readonly mcpOAuth?: boolean;
 	/** Set by the customizer so `configResolved` can diagnose missing wiring. */
 	customizerInvoked: boolean;
 }
@@ -137,7 +148,18 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings, source.codeMode);
+		applyFlueWorkerConfig(
+			config as Record<string, unknown>,
+			source.mcpOAuth ? [...source.doBindings, mcpAuthBinding()] : source.doBindings,
+			source.codeMode,
+		);
+		if (source.mcpOAuth) assertMcpAuthMigration(config as Record<string, unknown>);
+		if (source.codeMode) {
+			assertCodeModeWorkerConfig(
+				config as Record<string, unknown>,
+				source.doBindings.map((binding) => binding.class_name),
+			);
+		}
 	};
 }
 
@@ -192,13 +214,34 @@ function applyFlueWorkerConfig(
 	mergeDurableObjectBindings(config, doBindings);
 
 	// Code Mode's Dynamic Workers need a Worker Loader binding. Added only
-	// when used: Dynamic Workers require the Workers Paid plan.
+	// when used: Dynamic Workers require the Workers Paid plan. Its runtime
+	// facet class needs no binding: facets come from ctx.exports.
 	if (codeMode) mergeCodeModeLoaderBinding(config);
 
 	// compatibility_date and name are left to the sibling's own defaults when
 	// unset (its date default tracks the workerd version it bundles, which is
 	// strictly better than a Flue-pinned floor). containers, migrations, and
 	// every other field pass through untouched.
+}
+
+/**
+ * The `FlueMcpAuth` class is SQLite-backed like every Flue Durable Object,
+ * and wrangler refuses a bound class with no migration. Say so at config
+ * time, naming the exact migration to add.
+ */
+function assertMcpAuthMigration(config: Record<string, unknown>): void {
+	const migrations = Array.isArray(config.migrations) ? (config.migrations as unknown[]) : [];
+	const declared = migrations.some((migration) => {
+		const classes = (migration as { new_sqlite_classes?: unknown })?.new_sqlite_classes;
+		return Array.isArray(classes) && classes.includes(MCP_AUTH_CLASS_NAME);
+	});
+	if (declared) return;
+	throw stackless(
+		new Error(
+			`[flue] An agent module calls mcpOAuth(), so the Worker binds the ${MCP_AUTH_CLASS_NAME} Durable Object, which holds MCP OAuth credentials. ` +
+				`Add it to your wrangler config's migrations: { "tag": "<new tag>", "new_sqlite_classes": ["${MCP_AUTH_CLASS_NAME}"] }.`,
+		),
+	);
 }
 
 /**

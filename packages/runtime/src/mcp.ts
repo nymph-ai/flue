@@ -1,46 +1,66 @@
-// Only these three names are imported: the pi-mcp root also re-exports
-// `StdioTransport` (node:child_process, cross-spawn), which the package's
-// `sideEffects: false` lets the bundler drop, and which workerd could not
-// load. @flue/vite aliases both modules to throwing stubs on the Cloudflare
-// target as a backstop (PI_UPGRADE_PLAN.md §6).
+/**
+ * MCP client: `@modelcontextprotocol/client` over Streamable HTTP, speaking
+ * the stateless 2026-07-28 protocol and nothing else
+ * (docs/cloudflare-native.md rule 6).
+ *
+ * - `connect()` probes with `server/discover`, pinned to 2026-07-28: there is
+ *   no fallback to the 2025 `initialize` handshake, so there are no sessions.
+ *   A server that does not offer 2026-07-28 is refused with
+ *   {@link McpProtocolVersionError}, naming the versions it offered or its
+ *   `server/discover` answer.
+ * - Nothing standing is held open (rule 8): no `subscriptions/listen` and no
+ *   `listChanged` handlers. Tool lists are refreshed when their cache hint
+ *   (`ttlMs`) expires, or on the next wake when the server gave none.
+ * - A connection keeps no state the protocol needs: a fresh client after a
+ *   Durable Object eviction works mid-conversation.
+ * - `input_required` (multi-round-trip requests): a leg carrying only
+ *   `requestState` is sent again with it; a leg with input requests is put
+ *   to the question seam (`questions.ts`, rule 9), and its answer is sent
+ *   back with the server's `requestState`. When the seam cannot answer, the
+ *   call fails with {@link McpInputRequiredError}.
+ */
 import {
-	type AuthProvider,
 	type CallToolResult,
-	McpClient,
-	type McpFetch,
-	type McpRequestOptions,
-	type McpTransport as PiMcpTransport,
-	StreamableHttpTransport,
+	Client,
+	type FetchLike,
+	isInputRequiredResult,
+	SdkError,
+	SdkErrorCode,
+	StreamableHTTPClientTransport,
 	type Tool,
-	toLlmContent,
-} from '@earendil-works/pi-mcp';
+	UnsupportedProtocolVersionError,
+} from '@modelcontextprotocol/client';
 import { version as runtimeVersion } from '../package.json' with { type: 'json' };
-import type { McpAuth, McpConnectionDefinition, McpTransport } from './mcp-types.ts';
-import { registerPreparedToolAdapter } from './tool-adapter.ts';
+import { fnv1a64 } from './fnv.ts';
+import { createMcpAuthProvider } from './mcp-oauth.ts';
+import type { McpConnectionDefinition } from './mcp-types.ts';
+import { askQuestion, type McpInputQuestion, QuestionParkedError } from './questions.ts';
+import {
+	type McpCallResult,
+	type McpToolSource,
+	type PreparedToolContent,
+	registerMcpToolSource,
+	registerPreparedToolAdapter,
+} from './tool-adapter.ts';
 import type { ToolDefinition } from './types.ts';
 
 export type {
 	McpAuth,
 	McpConnectionDefinition,
+	McpOAuth,
 	McpToolAnnotations,
 	McpTransport,
 } from './mcp-types.ts';
 
-/**
- * The per-request timeout Flue has always documented for `timeoutMs`. pi-mcp's
- * own default is 30 seconds; the connection keeps Flue's.
- */
+/** The one MCP protocol revision Flue speaks. */
+export const MCP_PROTOCOL_VERSION = '2026-07-28';
+
+
+/** The per-request timeout Flue documents for `timeoutMs`. */
 const DEFAULT_MCP_REQUEST_TIMEOUT_MS = 60_000;
 
-/** Per-request behaviour shared by discovery and tool calls. */
-type McpCallOptions = {
-	/**
-	 * Renew the request timeout on server progress. pi-mcp renews it whenever a
-	 * progress notification arrives for a request that asked for progress, and
-	 * only asks when an `onProgress` listener is supplied.
-	 */
-	resetTimeoutOnProgress?: boolean;
-};
+/** Model tool names are limited to 64 characters by several providers. */
+const MAX_TOOL_NAME_LENGTH = 64;
 
 /** Connection returned by {@link createMcpConnection}. */
 export interface McpConnection {
@@ -67,110 +87,442 @@ export interface McpConnectionCache extends McpConnectionResolver {
 	close(): Promise<void>;
 }
 
-/**
- * A per-instance MCP connection cache: the first declaration of a server
- * name connects; later submissions reuse the live connection for the
- * instance's in-memory lifetime, so definitions are read at first connect
- * (an `auth` resolver stays per-request). Concurrent resolves of one name
- * share a single in-flight connect. A failed connect is evicted immediately —
- * a transient outage must not brick the instance, so the next submission
- * retries with a freshly read definition.
- */
-export function createMcpConnectionCache(): McpConnectionCache {
-	const connections = new Map<string, Promise<McpConnection>>();
-	return {
-		resolve(definition: McpConnectionDefinition): Promise<McpConnection> {
-			const cached = connections.get(definition.name);
-			if (cached) return cached;
-			const pending = createMcpConnection(definition);
-			connections.set(definition.name, pending);
-			pending.catch(() => {
-				if (connections.get(definition.name) === pending) {
-					connections.delete(definition.name);
-				}
-			});
-			return pending;
-		},
-		async close(): Promise<void> {
-			const pending = [...connections.values()];
-			connections.clear();
-			await Promise.allSettled(pending.map(async (connection) => (await connection).close()));
-		},
-	};
-}
 
 /**
- * Connects to a remote MCP server described by a
- * {@link McpConnectionDefinition} and adapts its listed tools into ordinary
- * Flue tool definitions.
- *
- * Adapted tool names use `mcp__<server>__<tool>`. Unsupported characters are
- * replaced with underscores, and duplicate adapted names are rejected. Close
- * the returned connection when its tools are no longer needed.
+ * A server answered a call with `input_required` (an elicitation, a sampling
+ * request or the roots list) and the question seam could not get an answer;
+ * `reason` says why (by default, that questions are not wired yet).
  */
-export async function createMcpConnection(
-	definition: McpConnectionDefinition,
-): Promise<McpConnection> {
-	const transport = createTransport(definition);
-	const client = new McpClient({
-		name: 'flue',
-		version: runtimeVersion,
-		requestTimeoutMs: definition.timeoutMs ?? DEFAULT_MCP_REQUEST_TIMEOUT_MS,
-	});
-
-	return createMcpConnectionWithClient(
-		definition.name,
-		client,
-		transport,
-		{ resetTimeoutOnProgress: definition.resetTimeoutOnProgress },
-		{ tools: definition.tools },
-	);
-}
-
-/** The slice of pi-mcp's {@link McpClient} a connection uses. */
-type McpConnectionClient = Pick<McpClient, 'callTool' | 'close' | 'connect' | 'listTools'>;
-
-export async function createMcpConnectionWithClient(
-	name: string,
-	client: McpConnectionClient,
-	transport: PiMcpTransport,
-	callOptions: McpCallOptions = {},
-	selection: { tools?: readonly string[] } = {},
-): Promise<McpConnection> {
-	try {
-		await client.connect(transport);
-		// pi-mcp follows `nextCursor` through every page and rejects a server
-		// that repeats a cursor, so discovery cannot loop.
-		const tools = await client.listTools(progressOptions(callOptions));
-
-		return {
-			name,
-			tools: createMcpTools(
-				name,
-				client,
-				selectMcpTools(name, tools, selection.tools),
-				callOptions,
+export class McpInputRequiredError extends Error {
+	override readonly name = 'McpInputRequiredError';
+	constructor(
+		readonly server: string,
+		readonly method: string,
+		readonly inputRequests: Readonly<Record<string, unknown>>,
+		readonly reason?: string,
+	) {
+		super(
+			[describeInputRequests(server, method, inputRequests), ...(reason ? [reason] : [])].join(
+				'\n',
 			),
-			close: () => client.close(),
-		};
-	} catch (error) {
-		await client.close().catch(() => undefined);
-		throw error;
+		);
 	}
 }
 
 /**
- * Adapt the `auth` credential to pi-mcp's {@link AuthProvider}: the transport
- * calls `token()` before every request, and on a 401 (or a 403 asking for more
- * scope) awaits `onUnauthorized` and retries once — re-resolving the token, so
- * the application's credential store is the refresh policy.
+ * A server does not speak MCP 2026-07-28, the only revision Flue supports.
+ * `offered` lists the versions it named, when it named any; `answer`
+ * describes its `server/discover` answer otherwise.
  */
-function createAuthProvider(auth: McpAuth): AuthProvider {
-	const resolveToken = typeof auth === 'function' ? auth : () => auth;
+export class McpProtocolVersionError extends Error {
+	override readonly name = 'McpProtocolVersionError';
+	constructor(
+		readonly server: string,
+		readonly url: string,
+		readonly offered: readonly string[] | undefined,
+		readonly answer: string | undefined,
+	) {
+		super(
+			`[flue] MCP server "${server}" (${url}) does not speak MCP ${MCP_PROTOCOL_VERSION}, the only protocol revision Flue supports; servers on earlier revisions are not supported. ` +
+				(offered && offered.length > 0
+					? `It offered: ${offered.join(', ')}.`
+					: `Its server/discover answer: ${answer ?? 'none'}.`),
+		);
+	}
+}
+
+function describeInputRequests(
+	server: string,
+	method: string,
+	inputRequests: Readonly<Record<string, unknown>>,
+): string {
+	const lines = Object.entries(inputRequests).map(([key, raw]) => {
+		const request = (raw ?? {}) as { method?: unknown; params?: Record<string, unknown> };
+		const params = request.params ?? {};
+		const kind = typeof request.method === 'string' ? request.method : 'unknown request';
+		const parts = [`- "${key}" (${kind})`];
+		if (typeof params.message === 'string') parts.push(`: ${params.message}`);
+		const schema = params.requestedSchema as { properties?: Record<string, unknown> } | undefined;
+		const fields = schema?.properties ? Object.keys(schema.properties) : [];
+		if (fields.length > 0) parts.push(` — fields: ${fields.join(', ')}`);
+		if (typeof params.url === 'string') parts.push(` — open ${params.url}`);
+		return parts.join('');
+	});
+	return [
+		`[flue] MCP server "${server}" answered ${method} with input_required, and no answer could be obtained.`,
+		...(lines.length > 0
+			? ['Requested inputs:', ...lines]
+			: ['The server sent no input requests, only request state.']),
+	].join('\n');
+}
+
+
+const MAX_INPUT_ROUNDS = 10;
+const STATE_ONLY_PACING_MS = 250;
+
+/**
+ * The SDK client pinned to 2026-07-28, with Flue's answer to
+ * `input_required`: questions go to the seam instead of the SDK's
+ * auto-fulfilment through request handlers Flue never registers.
+ */
+class FlueMcpClient extends Client {
+	constructor(private readonly serverName: string) {
+		super(
+			{ name: 'flue', version: runtimeVersion },
+			{
+				// server/discover only: no fallback to the 2025 initialize handshake.
+				versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
+				capabilities: {},
+			},
+		);
+	}
+
+	protected override async _resolveNonCompleteResult(
+		...[decoded, flow]: Parameters<Client['_resolveNonCompleteResult']>
+	): Promise<unknown> {
+		const params = (flow.request.params ?? {}) as Record<string, unknown>;
+		const signal = flow.options?.signal;
+		let leg: { inputRequests?: Record<string, unknown>; requestState?: string } = decoded;
+		for (let round = 1; ; round++) {
+			if (round > MAX_INPUT_ROUNDS) {
+				throw new Error(
+					`[flue] MCP server "${this.serverName}" kept answering ${flow.request.method} with input_required after ${MAX_INPUT_ROUNDS} rounds.`,
+				);
+			}
+			const inputRequests = leg.inputRequests ?? {};
+			let inputResponses: Readonly<Record<string, unknown>> | undefined;
+			if (Object.keys(inputRequests).length === 0) {
+				// Only requestState: the server asks to be called again with it.
+				await new Promise((resolve) => setTimeout(resolve, STATE_ONLY_PACING_MS));
+			} else {
+				const question = mcpInputQuestion(
+					this.serverName,
+					flow.request.method,
+					params,
+					inputRequests,
+					leg.requestState,
+				);
+				try {
+					const answer = await askQuestion(question, signal);
+					inputResponses = answer.kind === 'mcp-input' ? answer.inputResponses : undefined;
+				} catch (error) {
+					if (error instanceof QuestionParkedError) throw error;
+					throw new McpInputRequiredError(
+						this.serverName,
+						flow.request.method,
+						inputRequests,
+						error instanceof Error ? error.message : String(error),
+					);
+				}
+			}
+			const result = await flow.retry(
+				{
+					...params,
+					...(inputResponses ? { inputResponses } : {}),
+					...(leg.requestState !== undefined ? { requestState: leg.requestState } : {}),
+				},
+				{
+					...(flow.options?.timeout !== undefined ? { timeout: flow.options.timeout } : {}),
+					...(signal ? { signal } : {}),
+					allowInputRequired: true,
+				},
+			);
+			if (!isInputRequiredResult(result)) return result;
+			leg = result;
+		}
+	}
+}
+
+function mcpInputQuestion(
+	server: string,
+	method: string,
+	params: Record<string, unknown>,
+	inputRequests: Record<string, unknown>,
+	requestState: string | undefined,
+): McpInputQuestion {
+	const { inputResponses: _responses, requestState: _state, ...original } = params;
 	return {
-		token: async () => resolveToken(),
-		onUnauthorized: async () => {},
+		kind: 'mcp-input',
+		id: `mcp:${server}:${fnv1a64(JSON.stringify([method, original, requestState ?? null]))}`,
+		server,
+		method,
+		params: original,
+		inputRequests,
+		...(requestState !== undefined ? { requestState } : {}),
 	};
+}
+
+/** One live server: a client that can be rebuilt at any time, and its tool listing. */
+class McpServerLink {
+	#client: Promise<FlueMcpClient> | undefined;
+	#listing: { tools: Tool[]; instructions?: string; expiresAt: number } | undefined;
+	#closed = false;
+
+	constructor(readonly definition: McpConnectionDefinition) {}
+
+	get #requestOptions() {
+		return {
+			timeout: this.definition.timeoutMs ?? DEFAULT_MCP_REQUEST_TIMEOUT_MS,
+			...(this.definition.resetTimeoutOnProgress
+				? { resetTimeoutOnProgress: true, onprogress: () => {} }
+				: {}),
+		};
+	}
+
+	#connect(): Promise<FlueMcpClient> {
+		if (this.#closed)
+			return Promise.reject(
+				new Error(`[flue] MCP connection "${this.definition.name}" is closed.`),
+			);
+		if (!this.#client) {
+			const pending = (async () => {
+				const client = new FlueMcpClient(this.definition.name);
+				const probe: DiscoverProbe = {};
+				const transport = createTransport(this.definition, probe);
+				try {
+					await client.connect(transport, { timeout: this.#requestOptions.timeout });
+				} catch (error) {
+					await client.close().catch(() => undefined);
+					throw await refusedProtocol(this.definition, error, probe);
+				}
+				return client;
+			})();
+			this.#client = pending;
+			pending.catch(() => {
+				if (this.#client === pending) this.#client = undefined;
+			});
+		}
+		return this.#client;
+	}
+
+	/**
+	 * The server's tools, refreshed when the listing's cache hint expired.
+	 * Without a hint the listing holds for this link's lifetime — one wake on
+	 * Cloudflare, where links are rebuilt after every eviction.
+	 */
+	async listing(): Promise<{ tools: Tool[]; instructions?: string }> {
+		if (this.#listing && Date.now() < this.#listing.expiresAt) return this.#listing;
+		const client = await this.#connect();
+		const result = await client.listTools(undefined, {
+			...this.#requestOptions,
+			cacheMode: 'refresh',
+		});
+		const ttlMs = (result as { ttlMs?: unknown }).ttlMs;
+		const instructions = client.getInstructions();
+		this.#listing = {
+			tools: result.tools,
+			...(instructions ? { instructions } : {}),
+			expiresAt:
+				typeof ttlMs === 'number' && Number.isFinite(ttlMs)
+					? Date.now() + Math.max(ttlMs, 1_000)
+					: Number.POSITIVE_INFINITY,
+		};
+		return this.#listing;
+	}
+
+	async call(
+		tool: Tool,
+		args: Record<string, unknown>,
+		signal?: AbortSignal,
+	): Promise<CallToolResult> {
+		const client = await this.#connect();
+		return (await client.callTool(
+			{ name: tool.name, arguments: args },
+			{ ...this.#requestOptions, toolDefinition: tool, ...(signal ? { signal } : {}) },
+		)) as CallToolResult;
+	}
+
+	async close(): Promise<void> {
+		this.#closed = true;
+		const stale = this.#client;
+		this.#client = undefined;
+		await stale?.then((client) => client.close()).catch(() => undefined);
+	}
+}
+
+/** The `server/discover` answer a connect saw, kept for the refusal message. */
+interface DiscoverProbe {
+	answer?: Promise<string>;
+}
+
+/**
+ * A connect that failed because the server does not offer 2026-07-28
+ * becomes one {@link McpProtocolVersionError}; any other failure (network,
+ * authorization, timeout) passes through unchanged.
+ */
+async function refusedProtocol(
+	definition: McpConnectionDefinition,
+	error: unknown,
+	probe: DiscoverProbe,
+): Promise<unknown> {
+	const url = String(definition.url);
+	if (UnsupportedProtocolVersionError.isInstance(error)) {
+		return new McpProtocolVersionError(definition.name, url, [...error.supported], undefined);
+	}
+	if (
+		SdkError.isInstance(error) &&
+		error.code === SdkErrorCode.EraNegotiationFailed &&
+		/offer(?:ed)? pinned protocol version/.test(error.message)
+	) {
+		const answer = probe.answer ? await probe.answer.catch(() => undefined) : undefined;
+		return new McpProtocolVersionError(definition.name, url, undefined, answer ?? error.message);
+	}
+	return error;
+}
+
+/**
+ * A per-instance MCP connection cache: the first declaration of a server
+ * name connects; later submissions reuse the link for the instance's
+ * in-memory lifetime and re-read its tool listing only when the listing's
+ * cache hint expired. Concurrent resolves of one name share one link. A
+ * failed resolve is evicted immediately — a transient outage must not brick
+ * the instance, so the next submission retries with a freshly read
+ * definition.
+ */
+export function createMcpConnectionCache(): McpConnectionCache {
+	const links = new Map<string, McpServerLink>();
+	const adapted = new WeakMap<McpServerLink, { key: string; tools: ToolDefinition[] }>();
+	return {
+		async resolve(definition: McpConnectionDefinition): Promise<McpConnection> {
+			let link = links.get(definition.name);
+			if (!link) {
+				link = new McpServerLink(definition);
+				links.set(definition.name, link);
+			}
+			const current = link;
+			try {
+				const listing = await current.listing();
+				const key = fingerprint(listing.tools, current.definition.tools);
+				let entry = adapted.get(current);
+				if (entry?.key !== key) {
+					entry = { key, tools: adaptServerTools(current, listing) };
+					adapted.set(current, entry);
+				}
+				return { name: definition.name, tools: entry.tools, close: () => current.close() };
+			} catch (error) {
+				if (links.get(definition.name) === current) links.delete(definition.name);
+				await current.close();
+				throw error;
+			}
+		},
+		async close(): Promise<void> {
+			const all = [...links.values()];
+			links.clear();
+			await Promise.allSettled(all.map((link) => link.close()));
+		},
+	};
+}
+
+function fingerprint(tools: readonly Tool[], allowlist: readonly string[] | undefined): string {
+	return fnv1a64(JSON.stringify([tools, allowlist ?? null]));
+}
+
+/**
+ * Connects to an MCP server described by a {@link McpConnectionDefinition}
+ * and adapts its listed tools into ordinary Flue tool definitions.
+ *
+ * Adapted tool names are `mcp__<server>__<tool>`. When a name had to change
+ * to fit (unsupported characters, a `__` inside a part, more than 64
+ * characters), it gains a stable `__<hash>` suffix of the original pair, so
+ * two different tools never share a name. Close the returned connection when
+ * its tools are no longer needed.
+ */
+export async function createMcpConnection(
+	definition: McpConnectionDefinition,
+): Promise<McpConnection> {
+	const link = new McpServerLink(definition);
+	try {
+		const listing = await link.listing();
+		return {
+			name: definition.name,
+			tools: adaptServerTools(link, listing),
+			close: () => link.close(),
+		};
+	} catch (error) {
+		await link.close();
+		throw error;
+	}
+}
+
+
+function createTransport(
+	definition: McpConnectionDefinition,
+	probe: DiscoverProbe,
+): StreamableHTTPClientTransport {
+	if (definition.transport === 'sse') {
+		throw new Error(
+			`[flue] MCP server "${definition.name}" is declared with transport 'sse' (the legacy HTTP+SSE transport), which Flue does not support: it needs a standing stream, and an agent holds no connection open between wakes. ` +
+				"Point `url` at the server's Streamable HTTP endpoint and drop `transport: 'sse'`.",
+		);
+	}
+	const url = definition.url instanceof URL ? definition.url : new URL(definition.url);
+	return new StreamableHTTPClientTransport(url, {
+		requestInit: mergeRequestInit(definition.requestInit, definition.headers),
+		fetch: recordingDiscover(definition.fetch, probe),
+		...(definition.auth === undefined
+			? {}
+			: {
+					authProvider: createMcpAuthProvider(
+						definition.name,
+						url,
+						definition.auth,
+						definition.fetch,
+					),
+				}),
+		// A step-up needs a user at a browser; surface it as an error instead.
+		onInsufficientScope: 'throw',
+	});
+}
+
+/**
+ * Keep a description of the answer to `server/discover`, so a server that
+ * does not speak 2026-07-28 is refused with what it actually said.
+ */
+function recordingDiscover(base: typeof fetch | undefined, probe: DiscoverProbe): FetchLike {
+	return async (input, init) => {
+		const response = await (base ?? fetch)(input, init);
+		if (typeof init?.body === 'string' && init.body.includes('"server/discover"')) {
+			probe.answer = describeDiscoverAnswer(response.clone());
+		}
+		return response;
+	};
+}
+
+async function describeDiscoverAnswer(response: Response): Promise<string> {
+	const text = (await response.text()).trim();
+	const json =
+		text
+			.split('\n')
+			.find((line) => line.startsWith('data:'))
+			?.slice(5)
+			.trim() ?? text;
+	try {
+		const message = JSON.parse(json) as {
+			result?: { supportedVersions?: unknown };
+			error?: { code?: unknown; message?: unknown; data?: { supported?: unknown } };
+		};
+		const versions = message.result?.supportedVersions;
+		if (Array.isArray(versions)) {
+			return `HTTP ${response.status}, supportedVersions ${versions.join(', ')}`;
+		}
+		if (message.error) {
+			const supported = message.error.data?.supported;
+			return `HTTP ${response.status}, JSON-RPC error ${String(message.error.code)} ${JSON.stringify(message.error.message ?? '')}${Array.isArray(supported) ? `, supported ${supported.join(', ')}` : ''}`;
+		}
+	} catch {
+		// Not JSON: describe the raw answer below.
+	}
+	return `HTTP ${response.status}${text ? ` ${JSON.stringify(text.slice(0, 200))}` : ''}`;
+}
+
+function mergeRequestInit(
+	requestInit: RequestInit | undefined,
+	headers: HeadersInit | undefined,
+): RequestInit {
+	if (!headers) return requestInit ?? {};
+	const mergedHeaders = new Headers(requestInit?.headers);
+	for (const [key, value] of new Headers(headers)) mergedHeaders.set(key, value);
+	return { ...requestInit, headers: mergedHeaders };
 }
 
 /**
@@ -180,10 +532,18 @@ function createAuthProvider(auth: McpAuth): AuthProvider {
  */
 function selectMcpTools(
 	serverName: string,
-	discovered: Tool[],
+	discovered: readonly Tool[],
 	allowlist: readonly string[] | undefined,
 ): Tool[] {
-	if (allowlist === undefined) return discovered;
+	if (allowlist === undefined) {
+		return discovered.filter((tool) => {
+			if (tool.execution?.taskSupport !== 'required') return true;
+			console.warn(
+				`[flue] Skipping MCP tool "${tool.name}" from server "${serverName}": it requires task-based execution, which is not supported.`,
+			);
+			return false;
+		});
+	}
 	const byName = new Map(discovered.map((tool) => [tool.name, tool]));
 	const duplicates = allowlist.filter((name, index) => allowlist.indexOf(name) !== index);
 	if (duplicates.length > 0) {
@@ -214,97 +574,27 @@ function formatToolNames(names: readonly string[]): string {
 	return [...new Set(names)].map((name) => JSON.stringify(name)).join(', ');
 }
 
-/**
- * The Streamable HTTP transport for a definition. Legacy HTTP+SSE servers are
- * refused explicitly: pi-mcp implements only Streamable HTTP (and stdio, which
- * Flue does not expose), and silently trying Streamable HTTP against an SSE
- * endpoint would fail later with a misleading protocol error.
- */
-function createTransport(definition: McpConnectionDefinition): StreamableHttpTransport {
-	const transport: McpTransport = definition.transport ?? 'streamable-http';
-	if (transport === 'sse') {
-		throw new Error(
-			`[flue] MCP server "${definition.name}" is declared with transport 'sse' (the legacy HTTP+SSE transport), which the MCP client does not support. ` +
-				"Point `url` at the server's Streamable HTTP endpoint and drop `transport: 'sse'` — servers that still offer legacy SSE almost always serve Streamable HTTP too.",
-		);
-	}
-	const { headers: initHeaders, ...init } = definition.requestInit ?? {};
-	return new StreamableHttpTransport({
-		url: definition.url,
-		headers: mergeHeaders(initHeaders, definition.headers),
-		fetch: createFetch(definition.fetch, init),
-		...(definition.auth === undefined ? {} : { authProvider: createAuthProvider(definition.auth) }),
-	});
-}
-
-/**
- * `requestInit` headers first, then `headers` (set wins), as a plain record —
- * the shape pi-mcp takes. Per-request protocol headers still override both.
- */
-function mergeHeaders(
-	initHeaders: HeadersInit | undefined,
-	headers: HeadersInit | undefined,
-): Record<string, string> {
-	const merged = new Headers(initHeaders);
-	for (const [key, value] of new Headers(headers)) merged.set(key, value);
-	return Object.fromEntries(merged);
-}
-
-/**
- * pi-mcp has no `requestInit`: it hands `fetch` only method, headers, body and
- * its own abort signal. The rest of `requestInit` (credentials, cache,
- * redirect, a caller signal, …) is applied by wrapping `fetch`, under the
- * transport's per-request fields. Without any, the transport keeps its default.
- */
-function createFetch(
-	baseFetch: typeof fetch | undefined,
-	init: Omit<RequestInit, 'headers'>,
-): McpFetch | undefined {
-	if (Object.keys(init).length === 0) return baseFetch;
-	return (input, request) => {
-		const signals = [init.signal, request?.signal].filter(
-			(signal): signal is AbortSignal => signal !== undefined && signal !== null,
-		);
-		return (baseFetch ?? fetch)(input, {
-			...init,
-			...request,
-			...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
-		});
-	};
-}
-
-function progressOptions(callOptions: McpCallOptions): McpRequestOptions {
-	return callOptions.resetTimeoutOnProgress ? { onProgress: () => {} } : {};
-}
-
-function createMcpTools(
-	serverName: string,
-	client: McpConnectionClient,
-	tools: Tool[],
-	callOptions: McpCallOptions,
+function adaptServerTools(
+	link: McpServerLink,
+	listing: { tools: Tool[]; instructions?: string },
 ): ToolDefinition[] {
+	const serverName = link.definition.name;
+	const tools = selectMcpTools(serverName, listing.tools, link.definition.tools);
 	const names = new Set<string>();
-
-	const callableTools = tools.filter((tool) => {
-		if (tool.execution?.taskSupport !== 'required') return true;
-		console.warn(
-			`[flue] Skipping MCP tool "${tool.name}" from server "${serverName}": it requires task-based execution, which is not supported.`,
-		);
-		return false;
-	});
-
-	return callableTools.map((tool) => {
-		const toolName = createToolName(serverName, tool.name);
+	return tools.map((tool) => {
+		const toolName = mcpToolName(serverName, tool.name);
 		if (names.has(toolName)) {
+			// Only a server listing one name twice gets here: distinct names
+			// map to distinct adapted names.
 			throw new Error(
-				`[flue] MCP tools from server "${serverName}" produced duplicate tool name "${toolName}".`,
+				`[flue] MCP server "${serverName}" lists the tool "${tool.name}" more than once.`,
 			);
 		}
 		names.add(toolName);
 
 		const definition: ToolDefinition = {
 			name: toolName,
-			description: createToolDescription(serverName, tool),
+			description: createToolDescription(serverName, tool, toolName),
 			input: undefined,
 			output: undefined,
 			// Carry the server's `tools/list` annotations through so application
@@ -318,44 +608,87 @@ function createMcpTools(
 				throw new Error('[flue] MCP tools execute through the internal adapter.');
 			},
 		};
+		const call = async (args: Record<string, unknown>, signal?: AbortSignal) => {
+			if (signal?.aborted) throw new Error('Operation aborted');
+			return (await link.call(tool, args, signal)) as McpCallResult;
+		};
 		registerPreparedToolAdapter(definition, {
 			parameters: normalizeInputSchema(tool.inputSchema),
 			async execute(args, signal) {
-				if (signal?.aborted) throw new Error('Operation aborted');
-				const result = await client.callTool(tool.name, args, {
-					...progressOptions(callOptions),
-					...(signal === undefined ? {} : { signal }),
-				});
-				const text = formatMcpResult(result);
+				const result = await call(args, signal);
+				const content = toModelContent(result);
 				if (result.isError) {
-					throw new Error(text);
+					throw new Error(
+						content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n') ||
+							`MCP tool "${tool.name}" failed.`,
+					);
 				}
-				return text;
+				return content;
 			},
 		});
+		const source: McpToolSource = {
+			server: serverName,
+			...(listing.instructions ? { instructions: listing.instructions } : {}),
+			tool: {
+				name: tool.name,
+				...(tool.title ? { title: tool.title } : {}),
+				...(tool.description ? { description: tool.description } : {}),
+				inputSchema: normalizeInputSchema(tool.inputSchema),
+				...(tool.outputSchema ? { outputSchema: tool.outputSchema as object } : {}),
+				...(tool.annotations ? { annotations: Object.freeze({ ...tool.annotations }) } : {}),
+			},
+			call,
+		};
+		registerMcpToolSource(definition, source);
 		return Object.freeze(definition);
 	});
 }
 
-function createToolName(serverName: string, toolName: string): string {
-	return `mcp__${sanitizeToolNamePart(serverName)}__${sanitizeToolNamePart(toolName)}`;
+const SAFE_PART = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*$/;
+
+function cleanPart(value: string): string {
+	return (
+		value
+			.replace(/[^A-Za-z0-9_-]/g, '_')
+			.replace(/_+/g, '_')
+			.replace(/^_|_$/g, '') || 'unnamed'
+	);
 }
 
-function sanitizeToolNamePart(value: string): string {
-	const sanitized = value.replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '');
-	return sanitized || 'unnamed';
+/**
+ * The model-facing name of a server's tool. `mcp__<server>__<tool>` when both
+ * parts are already safe (letters, digits, `-`, single inner `_`): such names
+ * are injective, since neither part can contain the `__` separator. Anything
+ * else — an unsupported character, `__` inside a part, a leading or trailing
+ * `_`, a name over 64 characters — gets the cleaned parts plus a
+ * `__<hash>` suffix of the original pair. Names with a suffix have three
+ * separators and plain names two, so the two classes never meet, and `-`
+ * and `_` stay distinct (`get-user` and `get_user` are different tools).
+ */
+export function mcpToolName(serverName: string, toolName: string): string {
+	const plain = `mcp__${serverName}__${toolName}`;
+	if (
+		SAFE_PART.test(serverName) &&
+		SAFE_PART.test(toolName) &&
+		plain.length <= MAX_TOOL_NAME_LENGTH
+	) {
+		return plain;
+	}
+	const hash = fnv1a64(JSON.stringify([serverName, toolName])).slice(0, 8);
+	const server = cleanPart(serverName).slice(0, 20).replace(/_$/, '');
+	const room = MAX_TOOL_NAME_LENGTH - `mcp__${server}____${hash}`.length;
+	const tool = cleanPart(toolName).slice(0, Math.max(room, 1)).replace(/_$/, '');
+	return `mcp__${server}__${tool}__${hash}`;
 }
 
-function createToolDescription(serverName: string, tool: Tool): string {
+function createToolDescription(serverName: string, tool: Tool, adaptedName: string): string {
 	const parts: string[] = [];
-	// The adapted name parses back to the original ("mcp__linear__create_issue")
-	// unless sanitization altered a part — only then does the mapping need
-	// spelling out, so server descriptions that cross-reference sibling tools
-	// by their original names stay followable.
-	const sanitized =
-		sanitizeToolNamePart(serverName) !== serverName ||
-		sanitizeToolNamePart(tool.name) !== tool.name;
-	if (sanitized) parts.push(`MCP tool "${tool.name}" from server "${serverName}".`);
+	// Spell out the original names only when the adapted name does not read
+	// them back, so server descriptions that cross-reference sibling tools by
+	// their original names stay followable.
+	if (adaptedName !== `mcp__${serverName}__${tool.name}`) {
+		parts.push(`MCP tool "${tool.name}" from server "${serverName}".`);
+	}
 	const title = tool.title ?? tool.annotations?.title;
 	if (title && title !== tool.name) parts.push(`Title: ${title}.`);
 	if (tool.description) parts.push(tool.description);
@@ -368,21 +701,62 @@ function normalizeInputSchema(schema: Tool['inputSchema']): object {
 		...schema,
 		type: schema.type ?? 'object',
 		properties: schema.properties ?? {},
-		required: schema.required,
+		...(schema.required ? { required: schema.required } : {}),
 	};
 }
 
 /**
- * The model-facing text of a tool result, through pi-mcp's `toLlmContent`:
- * text passes through, embedded text resources are unwrapped, audio, links and
- * binary resources become short placeholders, and `structuredContent` is used
- * only when the server sent no content blocks (servers mirror structured
- * results as text). Flue's prepared-tool adapter returns one string, so images
- * are named by a placeholder here rather than attached.
+ * The model-facing content of a tool result: text passes through, images
+ * stay images, embedded text resources are unwrapped and embedded image
+ * resources become images; audio, links and binary resources become short
+ * text placeholders. A result without content blocks but with
+ * `structuredContent` becomes its JSON (servers should, but do not always,
+ * mirror structured results as text).
  */
-function formatMcpResult(result: CallToolResult): string {
-	const parts = toLlmContent(result).map((item) =>
-		item.type === 'text' ? item.text : `[Image: ${item.mimeType}, ${item.data.length} base64 chars]`,
-	);
-	return parts.filter(Boolean).join('\n\n') || '(MCP tool returned no content)';
+export function toModelContent(result: McpCallResult): PreparedToolContent[] {
+	const content: PreparedToolContent[] = [];
+	for (const block of result.content ?? []) {
+		const item = block as Record<string, unknown> & { type: string };
+		switch (item.type) {
+			case 'text':
+				content.push({ type: 'text', text: String(item.text ?? '') });
+				break;
+			case 'image':
+				content.push({ type: 'image', data: String(item.data), mimeType: String(item.mimeType) });
+				break;
+			case 'audio':
+				content.push({ type: 'text', text: `[Audio: ${String(item.mimeType)} omitted]` });
+				break;
+			case 'resource_link':
+				content.push({
+					type: 'text',
+					text: `[Resource link: ${String(item.name)} (${String(item.uri)})]`,
+				});
+				break;
+			case 'resource': {
+				const resource = (item.resource ?? {}) as Record<string, unknown>;
+				if (typeof resource.text === 'string') {
+					content.push({ type: 'text', text: resource.text });
+				} else if (
+					typeof resource.mimeType === 'string' &&
+					resource.mimeType.startsWith('image/')
+				) {
+					content.push({ type: 'image', data: String(resource.blob), mimeType: resource.mimeType });
+				} else {
+					content.push({
+						type: 'text',
+						text: `[Binary resource ${String(resource.uri)} (${String(resource.mimeType ?? 'unknown type')}) omitted]`,
+					});
+				}
+				break;
+			}
+			default:
+				content.push({ type: 'text', text: JSON.stringify(item) });
+		}
+	}
+	if (content.length === 0 && result.structuredContent !== undefined) {
+		content.push({ type: 'text', text: JSON.stringify(result.structuredContent, null, 2) });
+	}
+	if (content.length === 0) content.push({ type: 'text', text: '(MCP tool returned no content)' });
+	return content;
 }

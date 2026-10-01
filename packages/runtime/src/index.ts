@@ -60,6 +60,12 @@ export type {
 } from './execution-interceptor.ts';
 export { useAgentFinish } from './hooks/use-agent-finish.ts';
 export { useAgentStart } from './hooks/use-agent-start.ts';
+export type {
+	CodemodeExecuteResult,
+	CodemodeExecutor,
+	CodemodeProvider,
+} from './codemode/executor.ts';
+export type { CodemodeMethod } from './codemode/host.ts';
 export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
 export { useDataWriter } from './hooks/use-data-writer.ts';
 export { useDelivery } from './hooks/use-delivery.ts';
@@ -78,24 +84,26 @@ export { useTool } from './hooks/use-tool.ts';
 export { type FlueInstrumentation, instrument } from './instrumentation.ts';
 export type { JsonValue } from './json-snapshot.ts';
 export type {
-	CodemodeCall,
-	CodemodeError,
-	CodemodeErrorKind,
-	CodemodeExecutor,
-	CodemodeExecutorOptions,
-	CodemodeOutputItem,
-	CodemodeResult,
-	CodemodeStoreWrites,
-	CodemodeTool,
-	CodemodeToolContext,
-} from './pi/codemode/executor.ts';
-export type {
 	McpAuth,
 	McpConnection,
 	McpConnectionDefinition,
+	McpOAuth,
 	McpToolAnnotations,
 	McpTransport,
 } from './mcp.ts';
+export { McpInputRequiredError, McpProtocolVersionError, mcpToolName } from './mcp.ts';
+export {
+	createMcpOAuthBroker,
+	MCP_OAUTH_CALLBACK_PATH,
+	McpAuthorizationRequiredError,
+	type McpOAuthBroker,
+	type McpOAuthCallback,
+	type McpOAuthOutcome,
+	type McpOAuthRequest,
+	type McpOAuthStorage,
+	mcpOAuth,
+	setMcpOAuthBroker,
+} from './mcp-oauth.ts';
 export { createMcpConnection } from './mcp.ts';
 export type {
 	AgentAppendMessage,

@@ -58,11 +58,8 @@ import {
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
 import {
-	CLOUDFLARE_STUB_ALIASES,
-	CROSS_SPAWN_STUB_SOURCE,
-	RESOLVED_CROSS_SPAWN_STUB,
-	scanCodeModeUsage,
-	VIRTUAL_CROSS_SPAWN_STUB,
+	codeModeOnNodeError,
+	scanCloudflareFeatures,
 } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
 import {
@@ -191,6 +188,8 @@ interface FluePluginState {
 	cloudflarePrepared: boolean;
 	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: adds the Worker Loader binding). */
 	codeMode: boolean;
+	/** Whether a module under the source root calls `mcpOAuth()` (Cloudflare: binds the FlueMcpAuth Durable Object). */
+	mcpOAuth: boolean;
 	/** Serializes and coalesces watcher-driven re-scans. */
 	watchQueue: WatchQueue;
 	resolved: FlueResolvedProjectInfo | undefined;
@@ -214,6 +213,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		isPreview: false,
 		cloudflarePrepared: false,
 		codeMode: false,
+		mcpOAuth: false,
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
@@ -239,6 +239,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		},
 		get codeMode() {
 			return state.codeMode;
+		},
+		get mcpOAuth() {
+			return state.mcpOAuth;
 		},
 		customizerInvoked: false,
 	};
@@ -363,7 +366,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					throw cloudflareOrderingError();
 				}
 				if (project.db) throw dbOnCloudflareError();
-				state.codeMode = await scanCodeModeUsage(project.sourceRoot);
+				const features = await scanCloudflareFeatures(project.sourceRoot);
+				state.codeMode = features.codeMode;
+				state.mcpOAuth = features.mcpOAuth;
 				state.cloudflarePrepared = true;
 				workerConfigSource.configReady = true;
 				// The dependency resolver stays inert (root unset): the Worker
@@ -375,10 +380,8 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				// CORS matches the Node target: workerd requests flow
 				// through Vite's middleware stack, and separate-origin local
 				// clients need the durable-stream coordination headers exposed.
-				// The alias stubs the process spawner pi-mcp's stdio transport
-				// would pull in (see cloudflare-codemode.ts).
 				return {
-					resolve: { dedupe: RUNTIME_DEDUPE, alias: CLOUDFLARE_STUB_ALIASES },
+					resolve: { dedupe: RUNTIME_DEDUPE },
 					...(isBuild ? {} : { server: { cors: userConfig.server?.cors ?? DEV_CORS } }),
 				} satisfies UserConfig;
 			}
@@ -389,6 +392,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (project.providers?.includes('cloudflare')) {
 				throw cloudflareProviderOnNodeError();
 			}
+			// Code Mode's runtime is a Durable Object Facet: Cloudflare only.
+			const { codeModeFile } = await scanCloudflareFeatures(project.sourceRoot);
+			if (codeModeFile) throw codeModeOnNodeError(root, codeModeFile);
 
 			resolverState.root = root;
 			resolverState.external = !isBuild;
@@ -542,8 +548,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					return bootstrap.server;
 				case VIRTUAL_WORKER_ENTRY:
 					return RESOLVED_WORKER_ENTRY;
-				case VIRTUAL_CROSS_SPAWN_STUB:
-					return RESOLVED_CROSS_SPAWN_STUB;
 				default:
 					return undefined;
 			}
@@ -553,7 +557,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (id === RESOLVED_DB_STUB) {
 				return 'export default undefined;\n';
 			}
-			if (id === RESOLVED_CROSS_SPAWN_STUB) return CROSS_SPAWN_STUB_SOURCE;
 			if (id === RESOLVED_AGENTS) {
 				return generateScannedAgentsModule(state.agents);
 			}
@@ -573,6 +576,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					agents: state.agents,
 					providers: state.project.providers,
 					tracing: state.project.tracing,
+					codeMode: state.codeMode,
 				});
 			}
 			return undefined;

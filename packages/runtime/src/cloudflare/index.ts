@@ -23,12 +23,6 @@ export {
 } from '../errors.ts';
 export type { CloudflareSandboxOptions, CloudflareSandboxStub } from './cf-sandbox.ts';
 export { cloudflareSandbox } from './cf-sandbox.ts';
-export {
-	CODEMODE_LOADER_BINDING,
-	type CodemodeWorkerLoader,
-	DynamicWorkerCodemodeExecutor,
-	type DynamicWorkerCodemodeExecutorOptions,
-} from './codemode-dynamic-worker.ts';
 export type { CloudflareContext, FlueDurableObjectIdentity } from './context.ts';
 export { getCloudflareContext, getDurableObjectIdentity } from './context.ts';
 export type {
