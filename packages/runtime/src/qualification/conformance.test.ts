@@ -78,7 +78,9 @@ async function traced<T>(what: string, run: () => Promise<T>): Promise<T> {
 	try {
 		return await run();
 	} catch (error) {
-		trace(`${what} failed: ${error instanceof Error ? `${error.name}: ${error.message}\n${error.stack?.split('\n').slice(1, 30).join('\n')}` : String(error)}`);
+		trace(
+			`${what} failed: ${error instanceof Error ? `${error.name}: ${error.message}\n${error.stack?.split('\n').slice(1, 30).join('\n')}` : String(error)}`,
+		);
 		throw error;
 	}
 }
@@ -200,7 +202,9 @@ async function crashAndRecoverNow(qw: QualWorld, fault: Fault, body: string) {
 	}
 	expect(first.fired).toEqual(fault);
 	const admitted = await admission;
-	trace(`fired after ${first.appends.length} appends, ${alice.calls} model calls, ${admitted}; reopening`);
+	trace(
+		`fired after ${first.appends.length} appends, ${alice.calls} model calls, ${admitted}; reopening`,
+	);
 	alice.abandon();
 
 	await traced('reopen', () => alice.open());
@@ -444,7 +448,9 @@ describe.each(backends())('conformance over $name', (backend) => {
 					const { offset: beforeOffset, ...beforeHistory } = (before ?? {}) as { offset?: string };
 					const { offset: afterOffset, ...afterHistory } = (after ?? {}) as { offset?: string };
 					expect(afterHistory).toEqual(beforeHistory);
-					expect(compareOffsets(afterOffset ?? '-1', beforeOffset ?? '-1')).toBeGreaterThanOrEqual(0);
+					expect(compareOffsets(afterOffset ?? '-1', beforeOffset ?? '-1')).toBeGreaterThanOrEqual(
+						0,
+					);
 					await expectReplaysIdentically(qw, entity);
 				}
 			},

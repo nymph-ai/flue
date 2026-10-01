@@ -422,7 +422,9 @@ export function societyResponder(messages: readonly Message[]) {
 	if (results.length > 0) {
 		// Not the tool's text: it carries ids derived from random faux call ids.
 		const last = lastMessage(messages);
-		return answer(`Done after ${results.length} ${last?.role === 'toolResult' ? last.toolName : 'tool'} call(s).`);
+		return answer(
+			`Done after ${results.length} ${last?.role === 'toolResult' ? last.toolName : 'tool'} call(s).`,
+		);
 	}
 	const send = /^send ([^/\s]+)\/(\S+) (.*)$/.exec(body);
 	if (send) {

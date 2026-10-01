@@ -239,13 +239,20 @@ export function installQualification(app: Hono): void {
 		const id = c.req.param('id');
 		const log = configuredStreamsLog(source);
 		if (!log) return c.json({ error: 'streams required' }, 400);
-		const body = (await c.req.json().catch(() => ({}))) as { streams?: string[]; subscription?: string };
+		const body = (await c.req.json().catch(() => ({}))) as {
+			streams?: string[];
+			subscription?: string;
+		};
 		const paths = body.streams ?? [inboxPath({ type: agent, id })];
 		const streams = await Promise.all(
 			paths.map(async (path) => ({ path, tailOffset: (await log.head(path))?.nextOffset ?? '-1' })),
 		);
 		const stub = await agentStub(source, agent, id);
-		const request = { subscriptionId: body.subscription ?? 'qual-manual', generation: Date.now(), streams };
+		const request = {
+			subscriptionId: body.subscription ?? 'qual-manual',
+			generation: Date.now(),
+			streams,
+		};
 		return c.json({ request, result: await stub.__flueWake(request) });
 	});
 
@@ -255,7 +262,9 @@ export function installQualification(app: Hono): void {
 		const streams = configuredStreams(c.env as Vars);
 		const url = c.req.query('url');
 		if (!streams?.fetch || !url) return c.json({ error: 'streams and url required' }, 400);
-		const response = await settled(() => (streams.fetch as NonNullable<typeof streams.fetch>)(url, { method: 'HEAD' }));
+		const response = await settled(() =>
+			(streams.fetch as NonNullable<typeof streams.fetch>)(url, { method: 'HEAD' }),
+		);
 		if ('error' in response) return c.json(response);
 		return c.json({
 			url,
@@ -269,7 +278,8 @@ export function installQualification(app: Hono): void {
 	app.post('/qual/ensure-inbox', async (c) => {
 		const streams = configuredStreams(c.env as Vars);
 		const url = streams?.webhook?.url;
-		if (!streams || !url) return c.json({ error: 'streams and FLUE_STREAMS_WEBHOOK_URL required' }, 400);
+		if (!streams || !url)
+			return c.json({ error: 'streams and FLUE_STREAMS_WEBHOOK_URL required' }, 400);
 		return c.json(await settled(() => streamsSubscriptions(streams, url).ensureInbox()));
 	});
 
