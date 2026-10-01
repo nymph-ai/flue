@@ -11,7 +11,7 @@ Internet / clients ──► Gateway Worker ── auth, routing, wake doorbell,
                  AgentDO(entity id)     one SQLite-backed Durable Object per entity
                    ├─ Pi Durable Harness  (cognition, tasks, compaction, recovery)
                    ├─ Pi SqliteStorage    (on ctx.storage.sql via Flue's adapter)
-                   ├─ Flue tables         (stream cursors, wake high-water, dedupe)
+                   ├─ Flue tables         (stream cursors, wake high-water, conversation cache)
                    ├─ MCP client          (@modelcontextprotocol/client, stateless 2026-07-28)
                    └─ Code Mode           (@cloudflare/codemode) ──load()──► Dynamic Worker
                               │                                    globalOutbound: null
@@ -55,8 +55,9 @@ is uninteresting by design.
    wakes; a turn is never required to fit in one alarm.
 5. **Effects are idempotent, not co-committed.** A send or publish appends one
    event with a deterministic id derived from the Pi task and tool call. Pi's
-   tool replay re-sends the same id; receivers deduplicate on it. There is no
-   outbox around Pi's commit.
+   tool replay re-sends the same id; receivers deduplicate on it — an inbox
+   event becomes the Pi submission keyed by it, an observed published event
+   the Pi write keyed by it. There is no outbox around Pi's commit.
 6. **MCP is stateless and remote.** Streamable HTTP with the 2026-07-28
    protocol (no sessions, no initialize handshake, `server/discover`), falling
    back to servers on earlier revisions. stdio is not a Cloudflare capability.
