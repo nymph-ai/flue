@@ -12,21 +12,22 @@
 	"ai": { "binding": "AI" },
 	// Electric Agents in k3s (namespace fabric-society), through Cloudflare
 	// Tunnel b5c8a1b2-99d5-4914-b64a-a7874383cb5e: FLUE_STREAMS is the binding
-	// every instance's log, inbox and events stream are reached through.
+	// every instance's inbox and events stream are reached through. Pi's own
+	// state stays in each agent's Durable Object SQLite.
 	"vpc_services": [
 		{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }
 	],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
-	"durable_objects": {
-		"bindings": [{ "name": "QUAL_REPLICA", "class_name": "QualReplica" }]
-	},
 	// Adding an agent = a new 'use agent' module, its mount in app.ts, and a
 	// migration for its generated class (`Flue<Name>Agent`).
 	"migrations": [
 		{
 			"tag": "society-v1",
 			"new_sqlite_classes": ["FlueAliceAgent", "FlueBobAgent", "FlueCuratorAgent", "QualReplica"]
-		}
+		},
+		// The qualification build's scratch object rebuilt instances from their
+		// Pi log; there is no Pi log any more.
+		{ "tag": "society-v2", "deleted_classes": ["QualReplica"] }
 	],
 	"vars": {
 		// The agents-server's own root: it serves the Durable Streams protocol and

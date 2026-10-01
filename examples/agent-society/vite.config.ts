@@ -3,8 +3,8 @@ import { flue, flueWorkerConfig } from '@flue/vite';
 import { defineConfig } from 'vite';
 
 // `QUALIFICATION=1 vite build` compiles in the test-only qualification surface
-// (fault injection, Durable Object inspection hooks, the /qual admin routes
-// and the QualReplica scratch object). Any other build leaves it out entirely.
+// (Durable Object inspection hooks and the /qual admin routes). Any other
+// build leaves it out entirely.
 const qualification = process.env.QUALIFICATION === '1';
 
 export default defineConfig({

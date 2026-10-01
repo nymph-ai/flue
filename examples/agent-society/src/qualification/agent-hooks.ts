@@ -2,23 +2,17 @@
  * Test-only Durable Object hooks for the society's agents, compiled in only by
  * a `QUALIFICATION=1` build (`hooks.ts`). They add RPC methods the admin
  * routes call and record what happens to each instance in its own SQLite
- * (`qual_activity`), so a wake, an eviction or a boot is countable per entity
- * after the fact without waking it at the time.
+ * (`qual_activity`), so a doorbell, an alarm, an eviction or a boot is
+ * countable per entity after the fact without waking it at the time.
  *
- * - `__qualInspect()`: StreamStorage state (producer epoch, published seq,
- *   outbox and relay depth), the Pi index seq, cursors, and the activity log.
- * - `__qualSnapshot()`: digests of every Pi read of the live index.
- * - `__qualArmFault(plan)`: arm a crash in the Pi log publisher (`faults.ts`).
+ * - `__qualInspect()`: the wake book (each stream's head and cursor), the
+ *   conversation cache's identity and row, Pi's submission counts, the rows
+ *   Flue's SQLite facade read and wrote since boot, and the activity log.
+ * - `__qualRecords()`: raw Pi records, for diagnosis.
  * - `__qualEvict()`: `ctx.abort()` — the instance's memory is gone, its
  *   storage stays: a forced eviction.
  */
-import {
-	comparisonPoints,
-	digestSnapshot,
-	indexedSeq,
-	snapshotDurableObjectIndex,
-} from '@flue/runtime/qualification';
-import { type FaultPlan, registerInstance, type QualifiedInstance } from './faults.ts';
+import { durableObjectRows } from '@flue/runtime/qualification';
 
 type Row = Record<string, unknown>;
 
@@ -27,25 +21,13 @@ interface DurableObjectLike {
 	readonly name: string;
 }
 
-const ACTIVITY_SCHEMA = [
-	`CREATE TABLE IF NOT EXISTS qual_activity (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		at INTEGER NOT NULL,
-		kind TEXT NOT NULL,
-		boot TEXT NOT NULL,
-		detail TEXT
-	)`,
-	`CREATE TABLE IF NOT EXISTS qual_faults (
-		one INTEGER PRIMARY KEY CHECK (one = 1),
-		kind TEXT NOT NULL,
-		after INTEGER NOT NULL,
-		armed_at INTEGER NOT NULL
-	)`,
-];
-
-function ensureSchema(ctx: DurableObjectState): void {
-	for (const statement of ACTIVITY_SCHEMA) ctx.storage.sql.exec(statement);
-}
+const ACTIVITY_SCHEMA = `CREATE TABLE IF NOT EXISTS qual_activity (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	at INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	boot TEXT NOT NULL,
+	detail TEXT
+)`;
 
 export function recordActivity(
 	ctx: DurableObjectState,
@@ -54,7 +36,7 @@ export function recordActivity(
 	detail?: unknown,
 ): void {
 	try {
-		ensureSchema(ctx);
+		ctx.storage.sql.exec(ACTIVITY_SCHEMA);
 		ctx.storage.sql.exec(
 			'INSERT INTO qual_activity (at, kind, boot, detail) VALUES (?, ?, ?, ?)',
 			Date.now(),
@@ -92,12 +74,6 @@ function bootOf(instance: object): { id: string; at: number } {
 	return boot;
 }
 
-function qualified(instance: DurableObjectLike): QualifiedInstance {
-	const agent = agentOfClass(instance.constructor.name);
-	const boot = bootOf(instance);
-	return registerInstance(`${agent}/${instance.name}`, instance.ctx, boot.id);
-}
-
 export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: any[]) => any {
 	return class QualifiedAgent extends Base {
 		constructor(ctx: DurableObjectState, env: unknown) {
@@ -105,7 +81,7 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 			recordActivity(ctx, bootOf(this).id, 'boot');
 		}
 
-		/** Raw Pi records for diagnosis: every submission and task, the newest entries. */
+		/** Raw Pi records for diagnosis: every submission, the newest tasks and entries. */
 		async __qualRecords(): Promise<Record<string, unknown>> {
 			const ctx = (this as unknown as DurableObjectLike).ctx;
 			const parse = (list: Row[]) =>
@@ -127,78 +103,31 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 		async __qualInspect(): Promise<Record<string, unknown>> {
 			const self = this as unknown as DurableObjectLike;
 			const ctx = self.ctx;
-			qualified(self);
 			recordActivity(ctx, bootOf(this).id, 'inspect');
-			const producer = rows(ctx, 'SELECT * FROM flue_pi_producer')[0];
-			const outbox = rows(
-				ctx,
-				'SELECT count(*) AS depth, min(seq) AS first_seq, max(seq) AS last_seq FROM flue_pi_outbox',
-			)[0];
-			const relay = rows(ctx, 'SELECT count(*) AS depth FROM flue_relay_outbox')[0];
-			const counts = rows(
-				ctx,
-				'SELECT kind, count(*) AS n, min(at) AS first_at, max(at) AS last_at FROM qual_activity GROUP BY kind',
-			);
-			const boot = bootOf(this);
 			return {
 				instance: `${agentOfClass(this.constructor.name)}/${self.name}`,
-				boot,
-				producer: producer ?? null,
-				outbox: outbox ?? null,
-				relay: relay ?? null,
-				indexedSeq: indexedSeq(ctx.storage.sql as never),
-				cursors: rows(ctx, 'SELECT key, value FROM flue_entity_cursors ORDER BY key'),
+				boot: bootOf(this),
+				rows: durableObjectRows(ctx.storage as never),
+				streams: rows(ctx, 'SELECT path, head, cursor FROM flue_entity_streams ORDER BY path'),
+				conversation:
+					rows(ctx, 'SELECT identity, row FROM flue_conversation_state WHERE singleton = 1')[0] ??
+					null,
 				submissions: rows(
 					ctx,
 					'SELECT status, count(*) AS n FROM submissions GROUP BY status ORDER BY status',
 				),
+				alarm: await ctx.storage.getAlarm(),
 				activity: {
-					counts,
+					counts: rows(
+						ctx,
+						'SELECT kind, count(*) AS n, min(at) AS first_at, max(at) AS last_at FROM qual_activity GROUP BY kind',
+					),
 					recent: rows(
 						ctx,
 						'SELECT id, at, kind, boot, detail FROM qual_activity ORDER BY id DESC LIMIT 40',
 					),
 				},
-				fault: rows(ctx, 'SELECT * FROM qual_faults')[0] ?? null,
 			};
-		}
-
-		/** Digests of every Pi read of the live index, when everything it holds is published. */
-		async __qualSnapshot(): Promise<Record<string, unknown>> {
-			const self = this as unknown as DurableObjectLike;
-			const ctx = self.ctx;
-			recordActivity(ctx, bootOf(this).id, 'snapshot');
-			const lastSeq = indexedSeq(ctx.storage.sql as never);
-			const producer = rows(ctx, 'SELECT published_seq FROM flue_pi_producer')[0];
-			const pending = Number(rows(ctx, 'SELECT count(*) AS n FROM flue_pi_outbox')[0]?.n ?? 0);
-			if (lastSeq === 0) return { lastSeq, publishedSeq: 0, pending, digest: null, keys: {} };
-			const points = comparisonPoints(lastSeq);
-			const snapshot = await snapshotDurableObjectIndex(ctx.storage as never, lastSeq, points);
-			const digests = await digestSnapshot(snapshot);
-			return {
-				lastSeq,
-				publishedSeq: Number(producer?.published_seq ?? 0),
-				pending,
-				points,
-				digest: digests.digest,
-				keys: digests.keys,
-			};
-		}
-
-		async __qualArmFault(plan: FaultPlan): Promise<Record<string, unknown>> {
-			const self = this as unknown as DurableObjectLike;
-			const ctx = self.ctx;
-			ensureSchema(ctx);
-			ctx.storage.sql.exec(
-				'INSERT INTO qual_faults (one, kind, after, armed_at) VALUES (1, ?, ?, ?) ON CONFLICT (one) DO UPDATE SET kind = excluded.kind, after = excluded.after, armed_at = excluded.armed_at',
-				plan.kind,
-				plan.after,
-				Date.now(),
-			);
-			const instance = qualified(self);
-			instance.resetCounters();
-			recordActivity(ctx, bootOf(this).id, 'fault-armed', plan);
-			return { armed: plan, instance: instance.key };
 		}
 
 		async __qualEvict(): Promise<never> {
@@ -215,11 +144,6 @@ export function qualifiedBase(Base: new (...args: any[]) => any): new (...args: 
 export function qualifiedWrap<T extends new (...args: any[]) => any>(Final: T): T {
 	const prototype = Final.prototype as Record<string, unknown>;
 	const enter = (instance: DurableObjectLike, kind: string, detail?: unknown) => {
-		try {
-			qualified(instance);
-		} catch {
-			// `name` is not known before the first named entry.
-		}
 		recordActivity(instance.ctx, bootOf(instance).id, kind, detail);
 	};
 	const wrap = (method: string, kind: string, describe?: (args: unknown[]) => unknown) => {
@@ -230,16 +154,9 @@ export function qualifiedWrap<T extends new (...args: any[]) => any>(Final: T): 
 			return (original as (...a: unknown[]) => unknown).apply(this, args);
 		};
 	};
-	wrap('__flueWake', 'wake', (args) => {
-		const request = args[0] as
-			{ subscriptionId?: string; generation?: number; streams?: { path: string }[] } | undefined;
-		return {
-			subscription: request?.subscriptionId,
-			generation: request?.generation,
-			streams: request?.streams?.map((stream) => stream.path),
-		};
-	});
-	wrap('__flueWakeAgentSubmissions', 'alarm-wake', (args) => args[0]);
+	wrap('__flueWake', 'doorbell', (args) => args[0]);
+	wrap('alarm', 'alarm');
+	wrap('__flueWakeAgentSubmissions', 'scheduled-wake', (args) => args[0]);
 	wrap('onRequest', 'request', (args) => {
 		const request = args[0] as Request | undefined;
 		return request ? `${request.method} ${new URL(request.url).pathname}` : undefined;

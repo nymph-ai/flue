@@ -3,73 +3,33 @@
  * `QUALIFICATION=1` build (`vite.config.ts` defines `__QUALIFICATION__`) and
  * served only when the deployment also sets the `QUALIFICATION` var to "1".
  *
- * - Streams go through `faultInjectingFetch` (`faults.ts`), so a Pi log
- *   publish can be crashed on purpose.
- * - `/qual/*` admin routes, behind the `SOCIETY_TOKEN` bearer secret, inspect
- *   and drive instances through their Durable Object RPC hooks
- *   (`agent-hooks.ts`) and the scratch `QualReplica` object (`replica.ts`).
+ * `/qual/*` admin routes, behind the `SOCIETY_TOKEN` bearer secret, inspect
+ * and drive instances through their Durable Object RPC hooks
+ * (`agent-hooks.ts`): storage cost, the wake book, forced evictions and
+ * hand-rung doorbells.
  */
-import { env } from 'cloudflare:workers';
-import { electricStreams, setStreams } from '@flue/runtime';
 import {
 	configuredStreams,
 	configuredStreamsLog,
-	diffDigests,
 	inboxPath,
 	streamsSubscriptions,
-	type EntityAddress,
 } from '@flue/runtime/qualification';
 import { getAgentByName } from 'agents';
 import type { Hono } from 'hono';
-import { faultInjectingFetch, isFaultPlan } from './faults.ts';
 
 type Vars = Record<string, unknown>;
 type Result = Record<string, unknown>;
 
 /** The RPC hooks `agent-hooks.ts` adds to every agent's Durable Object. */
 interface AgentStub {
-	__flueWake(request: unknown): Promise<Result>;
+	__flueWake(doorbell: { stream: string; head: string }): Promise<Result>;
 	__qualInspect(): Promise<Result>;
 	__qualRecords(): Promise<Result>;
-	__qualSnapshot(): Promise<Result>;
-	__qualArmFault(plan: unknown): Promise<Result>;
 	__qualEvict(): Promise<Result>;
 }
 
-/** `replica.ts`. */
-interface ReplicaStub {
-	rebuild(entity: EntityAddress, lastSeq: unknown, points?: unknown): Promise<Result>;
-	logSeqs(entity: EntityAddress): Promise<Result>;
-	producerProbe(path: string): Promise<Result>;
-	splitBrain(entity: EntityAddress): Promise<Result>;
-}
-
-const vars = env as unknown as Vars;
-
-function enabled(source: Vars = vars): boolean {
+function enabled(source: Vars): boolean {
 	return source.QUALIFICATION === '1';
-}
-
-/** Route Electric traffic through the fault injector (module scope, before any request). */
-function installStreams(): void {
-	const baseUrl = vars.FLUE_STREAMS_URL;
-	const binding = vars.FLUE_STREAMS as
-		{ fetch?: (input: unknown, init?: unknown) => Promise<Response> } | undefined;
-	if (!enabled() || typeof baseUrl !== 'string' || !binding?.fetch) return;
-	const jwksUrl = vars.FLUE_STREAMS_JWKS_URL;
-	const webhookUrl = vars.FLUE_STREAMS_WEBHOOK_URL;
-	setStreams(
-		electricStreams({
-			baseUrl,
-			fetch: faultInjectingFetch(
-				(input, init) => binding.fetch?.call(binding, input, init) as Promise<Response>,
-			),
-			webhook: {
-				...(typeof jwksUrl === 'string' && jwksUrl ? { jwksUrl } : {}),
-				...(typeof webhookUrl === 'string' && webhookUrl ? { url: webhookUrl } : {}),
-			},
-		}),
-	);
 }
 
 function bindingOf(agent: string): string {
@@ -80,12 +40,6 @@ async function agentStub(source: Vars, agent: string, id: string): Promise<Agent
 	const namespace = source[bindingOf(agent)];
 	if (!namespace) throw new Error(`no agent "${agent}"`);
 	return (await getAgentByName(namespace as never, id)) as AgentStub;
-}
-
-function replica(source: Vars, name: string): ReplicaStub {
-	const namespace = source.QUAL_REPLICA as DurableObjectNamespace | undefined;
-	if (!namespace) throw new Error('no QUAL_REPLICA binding');
-	return namespace.get(namespace.idFromName(name)) as unknown as ReplicaStub;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -103,11 +57,7 @@ async function settled<T>(run: () => Promise<T>): Promise<T | { error: string }>
 	}
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export function installQualification(app: Hono): void {
-	installStreams();
-
 	app.use('/qual/*', async (c, next) => {
 		const source = c.env as Vars;
 		if (!enabled(source)) return c.json({ error: 'qualification is off' }, 404);
@@ -141,85 +91,10 @@ export function installQualification(app: Hono): void {
 		return c.json(await stub.__qualRecords());
 	});
 
-	app.post('/qual/fault/:agent/:id', async (c) => {
-		const plan: unknown = await c.req.json();
-		if (!isFaultPlan(plan)) return c.json({ error: 'invalid fault plan' }, 400);
-		const stub = await agentStub(c.env as Vars, c.req.param('agent'), c.req.param('id'));
-		return c.json(await stub.__qualArmFault(plan));
-	});
-
 	app.post('/qual/evict/:agent/:id', async (c) => {
 		const stub = await agentStub(c.env as Vars, c.req.param('agent'), c.req.param('id'));
 		const outcome = await settled(() => stub.__qualEvict());
 		return c.json({ evicted: true, outcome });
-	});
-
-	// Rebuild an instance's Pi index from its log alone, in a scratch object,
-	// and compare every Pi read with the live instance's.
-	app.get('/qual/compare/:agent/:id', async (c) => {
-		const source = c.env as Vars;
-		const agent = c.req.param('agent');
-		const id = c.req.param('id');
-		const waitMs = Math.min(60_000, Number(c.req.query('wait') ?? '20000'));
-		const stub = await agentStub(source, agent, id);
-		const deadline = Date.now() + waitMs;
-		let live = await stub.__qualSnapshot();
-		while (Number(live.pending) > 0 && Date.now() < deadline) {
-			await sleep(500);
-			live = await stub.__qualSnapshot();
-		}
-		if (Number(live.pending) > 0)
-			return c.json({ equal: false, reason: 'outbox did not drain', live }, 409);
-		const entity: EntityAddress = { type: agent, id };
-		const rebuilt = await replica(source, `rebuild/${agent}/${id}/${crypto.randomUUID()}`).rebuild(
-			entity,
-			live.lastSeq,
-			live.points,
-		);
-		const diff = diffDigests(
-			(live.keys ?? {}) as Record<string, string>,
-			(rebuilt.keys ?? {}) as Record<string, string>,
-		);
-		return c.json({
-			equal: live.digest === rebuilt.digest && diff.length === 0,
-			liveSeq: live.lastSeq,
-			publishedSeq: live.publishedSeq,
-			rebuiltSeq: rebuilt.rebuiltSeq,
-			liveDigest: live.digest,
-			rebuiltDigest: rebuilt.digest,
-			keys: Object.keys((live.keys ?? {}) as object).length,
-			points: Array.isArray(live.points) ? live.points.length : null,
-			diff: diff.slice(0, 25),
-			rebuildMs: rebuilt.ms,
-		});
-	});
-
-	app.get('/qual/log/:agent/:id', async (c) => {
-		const agent = c.req.param('agent');
-		const id = c.req.param('id');
-		return c.json(
-			await replica(c.env as Vars, `log/${agent}/${id}/${crypto.randomUUID()}`).logSeqs({
-				type: agent,
-				id,
-			}),
-		);
-	});
-
-	app.post('/qual/producer-probe', async (c) => {
-		const body = (await c.req.json()) as { path?: string };
-		const path = body.path ?? `qual/producer-probe/${crypto.randomUUID()}`;
-		return c.json(await replica(c.env as Vars, `probe/${path}`).producerProbe(path));
-	});
-
-	app.post('/qual/split-brain/:agent/:id', async (c) => {
-		const agent = c.req.param('agent');
-		const id = c.req.param('id');
-		return c.json(
-			await replica(c.env as Vars, `split/${agent}/${id}/${crypto.randomUUID()}`).splitBrain({
-				type: agent,
-				id,
-			}),
-		);
 	});
 
 	// Read-only: a stream's tail, through the configured log.
@@ -230,32 +105,27 @@ export function installQualification(app: Hono): void {
 		return c.json({ path, head: await log.head(path) });
 	});
 
-	// Deliver an entity wake by hand: the same `__flueWake` RPC the wake route
-	// makes for a verified Electric webhook, for the given streams (default:
-	// the entity's inbox) at their current tails. Only the webhook hop is
-	// replaced; the instance reconstructs, admits and runs Pi exactly as it
-	// would for a real wake. Used only when the server cannot deliver webhooks.
+	// Ring an entity's doorbell by hand: the same `__flueWake({ stream, head })`
+	// RPC the wake route makes for a verified Electric webhook, for the given
+	// streams (default: the entity's inbox) at their current tails. Only the
+	// webhook hop is replaced; the alarm pumps exactly as it would for a real
+	// wake. Used only when the server cannot deliver webhooks.
 	app.post('/qual/wake/:agent/:id', async (c) => {
 		const source = c.env as Vars;
 		const agent = c.req.param('agent');
 		const id = c.req.param('id');
 		const log = configuredStreamsLog(source);
 		if (!log) return c.json({ error: 'streams required' }, 400);
-		const body = (await c.req.json().catch(() => ({}))) as {
-			streams?: string[];
-			subscription?: string;
-		};
+		const body = (await c.req.json().catch(() => ({}))) as { streams?: string[] };
 		const paths = body.streams ?? [inboxPath({ type: agent, id })];
-		const streams = await Promise.all(
-			paths.map(async (path) => ({ path, tailOffset: (await log.head(path))?.nextOffset ?? '-1' })),
-		);
 		const stub = await agentStub(source, agent, id);
-		const request = {
-			subscriptionId: body.subscription ?? 'qual-manual',
-			generation: Date.now(),
-			streams,
-		};
-		return c.json({ request, result: await stub.__flueWake(request) });
+		const rung = [];
+		for (const stream of paths) {
+			const head = (await log.head(stream))?.nextOffset;
+			if (head === undefined) continue;
+			rung.push({ stream, head, result: await stub.__flueWake({ stream, head }) });
+		}
+		return c.json({ rung });
 	});
 
 	// Read-only: GET/HEAD a URL through the FLUE_STREAMS binding (what host a
