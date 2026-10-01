@@ -15,7 +15,11 @@ import {
 	fauxToolCall,
 	type Message,
 } from '@earendil-works/pi-ai';
-import { type ConversationId, type EntryRecord, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+import {
+	type ConversationId,
+	type EntryRecord,
+	ROOT_CONVERSATION_ID,
+} from '@earendil-works/pi-durable';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { encodeBase64 } from '../base64.ts';
 import type { FenceReason } from '../pi/commit-outbox.ts';
@@ -48,7 +52,11 @@ export function lastMessage(messages: readonly Message[]): Message | undefined {
 	return messages.findLast((message) => message.role !== 'system');
 }
 
-export const toolCall = (name: string, args: Record<string, unknown>, id?: string): AssistantMessage =>
+export const toolCall = (
+	name: string,
+	args: Record<string, unknown>,
+	id?: string,
+): AssistantMessage =>
 	fauxAssistantMessage([fauxToolCall(name, args as never, id === undefined ? undefined : { id })], {
 		stopReason: 'toolUse',
 	});
@@ -264,7 +272,10 @@ export class WebhookSigner {
 	}
 
 	static async create(): Promise<WebhookSigner> {
-		const pair = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+		const pair = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, [
+			'sign',
+			'verify',
+		])) as CryptoKeyPair;
 		const exported = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
 		const x = exported.x as string;
 		const thumbprint = await crypto.subtle.digest(
@@ -272,7 +283,14 @@ export class WebhookSigner {
 			new TextEncoder().encode(JSON.stringify({ crv: 'Ed25519', kty: 'OKP', x })),
 		);
 		return new WebhookSigner(
-			{ kty: 'OKP', crv: 'Ed25519', x, kid: `ds_${base64Url(new Uint8Array(thumbprint))}`, use: 'sig', alg: 'EdDSA' },
+			{
+				kty: 'OKP',
+				crv: 'Ed25519',
+				x,
+				kid: `ds_${base64Url(new Uint8Array(thumbprint))}`,
+				use: 'sig',
+				alg: 'EdDSA',
+			},
 			pair.privateKey,
 		);
 	}
@@ -290,7 +308,10 @@ export class WebhookSigner {
 	async request(url: string, body: string, nowMs: number): Promise<Request> {
 		return new Request(url, {
 			method: 'POST',
-			headers: { 'content-type': 'application/json', 'webhook-signature': await this.sign(body, nowMs) },
+			headers: {
+				'content-type': 'application/json',
+				'webhook-signature': await this.sign(body, nowMs),
+			},
 			body,
 		});
 	}
@@ -362,14 +383,18 @@ export function agentsServerWakeBody(input: {
 /** Wait until `predicate` holds, polling (real-server tests). */
 export async function eventually<T>(
 	probe: () => Promise<T | undefined> | T | undefined,
-	options: { readonly timeoutMs?: number; readonly intervalMs?: number; readonly what?: string } = {},
+	options: {
+		readonly timeoutMs?: number;
+		readonly intervalMs?: number;
+		readonly what?: string;
+	} = {},
 ): Promise<T> {
 	const deadline = Date.now() + (options.timeoutMs ?? 20_000);
 	while (true) {
 		const value = await probe();
 		if (value !== undefined && (value as unknown) !== false) return value;
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${options.what ?? 'a condition'}`);
+		if (Date.now() > deadline)
+			throw new Error(`timed out waiting for ${options.what ?? 'a condition'}`);
 		await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 25));
 	}
 }
-

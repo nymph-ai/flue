@@ -106,18 +106,29 @@ export async function handleEntityWake(
 			const observation = await runtime.observations.read(key, context);
 			if (!observation?.wake) continue;
 			const batch = await runtime.observation.poll(key, {}, context);
-			if (processedThrough === undefined || compareOffsets(batch.nextOffset, processedThrough) < 0) {
+			if (
+				processedThrough === undefined ||
+				compareOffsets(batch.nextOffset, processedThrough) < 0
+			) {
 				processedThrough = batch.nextOffset;
 			}
 		}
 		// Nothing here observes it (any more): there is nothing to do, so the wake's tail is handled.
 		const through = processedThrough ?? stream.tailOffset ?? '-1';
-		results.push({ path: stream.path, processedThrough: through, done: reached(through, stream.tailOffset) });
+		results.push({
+			path: stream.path,
+			processedThrough: through,
+			done: reached(through, stream.tailOffset),
+		});
 	}
 
 	await runtime.host.wake(
 		request.streams[0]
-			? { kind: 'inbox', stream: request.streams[0].path, tailOffset: request.streams[0].tailOffset ?? '-1' }
+			? {
+					kind: 'inbox',
+					stream: request.streams[0].path,
+					tailOffset: request.streams[0].tailOffset ?? '-1',
+				}
 			: { kind: 'dispatch' },
 		context,
 	);

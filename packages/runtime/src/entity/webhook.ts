@@ -85,7 +85,12 @@ export type WebhookVerification =
 	| { readonly ok: true; readonly timestamp: number; readonly kid: string }
 	| {
 			readonly ok: false;
-			readonly reason: 'missing-signature' | 'malformed-signature' | 'stale-timestamp' | 'unknown-key' | 'bad-signature';
+			readonly reason:
+				| 'missing-signature'
+				| 'malformed-signature'
+				| 'stale-timestamp'
+				| 'unknown-key'
+				| 'bad-signature';
 	  };
 
 export interface DurableStreamsWebhookStream {
@@ -372,7 +377,9 @@ export async function receiveWebhook(
 		header: request.headers.get('webhook-signature'),
 		keys: options.keys,
 		...(options.now ? { now: options.now } : {}),
-		...(options.toleranceSeconds === undefined ? {} : { toleranceSeconds: options.toleranceSeconds }),
+		...(options.toleranceSeconds === undefined
+			? {}
+			: { toleranceSeconds: options.toleranceSeconds }),
 	});
 	if (!verification.ok) return { ok: false, status: 401, reason: verification.reason };
 	try {
@@ -509,7 +516,10 @@ function agentsServerNotice(record: Record<string, unknown>): WakeNotice | undef
 		wakeId: requireString(record, 'wakeId'),
 		generation: parseGeneration(record.epoch ?? record.generation, 'epoch'),
 		streams,
-		callback: { url: requireString(record, 'callback'), token: requireString(record, 'claimToken') },
+		callback: {
+			url: requireString(record, 'callback'),
+			token: requireString(record, 'claimToken'),
+		},
 	};
 }
 
@@ -558,13 +568,19 @@ export async function receiveWakeNotice(
 		header: request.headers.get('webhook-signature'),
 		keys: options.keys,
 		...(options.now ? { now: options.now } : {}),
-		...(options.toleranceSeconds === undefined ? {} : { toleranceSeconds: options.toleranceSeconds }),
+		...(options.toleranceSeconds === undefined
+			? {}
+			: { toleranceSeconds: options.toleranceSeconds }),
 	});
 	if (!verification.ok) return { ok: false, status: 401, reason: verification.reason };
 	try {
 		return { ok: true, notice: parseWakeNotice(new TextDecoder().decode(body)) };
 	} catch (error) {
-		return { ok: false, status: 400, reason: error instanceof Error ? error.message : String(error) };
+		return {
+			ok: false,
+			status: 400,
+			reason: error instanceof Error ? error.message : String(error),
+		};
 	}
 }
 
@@ -601,10 +617,16 @@ export async function acknowledgeWakeNotice(
 	const fetchImpl = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
 	const response = await fetchImpl(notice.callback.url, {
 		method: 'POST',
-		headers: { authorization: `Bearer ${notice.callback.token}`, 'content-type': 'application/json' },
+		headers: {
+			authorization: `Bearer ${notice.callback.token}`,
+			'content-type': 'application/json',
+		},
 		body: JSON.stringify({
 			generation: notice.generation,
-			acks: input.acks.map((ack) => ({ stream: stripLeadingSlash(ack.stream), offset: ack.offset })),
+			acks: input.acks.map((ack) => ({
+				stream: stripLeadingSlash(ack.stream),
+				offset: ack.offset,
+			})),
 			// A wake id without `done: true` is a claim to the agents-server, which it does not forward.
 			...(input.done === true ? { done: true, wake_id: notice.wakeId } : {}),
 		}),
@@ -624,5 +646,8 @@ export async function acknowledgeWakeNotice(
 			`[flue] agents-server wake callback failed with ${response.status}${typeof code === 'string' ? ` (${code})` : ''}.`,
 		);
 	}
-	return { status: 'ok', nextWake: (body as { next_wake?: unknown } | undefined)?.next_wake === true };
+	return {
+		status: 'ok',
+		nextWake: (body as { next_wake?: unknown } | undefined)?.next_wake === true,
+	};
 }

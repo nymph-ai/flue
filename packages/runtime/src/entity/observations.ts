@@ -58,13 +58,16 @@ export class ObservationBook {
 		context: Context,
 	): Promise<{ readonly key: string; readonly offset: string; readonly path: string }> {
 		const { key } = options;
-		if (typeof key !== 'string' || key.length === 0) throw new TypeError('[flue] An observation needs a key.');
+		if (typeof key !== 'string' || key.length === 0)
+			throw new TypeError('[flue] An observation needs a key.');
 		if (options.from !== undefined && !isResumeOffset(options.from)) {
 			throw new TypeError(`[flue] "${options.from}" is not a resume offset.`);
 		}
 		const path = sourcePath(source);
 		const sourceState: ObservationSourceState =
-			'entity' in source ? { path, entity: { type: source.entity.type, id: source.entity.id } } : { path };
+			'entity' in source
+				? { path, entity: { type: source.entity.type, id: source.entity.id } }
+				: { path };
 		const now = this.#options.now();
 		const offset = await this.#options.host.harness.commit(async (tx) => {
 			const observation = await tx.doc(FlueObservations, key, null);
@@ -90,7 +93,9 @@ export class ObservationBook {
 	async read(
 		key: string,
 		context: Context,
-	): Promise<{ readonly path: string; readonly offset: string; readonly wake: boolean } | undefined> {
+	): Promise<
+		{ readonly path: string; readonly offset: string; readonly wake: boolean } | undefined
+	> {
 		const state = await this.#options.host.harness.snapshot(FlueObservations, key, context);
 		const source = state?.source as ObservationSourceState | null | undefined;
 		if (!state || !source) return undefined;
@@ -117,7 +122,11 @@ export class ObservationBook {
 	}
 
 	/** Record what lies past the cursor, then advance it. */
-	async poll(key: string, options: { readonly limit?: number }, context: Context): Promise<ObservedBatch> {
+	async poll(
+		key: string,
+		options: { readonly limit?: number },
+		context: Context,
+	): Promise<ObservedBatch> {
 		const { host, log, now } = this.#options;
 		const observation = await this.read(key, context);
 		if (!observation) throw new TypeError(`[flue] Unknown observation "${key}".`);
@@ -171,7 +180,9 @@ export class ObservationBook {
 	async unobserve(
 		key: string,
 		context: Context,
-	): Promise<{ readonly path: string; readonly wake: boolean; readonly stillObserved: boolean } | undefined> {
+	): Promise<
+		{ readonly path: string; readonly wake: boolean; readonly stillObserved: boolean } | undefined
+	> {
 		const observation = await this.read(key, context);
 		if (!observation) return undefined;
 		await this.#options.host.harness.commit(async (tx) => {

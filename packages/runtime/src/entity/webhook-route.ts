@@ -21,7 +21,13 @@
  *    server redelivers the wake; every step is idempotent.
  */
 import { Hono } from 'hono';
-import { entityKey, entityOfInboxPath, entityOfObserveSubscription, logPathFromWire, wirePath } from './paths.ts';
+import {
+	entityKey,
+	entityOfInboxPath,
+	entityOfObserveSubscription,
+	logPathFromWire,
+	wirePath,
+} from './paths.ts';
 import type { EntityRef } from './services.ts';
 import type { EntityWakeRequest, EntityWakeResult, EntityWakeStream } from './wake-handler.ts';
 import {
@@ -90,7 +96,9 @@ export function createEntityWakeRoute(options: EntityWakeRouteOptions): Hono {
 		const received = await receiveWakeNotice(c.req.raw, {
 			keys: options.keys,
 			...(options.now ? { now: options.now } : {}),
-			...(options.toleranceSeconds === undefined ? {} : { toleranceSeconds: options.toleranceSeconds }),
+			...(options.toleranceSeconds === undefined
+				? {}
+				: { toleranceSeconds: options.toleranceSeconds }),
 		});
 		if (!received.ok) return c.json({ error: received.reason }, received.status);
 		const { notice } = received;
@@ -110,7 +118,9 @@ export function createEntityWakeRoute(options: EntityWakeRouteOptions): Hono {
 			for (const failure of failed) report((failure as PromiseRejectedResult).reason);
 			return c.json({ error: 'entity wake failed; redeliver' }, 503);
 		}
-		const results = settled.map((result) => (result as PromiseFulfilledResult<EntityWakeResult>).value);
+		const results = settled.map(
+			(result) => (result as PromiseFulfilledResult<EntityWakeResult>).value,
+		);
 		const entities = targets.map((target) => entityKey(target.entity));
 		if (results.some((result) => result.stale)) {
 			const outcome: EntityWakeRouteOutcome = { entities, acked: 'stale' };

@@ -119,7 +119,10 @@ export class InboxConsumer {
 	}
 
 	/** Admit one message; the submission id, `undefined` for a directive without one, or `skipped`. */
-	async #handle(message: A2aInboxMessage, context: Context): Promise<string | undefined | 'skipped'> {
+	async #handle(
+		message: A2aInboxMessage,
+		context: Context,
+	): Promise<string | undefined | 'skipped'> {
 		const { host, entity, schedules, now, onReport } = this.#options;
 		const directive = message.directive;
 		let body: ReturnType<typeof parseEntityMessage> | undefined;
@@ -163,7 +166,9 @@ export class InboxConsumer {
 						? {
 								uid: null,
 								birthUid: directive.uid,
-								...(directive.initialData === undefined ? {} : { initialData: directive.initialData }),
+								...(directive.initialData === undefined
+									? {}
+									: { initialData: directive.initialData }),
 							}
 						: {}),
 				},

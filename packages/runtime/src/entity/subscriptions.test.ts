@@ -15,7 +15,8 @@ import { createEntitySubscriptions, EntitySubscriptionsError } from './subscript
  */
 function fakeSubscriptionApi() {
 	const subscriptions = new Map<string, { config: string; streams: Set<string> }>();
-	const requests: { method: string; url: string; body?: unknown; authorization?: string | null }[] = [];
+	const requests: { method: string; url: string; body?: unknown; authorization?: string | null }[] =
+		[];
 	const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
 		const request = new Request(input, init);
 		const text = await request.text();
@@ -42,7 +43,11 @@ function fakeSubscriptionApi() {
 					id,
 					webhook: {
 						url: `https://agents.test/_electric/subscription-webhooks/${id}`,
-						signing: { alg: 'ed25519', kid: 'ds_k', jwks_url: 'https://agents.test/__ds/jwks.json' },
+						signing: {
+							alg: 'ed25519',
+							kid: 'ds_k',
+							jwks_url: 'https://agents.test/__ds/jwks.json',
+						},
 					},
 				},
 				{ status: existing ? 200 : 201 },
@@ -52,7 +57,8 @@ function fakeSubscriptionApi() {
 			subscriptions.delete(id);
 			return new Response(null, { status: 204 });
 		}
-		if (!existing) return Response.json({ error: { code: 'SUBSCRIPTION_NOT_FOUND' } }, { status: 404 });
+		if (!existing)
+			return Response.json({ error: { code: 'SUBSCRIPTION_NOT_FOUND' } }, { status: 404 });
 		if (request.method === 'POST' && match[2] === '/streams') {
 			for (const stream of (body?.streams as string[]) ?? []) existing.streams.add(stream);
 			return new Response(null, { status: 204 });
@@ -118,7 +124,11 @@ describe('createEntitySubscriptions', () => {
 
 	it('refuses a conflicting configuration unless asked to replace it', async () => {
 		const api = fakeSubscriptionApi();
-		await createEntitySubscriptions({ root: 'https://agents.test', webhookUrl, fetch: api.fetch }).ensureInbox();
+		await createEntitySubscriptions({
+			root: 'https://agents.test',
+			webhookUrl,
+			fetch: api.fetch,
+		}).ensureInbox();
 		const moved = createEntitySubscriptions({
 			root: 'https://agents.test',
 			webhookUrl: 'https://other.workers.dev/__flue/streams/wake',
@@ -136,12 +146,18 @@ describe('createEntitySubscriptions', () => {
 
 	it('adds and removes observed streams on the observer subscription', async () => {
 		const api = fakeSubscriptionApi();
-		const subscriptions = createEntitySubscriptions({ root: 'https://agents.test', webhookUrl, fetch: api.fetch });
+		const subscriptions = createEntitySubscriptions({
+			root: 'https://agents.test',
+			webhookUrl,
+			fetch: api.fetch,
+		});
 		const alice = { type: 'agent', id: 'alice' };
 		await subscriptions.observe(alice, ['world/hn/items', 'flue/v1/agent/bob/events']);
 		await subscriptions.observe(alice, ['world/hn/items']);
 		const id = observeSubscriptionId(alice);
-		expect(api.subscriptions.get(id)?.streams).toEqual(new Set(['world/hn/items', 'flue/v1/agent/bob/events']));
+		expect(api.subscriptions.get(id)?.streams).toEqual(
+			new Set(['world/hn/items', 'flue/v1/agent/bob/events']),
+		);
 		expect(JSON.parse(api.subscriptions.get(id)?.config ?? '{}')).toMatchObject({
 			type: 'webhook',
 			pattern: 'flue/v1/agent/alice/wake',

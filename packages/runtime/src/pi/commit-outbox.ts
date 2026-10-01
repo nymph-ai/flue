@@ -41,7 +41,11 @@
  * treated exactly like `fenced`.
  */
 
-import { DurableStreamLogError, type AppendOutcome, type DurableStreamLog } from '../streams/log.ts';
+import {
+	DurableStreamLogError,
+	type AppendOutcome,
+	type DurableStreamLog,
+} from '../streams/log.ts';
 import { STREAM_START, asStreamOffset, type StreamOffset } from '../streams/offset.ts';
 import { type EntityAddress, relayItemsFor } from './a2a-entries.ts';
 import {
@@ -161,10 +165,17 @@ type ProducerRow = {
 	readonly published_offset: string | null;
 	readonly storage_incarnation: string;
 };
-type RowShape = { readonly seq: number | bigint; readonly body: string; readonly producer_seq: number | bigint };
+type RowShape = {
+	readonly seq: number | bigint;
+	readonly body: string;
+	readonly producer_seq: number | bigint;
+};
 type CountRow = { readonly n: number | bigint };
 type OffsetRow = { readonly next_offset: string };
-type RelayProducerRow = { readonly epoch: number | bigint; readonly next_producer_seq: number | bigint };
+type RelayProducerRow = {
+	readonly epoch: number | bigint;
+	readonly next_producer_seq: number | bigint;
+};
 
 const DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024;
 
@@ -238,7 +249,9 @@ export class SqliteCommitOutbox implements CommitOutbox {
 		const only = row[0];
 		if (!only) return undefined;
 		if (row.length > 1 || only.path !== this.path) {
-			throw new Error(`[flue] This database's Pi outbox belongs to "${only.path}", not "${this.path}".`);
+			throw new Error(
+				`[flue] This database's Pi outbox belongs to "${only.path}", not "${this.path}".`,
+			);
 		}
 		return {
 			path: only.path,
@@ -246,7 +259,8 @@ export class SqliteCommitOutbox implements CommitOutbox {
 			epoch: Number(only.epoch),
 			nextProducerSeq: Number(only.next_producer_seq),
 			publishedSeq: Number(only.published_seq),
-			publishedOffset: only.published_offset === null ? undefined : asStreamOffset(only.published_offset),
+			publishedOffset:
+				only.published_offset === null ? undefined : asStreamOffset(only.published_offset),
 			incarnation: only.storage_incarnation,
 		};
 	}
@@ -284,7 +298,9 @@ export class SqliteCommitOutbox implements CommitOutbox {
 			throw new Error('[flue] Envelope epoch/incarnation does not match the outbox producer.');
 		}
 		this.db
-			.prepare('INSERT INTO flue_pi_outbox (seq, body, producer_seq, created_at) VALUES (?, ?, ?, ?)')
+			.prepare(
+				'INSERT INTO flue_pi_outbox (seq, body, producer_seq, created_at) VALUES (?, ?, ?, ?)',
+			)
 			.run(envelope.seq, encodeCommitEnvelope(envelope), producer.nextProducerSeq, envelope.at);
 		this.db
 			.prepare('UPDATE flue_pi_producer SET next_producer_seq = ? WHERE path = ?')
@@ -313,7 +329,14 @@ export class SqliteCommitOutbox implements CommitOutbox {
 					`INSERT INTO flue_relay_outbox (seq, target, body, producer_id, producer_epoch, producer_seq)
 					VALUES (?, ?, ?, ?, ?, ?)`,
 				)
-				.run(envelope.seq, item.target, JSON.stringify(item.body), item.producerId, producer.epoch, producerSeq);
+				.run(
+					envelope.seq,
+					item.target,
+					JSON.stringify(item.body),
+					item.producerId,
+					producer.epoch,
+					producerSeq,
+				);
 		}
 	}
 
@@ -382,7 +405,9 @@ export class SqliteCommitOutbox implements CommitOutbox {
 	 */
 	startEpochSync(epoch: number): void {
 		const rows = this.pendingRows();
-		const update = this.db.prepare('UPDATE flue_pi_outbox SET body = ?, producer_seq = ? WHERE seq = ?');
+		const update = this.db.prepare(
+			'UPDATE flue_pi_outbox SET body = ?, producer_seq = ? WHERE seq = ?',
+		);
 		rows.forEach((row, index) => {
 			const envelope = decodeCommitEnvelope(row.body);
 			update.run(encodeCommitEnvelope({ ...envelope, epoch }), index, row.seq);
@@ -393,7 +418,11 @@ export class SqliteCommitOutbox implements CommitOutbox {
 	}
 
 	/** Record what a rebuild replayed. Call inside a transaction. */
-	recordReplaySync(publishedSeq: number, publishedOffset: StreamOffset, offsets: ReadonlyMap<number, string>): void {
+	recordReplaySync(
+		publishedSeq: number,
+		publishedOffset: StreamOffset,
+		offsets: ReadonlyMap<number, string>,
+	): void {
 		this.db.exec('DELETE FROM flue_pi_offsets');
 		const insert = this.db.prepare('INSERT INTO flue_pi_offsets (seq, next_offset) VALUES (?, ?)');
 		for (const [seq, offset] of offsets) insert.run(seq, offset);
@@ -454,7 +483,8 @@ export class SqliteCommitOutbox implements CommitOutbox {
 		const signal = external ? AbortSignal.any([external, this.abort.signal]) : this.abort.signal;
 		let published = false;
 		while (true) {
-			if (this.fence) return { status: 'fenced', currentEpoch: this.fence.epoch, reason: this.fence.reason };
+			if (this.fence)
+				return { status: 'fenced', currentEpoch: this.fence.epoch, reason: this.fence.reason };
 			if (this.closed || signal.aborted) return { status: 'closed' };
 			const head = this.db
 				.prepare('SELECT seq, body, producer_seq FROM flue_pi_outbox ORDER BY seq LIMIT 1')
@@ -542,7 +572,9 @@ export class SqliteCommitOutbox implements CommitOutbox {
 						.prepare('UPDATE flue_pi_outbox SET producer_seq = producer_seq - 1 WHERE seq > ?')
 						.run(row.seq);
 					this.db
-						.prepare('UPDATE flue_pi_producer SET next_producer_seq = next_producer_seq - 1 WHERE path = ?')
+						.prepare(
+							'UPDATE flue_pi_producer SET next_producer_seq = next_producer_seq - 1 WHERE path = ?',
+						)
 						.run(this.path);
 					this.markPublished(row.seq, outcome.nextOffset);
 				});
@@ -552,7 +584,9 @@ export class SqliteCommitOutbox implements CommitOutbox {
 			case 'producer-gap': {
 				if (outcome.expectedSeq > row.producerSeq) {
 					// Our sends up to expectedSeq - 1 landed; their acks were lost.
-					const landed = this.pendingRows().filter((pending) => pending.producerSeq < outcome.expectedSeq);
+					const landed = this.pendingRows().filter(
+						(pending) => pending.producerSeq < outcome.expectedSeq,
+					);
 					const verdict = await this.verifyLogged(landed, signal);
 					if (verdict !== true) return verdict;
 					await this.db.transactionUnarmed(() => {
@@ -584,7 +618,10 @@ export class SqliteCommitOutbox implements CommitOutbox {
 	 * `true` when the log holds exactly these rows' commits at their seqs;
 	 * otherwise the fence (divergence) or a backoff (the log could not be read).
 	 */
-	private async verifyLogged(rows: readonly OutboxRow[], signal: AbortSignal): Promise<true | DrainResult> {
+	private async verifyLogged(
+		rows: readonly OutboxRow[],
+		signal: AbortSignal,
+	): Promise<true | DrainResult> {
 		if (rows.length === 0) return true;
 		const wanted = new Map(rows.map((row) => [row.seq, decodeCommitEnvelope(row.body)]));
 		const first = rows[0] as OutboxRow;

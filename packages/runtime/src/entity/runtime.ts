@@ -69,7 +69,15 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 	const { host, entity, log } = options;
 	const schedules = new ScheduleBook({ host, now, armWake: options.armWake, onReport });
 	const observations = new ObservationBook({ host, log, now });
-	const inbox = new InboxConsumer({ host, entity, log, cursors: options.cursors, schedules, now, onReport });
+	const inbox = new InboxConsumer({
+		host,
+		entity,
+		log,
+		cursors: options.cursors,
+		schedules,
+		now,
+		onReport,
+	});
 	const cursorSink: { refresh?: (context: Context) => Promise<void> } = {};
 	const facets = await createFacetHost({
 		facets: [

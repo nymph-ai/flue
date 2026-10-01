@@ -8,7 +8,12 @@
  * them into Pi tools.
  */
 
-import { type Context, defineService, type JsonValue, type ReplicatedState } from '@earendil-works/chord';
+import {
+	type Context,
+	defineService,
+	type JsonValue,
+	type ReplicatedState,
+} from '@earendil-works/chord';
 
 /** A Flue agent instance: agent name + instance id (the Durable Object `idFromName`). */
 export type EntityRef = { readonly type: string; readonly id: string };
@@ -38,7 +43,9 @@ export type ObservedBatch = {
 	readonly upToDate: boolean;
 };
 
-export type ObservationCursors = { readonly [key: string]: { readonly offset: string; readonly updatedAt: number } };
+export type ObservationCursors = {
+	readonly [key: string]: { readonly offset: string; readonly updatedAt: number };
+};
 
 export interface EntityMessagingService {
 	/**
@@ -88,7 +95,11 @@ export interface EntityLifecycleService {
 	 */
 	spawn(
 		type: string,
-		args: { readonly key: string; readonly initialData?: JsonValue; readonly message?: EntityMessage },
+		args: {
+			readonly key: string;
+			readonly initialData?: JsonValue;
+			readonly message?: EntityMessage;
+		},
 		context: Context,
 	): Promise<EntityRef & { readonly uid: string }>;
 	/**

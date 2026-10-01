@@ -38,7 +38,13 @@ import {
 } from './a2a-test-support.ts';
 import { spawnedUid } from './facet.ts';
 import { relayedScheduleKey } from './inbox.ts';
-import { entityKey, inboxPath, INBOX_SUBSCRIPTION_ID, observeSubscriptionId, wirePath } from './paths.ts';
+import {
+	entityKey,
+	inboxPath,
+	INBOX_SUBSCRIPTION_ID,
+	observeSubscriptionId,
+	wirePath,
+} from './paths.ts';
 import { scheduleSubmissionId } from './schedules.ts';
 import type { EntityRef } from './services.ts';
 import { ENTITY_TOOL_NAMES } from './tool-names.ts';
@@ -61,7 +67,8 @@ function aliceResponder(messages: readonly Message[]) {
 function bobResponder(messages: readonly Message[]) {
 	const last = lastMessage(messages);
 	if (last?.role === 'toolResult') return answer('Replied to Alice.');
-	if (textOf(last).includes('ping')) return toolCall('send_message', { target: ALICE, text: 'pong' });
+	if (textOf(last).includes('ping'))
+		return toolCall('send_message', { target: ALICE, text: 'pong' });
 	return answer('ok');
 }
 
@@ -85,7 +92,9 @@ interface Harness {
 
 const worlds: TestWorld[] = [];
 
-async function setup(log: InMemoryDurableStreamLog = new InMemoryDurableStreamLog()): Promise<Harness> {
+async function setup(
+	log: InMemoryDurableStreamLog = new InMemoryDurableStreamLog(),
+): Promise<Harness> {
 	const world = new TestWorld(log);
 	worlds.push(world);
 	const signer = await WebhookSigner.create();
@@ -138,7 +147,9 @@ describe('A2A entities (#3752 acceptance)', () => {
 
 		// The entity tools are offered like any other tool.
 		const root = await alice.requireHost().harness.conversation(ROOT_CONVERSATION_ID, context);
-		expect(await root?.getActiveTools(context)).toEqual(expect.arrayContaining([...ENTITY_TOOL_NAMES]));
+		expect(await root?.getActiveTools(context)).toEqual(
+			expect.arrayContaining([...ENTITY_TOOL_NAMES]),
+		);
 
 		// 1. Alice sends Bob a durable message; Bob has never been opened.
 		await alice.requireHost().admit(
@@ -151,7 +162,9 @@ describe('A2A entities (#3752 acceptance)', () => {
 			},
 			context,
 		);
-		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe('completed');
+		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
+			'completed',
+		);
 		await alice.flush();
 		expect(bob.isOpen).toBe(false);
 		const bobInbox = await readAll(log, inboxPath(BOB));
@@ -173,12 +186,17 @@ describe('A2A entities (#3752 acceptance)', () => {
 				streams: [{ path: inboxPath(BOB), tailOffset: await tail(log, inboxPath(BOB)) }],
 			}),
 		);
-		expect(wakeBob).toEqual({ status: 200, json: { done: true, entities: ['agent/bob'], acked: 'done-reply' } });
+		expect(wakeBob).toEqual({
+			status: 200,
+			json: { done: true, entities: ['agent/bob'], acked: 'done-reply' },
+		});
 
 		// 3. Bob reconstructed, ran Pi on the message, and replied with send_message.
 		expect(bob.isOpen).toBe(true);
 		const bobSubmission = await deriveKeyedSubmissionId(BOB.type, BOB.id, ping.messageId);
-		expect((await bob.requireHost().waitForSettlement(bobSubmission, context)).outcome).toBe('completed');
+		expect((await bob.requireHost().waitForSettlement(bobSubmission, context)).outcome).toBe(
+			'completed',
+		);
 		await bob.flush();
 		const aliceInbox = await readAll(log, inboxPath(ALICE));
 		expect(aliceInbox).toEqual([
@@ -199,7 +217,9 @@ describe('A2A entities (#3752 acceptance)', () => {
 		);
 		expect(wakeAlice.json).toMatchObject({ done: true, entities: ['agent/alice'] });
 		const aliceSubmission = await deriveKeyedSubmissionId(ALICE.type, ALICE.id, pong.messageId);
-		expect((await alice.requireHost().waitForSettlement(aliceSubmission, context)).outcome).toBe('completed');
+		expect((await alice.requireHost().waitForSettlement(aliceSubmission, context)).outcome).toBe(
+			'completed',
+		);
 		await alice.flush();
 		await bob.flush();
 
@@ -209,7 +229,9 @@ describe('A2A entities (#3752 acceptance)', () => {
 		);
 		expect(histories.alice.some((entry) => entry.kind === A2A_SEND_ENTRY_KIND)).toBe(true);
 		expect(histories.bob.some((entry) => entry.kind === A2A_SEND_ENTRY_KIND)).toBe(true);
-		expect(histories.bob.map((entry) => entry.text)).toEqual(expect.arrayContaining(['Replied to Alice.']));
+		expect(histories.bob.map((entry) => entry.text)).toEqual(
+			expect.arrayContaining(['Replied to Alice.']),
+		);
 		const calls = { alice: alice.calls, bob: bob.calls };
 
 		// 5. Eviction: everything in memory goes; the sqlite files and the log stay.
@@ -270,7 +292,11 @@ class RoutedFaultLog implements DurableStreamLog {
 
 	async append(
 		path: string,
-		input: { readonly messages: readonly unknown[]; readonly producer: ProducerClaim; readonly streamSeq?: string },
+		input: {
+			readonly messages: readonly unknown[];
+			readonly producer: ProducerClaim;
+			readonly streamSeq?: string;
+		},
 		signal?: AbortSignal,
 	): Promise<AppendOutcome> {
 		if (this.blocked.has(path)) {
@@ -289,7 +315,11 @@ class RoutedFaultLog implements DurableStreamLog {
 	read(
 		path: string,
 		from: StreamOffset,
-		options?: { readonly live?: false | 'long-poll' | 'sse'; readonly cursor?: string; readonly signal?: AbortSignal },
+		options?: {
+			readonly live?: false | 'long-poll' | 'sse';
+			readonly cursor?: string;
+			readonly signal?: AbortSignal;
+		},
 	): Promise<ReadBatch> {
 		return this.inner.read(path, from, options);
 	}
@@ -304,10 +334,21 @@ let entryId = 1000;
 async function openAlice(file: string, log: DurableStreamLog) {
 	// `await`: a commit returns once its envelope is published and its relay rows were tried,
 	// so each injected fault is consumed by the commit that caused it.
-	return openStreamStorage({ file, log, entity: ALICE, relay: true, publish: 'await', publishTimeoutMs: 100 });
+	return openStreamStorage({
+		file,
+		log,
+		entity: ALICE,
+		relay: true,
+		publish: 'await',
+		publishTimeoutMs: 100,
+	});
 }
 
-async function commitSend(storage: StreamStorage, messageId: string, target: EntityRef = BOB): Promise<number> {
+async function commitSend(
+	storage: StreamStorage,
+	messageId: string,
+	target: EntityRef = BOB,
+): Promise<number> {
 	return storage.commit(
 		[
 			{
@@ -325,7 +366,9 @@ async function commitSend(storage: StreamStorage, messageId: string, target: Ent
 }
 
 async function inboxIds(log: DurableStreamLog, entity: EntityRef = BOB): Promise<string[]> {
-	return (await readAll(log, inboxPath(entity))).map((message) => (message as { messageId: string }).messageId);
+	return (await readAll(log, inboxPath(entity))).map(
+		(message) => (message as { messageId: string }).messageId,
+	);
 }
 
 describe('relay drainer', () => {
@@ -378,7 +421,11 @@ describe('relay drainer', () => {
 		await second.storage.drain();
 		expect(second.storage.relay.pending()).toBe(0);
 		expect(recording.appends.filter((append) => append.path === inboxPath(BOB))).toEqual([
-			{ path: inboxPath(BOB), producer: { id: 'agent/alice->inbox', epoch: 0, seq: 0 }, outcome: 'duplicate' },
+			{
+				path: inboxPath(BOB),
+				producer: { id: 'agent/alice->inbox', epoch: 0, seq: 0 },
+				outcome: 'duplicate',
+			},
 		]);
 		expect(second.storage.relay.pending()).toBe(0);
 		await commitSend(second.storage, 'm-2');
@@ -447,11 +494,17 @@ describe('relay drainer', () => {
 	it('relay-epoch gap: without the publish gate, a fresh rebuild loses the next message as a duplicate', async () => {
 		// m-2 reached Bob although Alice's history never held it, and m-3 —
 		// sent under the same (epoch 1, seq 0) claim — is dropped as a duplicate.
-		expect(await epochGapScenario({ ungatedPost: true })).toEqual({ inbox: ['m-1', 'm-2'], outcome: 'duplicate' });
+		expect(await epochGapScenario({ ungatedPost: true })).toEqual({
+			inbox: ['m-1', 'm-2'],
+			outcome: 'duplicate',
+		});
 	});
 
 	it('relay-epoch gap: the publish gate keeps every relay epoch on the log, so the rebuild loses nothing', async () => {
-		expect(await epochGapScenario({ ungatedPost: false })).toEqual({ inbox: ['m-1', 'm-3'], outcome: 'appended' });
+		expect(await epochGapScenario({ ungatedPost: false })).toEqual({
+			inbox: ['m-1', 'm-3'],
+			outcome: 'appended',
+		});
 	});
 });
 
@@ -489,7 +542,9 @@ describe('webhook wakes', () => {
 			new Request(WAKE_URL, { method: 'POST', headers: signed.headers, body: `${body} ` }),
 		);
 		expect(forged.status).toBe(401);
-		const expired = await route.fetch(await h.signer.request(WAKE_URL, body, h.world.clock.now - 3_600_000));
+		const expired = await route.fetch(
+			await h.signer.request(WAKE_URL, body, h.world.clock.now - 3_600_000),
+		);
 		expect(expired.status).toBe(401);
 		expect(h.world.woken).toEqual([]);
 	});
@@ -504,7 +559,9 @@ describe('webhook wakes', () => {
 			streams: [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }],
 		});
 		expect((await h.deliver(body)).json).toMatchObject({ done: true });
-		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe('completed');
+		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
+			'completed',
+		);
 		const submissions = await bobSubmissions(bob);
 		const calls = bob.calls;
 
@@ -517,7 +574,11 @@ describe('webhook wakes', () => {
 		await bob.requireHost().harness.waitForIdle(context);
 		expect(await bobSubmissions(bob)).toBe(submissions);
 		expect(bob.calls).toBe(calls);
-		expect(h.world.woken.map((wake) => wake.entity)).toEqual(['agent/bob', 'agent/bob', 'agent/bob']);
+		expect(h.world.woken.map((wake) => wake.entity)).toEqual([
+			'agent/bob',
+			'agent/bob',
+			'agent/bob',
+		]);
 	});
 
 	it('a stale generation is processed idempotently but never acked', async () => {
@@ -525,13 +586,19 @@ describe('webhook wakes', () => {
 		await messageBob(h, 'm-1');
 		const streams = [{ path: inboxPath(BOB), tailOffset: await tail(h.log, inboxPath(BOB)) }];
 		expect(
-			(await h.deliver(durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 7, streams })))
-				.json,
+			(
+				await h.deliver(
+					durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 7, streams }),
+				)
+			).json,
 		).toMatchObject({ done: true });
 		const stale = await h.deliver(
 			durableStreamsWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 6, streams }),
 		);
-		expect(stale).toEqual({ status: 200, json: { ok: true, entities: ['agent/bob'], acked: 'stale' } });
+		expect(stale).toEqual({
+			status: 200,
+			json: { ok: true, entities: ['agent/bob'], acked: 'stale' },
+		});
 		const staleProxied = await h.deliver(
 			agentsServerWakeBody({ subscriptionId: INBOX_SUBSCRIPTION_ID, generation: 3, streams }),
 		);
@@ -554,7 +621,10 @@ describe('webhook wakes', () => {
 				],
 			}),
 		);
-		expect(proxied).toEqual({ status: 200, json: { ok: true, entities: ['agent/bob'], acked: 'callback' } });
+		expect(proxied).toEqual({
+			status: 200,
+			json: { ok: true, entities: ['agent/bob'], acked: 'callback' },
+		});
 		expect(h.callbacks).toEqual([
 			{
 				url: 'https://agents.test/_electric/wake-callbacks/w_11',
@@ -567,10 +637,13 @@ describe('webhook wakes', () => {
 				},
 			},
 		]);
-		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe('completed');
+		expect((await bob.requireHost().waitForSettlement(receipt.submissionId, context)).outcome).toBe(
+			'completed',
+		);
 
 		// A FENCED callback (a newer wake took over) is fine: the work is admitted.
-		h.callbackResponse = () => Response.json({ error: { code: 'FENCED', message: 'stale' } }, { status: 409 });
+		h.callbackResponse = () =>
+			Response.json({ error: { code: 'FENCED', message: 'stale' } }, { status: 409 });
 		const fenced = await h.deliver(
 			agentsServerWakeBody({
 				subscriptionId: INBOX_SUBSCRIPTION_ID,
@@ -615,16 +688,27 @@ describe('entity lifecycle', () => {
 		const runtime = await alice.open();
 		const child: EntityRef = { type: 'worker', id: 'alice/w1' };
 		const uid = await spawnedUid(child);
-		const first = await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context);
+		const first = await runtime.lifecycle.spawn(
+			'worker',
+			{ key: 'w1', initialData: { n: 1 } },
+			context,
+		);
 		expect(first).toEqual({ ...child, uid });
-		expect(await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context)).toEqual(first);
+		expect(
+			await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context),
+		).toEqual(first);
 		await alice.flush();
 		const inbox = await readAll(h.log, inboxPath(child));
 		expect(inbox).toEqual([
-			expect.objectContaining({ from: ALICE, directive: { kind: 'spawn', uid, initialData: { n: 1 } } }),
+			expect.objectContaining({
+				from: ALICE,
+				directive: { kind: 'spawn', uid, initialData: { n: 1 } },
+			}),
 		]);
 		// The child's streams exist before anything was sent to them.
-		expect(await h.log.head(`flue/v1/worker/${encodeURIComponent('alice/w1')}/events`)).not.toBeNull();
+		expect(
+			await h.log.head(`flue/v1/worker/${encodeURIComponent('alice/w1')}/events`),
+		).not.toBeNull();
 
 		const woken = await h.deliver(
 			durableStreamsWakeBody({
@@ -635,13 +719,21 @@ describe('entity lifecycle', () => {
 		);
 		expect(woken.json).toMatchObject({ done: true, entities: [entityKey(child)] });
 		const worker = h.world.entity(child);
-		const submissionId = await deriveKeyedSubmissionId(child.type, child.id, (inbox[0] as { messageId: string }).messageId);
-		expect((await worker.requireHost().waitForSettlement(submissionId, context)).outcome).toBe('completed');
+		const submissionId = await deriveKeyedSubmissionId(
+			child.type,
+			child.id,
+			(inbox[0] as { messageId: string }).messageId,
+		);
+		expect((await worker.requireHost().waitForSettlement(submissionId, context)).outcome).toBe(
+			'completed',
+		);
 		const instance = await worker.requireHost().harness.snapshot(FlueInstance, context);
 		expect(instance).toMatchObject({ uid, initialData: { value: { n: 1 } } });
 
 		// Spawning the same key again after birth sends nothing.
-		expect(await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context)).toEqual(first);
+		expect(
+			await runtime.lifecycle.spawn('worker', { key: 'w1', initialData: { n: 1 } }, context),
+		).toEqual(first);
 		await alice.flush();
 		expect(await readAll(h.log, inboxPath(child))).toHaveLength(1);
 	});
@@ -651,18 +743,29 @@ describe('entity lifecycle', () => {
 		const alice = h.world.entity(ALICE);
 		const runtime = await alice.open();
 		const at = h.world.clock.now + 60_000;
-		await runtime.lifecycle.schedule(ALICE, at, { text: 'remind me' }, { scheduleId: 'r1' }, context);
-		expect(alice.wakes).toContainEqual({ atMs: at, reason: { kind: 'schedule', scheduleId: 'r1' } });
+		await runtime.lifecycle.schedule(
+			ALICE,
+			at,
+			{ text: 'remind me' },
+			{ scheduleId: 'r1' },
+			context,
+		);
+		expect(alice.wakes).toContainEqual({
+			atMs: at,
+			reason: { kind: 'schedule', scheduleId: 'r1' },
+		});
 		await runtime.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
-		expect(await alice.requireHost().settlement(scheduleSubmissionId('r1'), context)).toBeUndefined();
+		expect(
+			await alice.requireHost().settlement(scheduleSubmissionId('r1'), context),
+		).toBeUndefined();
 
 		await alice.close();
 		h.world.clock.now = at + 1;
 		const reopened = await alice.open();
 		await reopened.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
-		expect((await alice.requireHost().waitForSettlement(scheduleSubmissionId('r1'), context)).outcome).toBe(
-			'completed',
-		);
+		expect(
+			(await alice.requireHost().waitForSettlement(scheduleSubmissionId('r1'), context)).outcome,
+		).toBe('completed');
 		const calls = alice.calls;
 		await reopened.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
 		await alice.close();
@@ -671,7 +774,7 @@ describe('entity lifecycle', () => {
 		expect(alice.calls).toBe(calls);
 	});
 
-	it("schedules another entity through its inbox; the target arms and fires its own copy", async () => {
+	it('schedules another entity through its inbox; the target arms and fires its own copy', async () => {
 		const h = await setup();
 		const alice = h.world.entity(ALICE);
 		const runtime = await alice.open();
@@ -692,9 +795,9 @@ describe('entity lifecycle', () => {
 		await bob.close();
 		h.world.clock.now = at;
 		await (await bob.open()).wake({ kind: 'schedule', scheduleId: key }, context);
-		expect((await bob.requireHost().waitForSettlement(scheduleSubmissionId(key), context)).outcome).toBe(
-			'completed',
-		);
+		expect(
+			(await bob.requireHost().waitForSettlement(scheduleSubmissionId(key), context)).outcome,
+		).toBe('completed');
 	});
 
 	it('observes an external world stream; its wakes reach only the subscribed entity', async () => {
@@ -708,10 +811,19 @@ describe('entity lifecycle', () => {
 		};
 		const world = 'world/hn/items';
 		await h.log.ensure(world);
-		const item = (n: number) => ({ type: 'society.observation', v: 1, source: 'rsshub', id: `hn-${n}`, title: `Story ${n}` });
+		const item = (n: number) => ({
+			type: 'society.observation',
+			v: 1,
+			source: 'rsshub',
+			id: `hn-${n}`,
+			title: `Story ${n}`,
+		});
 		let seq = 0;
 		const publish = async (n: number) => {
-			const outcome = await h.log.append(world, { messages: [item(n)], producer: { id: 'rsshub', epoch: 0, seq: seq++ } });
+			const outcome = await h.log.append(world, {
+				messages: [item(n)],
+				producer: { id: 'rsshub', epoch: 0, seq: seq++ },
+			});
 			expect(outcome.status).toBe('appended');
 		};
 		await publish(1);
@@ -721,7 +833,9 @@ describe('entity lifecycle', () => {
 		const bob = h.world.entity(BOB);
 		const runtime = await alice.open();
 		await bob.open();
-		expect(await runtime.observation.observe({ stream: world }, { key: 'hn', wake: true }, context)).toEqual({
+		expect(
+			await runtime.observation.observe({ stream: world }, { key: 'hn', wake: true }, context),
+		).toEqual({
 			key: 'hn',
 			offset: '-1',
 		});
@@ -735,9 +849,14 @@ describe('entity lifecycle', () => {
 					streams: [{ path: world, tailOffset }],
 				}),
 			);
-		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({ done: true, entities: ['agent/alice'] });
+		expect((await wake(1, await tail(h.log, world))).json).toMatchObject({
+			done: true,
+			entities: ['agent/alice'],
+		});
 		const observed = async (entity: TestEntity) =>
-			(await entity.entries()).filter((entry) => entry.kind === 'flue.observed').map((entry) => entry.data);
+			(await entity.entries())
+				.filter((entry) => entry.kind === 'flue.observed')
+				.map((entry) => entry.data);
 		// Write submissions are placed by the Pi inbox; wait for them.
 		const observedCount = (entity: TestEntity, count: number) =>
 			eventually(async () => ((await observed(entity)).length >= count ? true : undefined), {
@@ -756,11 +875,9 @@ describe('entity lifecycle', () => {
 		await publish(3);
 		expect((await wake(2, await tail(h.log, world))).json).toMatchObject({ done: true });
 		await observedCount(alice, 3);
-		expect((await observed(alice)).map((data) => (data as { item: { id: string } }).item.id)).toEqual([
-			'hn-1',
-			'hn-2',
-			'hn-3',
-		]);
+		expect(
+			(await observed(alice)).map((data) => (data as { item: { id: string } }).item.id),
+		).toEqual(['hn-1', 'hn-2', 'hn-3']);
 
 		// The same stream on the inbox subscription is nobody's inbox: it wakes no one.
 		const before = h.world.woken.length;
