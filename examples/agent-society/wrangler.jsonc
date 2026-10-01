@@ -8,8 +8,6 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
 	"observability": { "enabled": true },
-	// Workers AI, for SOCIETY_MODEL=workers-ai.
-	"ai": { "binding": "AI" },
 	// Electric Agents in k3s (namespace fabric-society), through Cloudflare
 	// Tunnel b5c8a1b2-99d5-4914-b64a-a7874383cb5e: FLUE_STREAMS is the binding
 	// every instance's inbox and events stream are reached through. Pi's own
@@ -42,11 +40,11 @@
 		"FLUE_STREAMS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437",
 		"FLUE_STREAMS_JWKS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437/__ds/jwks.json",
 		"FLUE_STREAMS_WEBHOOK_URL": "https://society.nymphai.workers.dev/__flue/streams/wake",
-		// scripted | workers-ai
+		// scripted | live
 		"SOCIETY_MODEL": "scripted",
-		"WORKERS_AI_MODEL": "@cf/moonshotai/kimi-k2.6",
-		// The sage always runs on Workers AI (not llama-3.3 until nymph-ai/nymphai#3866).
-		"SAGE_MODEL": "@cf/moonshotai/kimi-k2.6",
+		// The real model: Muse Spark 1.3 through OpenRouter, keyed by the
+		// OPENROUTER_API_KEY secret. The sage always runs on it.
+		"LIVE_MODEL": "openrouter/meta/muse-spark-1.3",
 		// The steward's questions expire after 30 minutes.
 		"QUESTION_TIMEOUT_MS": "1800000",
 		"SCRIPTED_TOKENS_PER_SECOND": "50",
