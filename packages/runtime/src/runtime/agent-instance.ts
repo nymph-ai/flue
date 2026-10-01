@@ -383,9 +383,13 @@ export class FlueAgentInstance {
 		);
 		host.registry.hooks.add(GenerationTask, telemetry.generationHooks(), { key: 'flue.telemetry' });
 		// The entity tools register before the first render picks active tools.
+		// The entity runtime admits on its own (inbox messages, spawns, fired
+		// schedules), so its host renders first, exactly as `admit()` does: an
+		// entity woken for the first time has never rendered, and Pi would run
+		// its turn with no model configured.
 		const entity = options.entities
 			? await createEntityRuntime({
-					host,
+					host: this.#renderingBeforeAdmission(host),
 					entity: { type: this.agentName, id: this.instanceId },
 					log: options.log,
 					cursors: () => storage.cursors,
@@ -417,6 +421,39 @@ export class FlueAgentInstance {
 	}
 
 	// ─── Rendering ──────────────────────────────────────────────────────────
+
+	/** `host`, whose `admit` first renders with the admitted message as the delivery cursor. */
+	#renderingBeforeAdmission(host: FluePiHost): FluePiHost {
+		const instance = this;
+		return new Proxy(host, {
+			get(target, property) {
+				if (property === 'admit') {
+					const admit: FluePiHost['admit'] = async (input, context) => {
+						await instance.#renderForAdmission(target, input);
+						return target.admit(input, context);
+					};
+					return admit;
+				}
+				const value = Reflect.get(target, property, target);
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+	}
+
+	/** What `admit()` does before `host.admit`: the delivery cursor, and creation data for a birth. */
+	async #renderForAdmission(
+		host: FluePiHost,
+		input: { readonly message: DeliveredMessage; readonly initialData?: unknown; readonly uid?: string | null },
+	): Promise<void> {
+		const context = BACKGROUND_CONTEXT;
+		this.#delivery = input.message;
+		const instance = await host.harness.snapshot(FlueInstance, context);
+		let override: { value: unknown } | undefined;
+		if (!instance?.uid && typeof input.uid !== 'string') {
+			override = { value: parseCreationData(this.#options.agent, input.initialData) };
+		}
+		await this.#render(host, override, context).catch((error) => this.#report(error));
+	}
 
 	/**
 	 * Render the agent function and publish it to the host. Serialized;
