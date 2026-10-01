@@ -165,8 +165,10 @@ function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
 async function crashAndRecoverNow(qw: QualWorld, fault: Fault, body: string) {
 	trace(`${qw.backend.name}: ${fault.kind} after ${fault.after} on ${fault.stream}, "${body}"`);
 	const alice = qw.world.entity(qw.ref('agent', 'alice'), societyResponder);
-	qw.arm(alice, fault);
 	await alice.open();
+	await alice.flush();
+	// Armed once the instance is open: the crash lands in the turn, not in the boot.
+	qw.arm(alice, fault);
 	const first = qw.incarnation(alice);
 	const submissionId = `sub_q${submissionCounter++}`;
 	// The fault may fire inside admission itself (between its two commits):
