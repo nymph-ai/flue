@@ -82,6 +82,11 @@ let submissionCounter = 0;
 
 async function prompt(entity: TestEntity, body: string): Promise<string> {
 	const submissionId = `sub_q${submissionCounter++}`;
+	await admit(entity, submissionId, body);
+	return submissionId;
+}
+
+async function admit(entity: TestEntity, submissionId: string, body: string): Promise<void> {
 	await entity.requireHost().admit(
 		{
 			submissionId,
@@ -92,7 +97,6 @@ async function prompt(entity: TestEntity, body: string): Promise<string> {
 		},
 		context,
 	);
-	return submissionId;
 }
 
 function piPath(ref: EntityRef): string {
@@ -143,13 +147,36 @@ async function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
 	qw.arm(alice, fault);
 	await alice.open();
 	const first = qw.incarnation(alice);
-	const submissionId = await prompt(alice, body);
-	await eventually(() => first.dead, {
-		what: `the ${fault.kind} fault to fire`,
-		timeoutMs: 20_000,
-	});
+	const submissionId = `sub_q${submissionCounter++}`;
+	// The fault may fire inside admission itself (between its two commits):
+	// the caller then sees the crash, and the next incarnation repairs it.
+	const admission = admit(alice, submissionId, body).then(
+		() => 'admitted' as const,
+		(error: unknown) => {
+			if (first.dead) return 'crashed during admission' as const;
+			throw error;
+		},
+	);
+	try {
+		await eventually(() => first.dead, {
+			what: `the ${fault.kind} fault to fire`,
+			timeoutMs: 20_000,
+		});
+	} catch (error) {
+		const outcomes: Record<string, number> = {};
+		for (const append of first.appends) {
+			const key = `${append.path.split('/').at(-1)}:${append.outcome}`;
+			outcomes[key] = (outcomes[key] ?? 0) + 1;
+		}
+		trace(
+			`the fault never fired: ${first.appends.length} appends ${JSON.stringify(outcomes)}, ${alice.calls} model calls, admission ${await Promise.race([admission, Promise.resolve('pending')])}`,
+		);
+		alice.abandon();
+		throw error;
+	}
 	expect(first.fired).toEqual(fault);
-	trace(`fired after ${first.appends.length} appends, ${alice.calls} model calls; reopening`);
+	const admitted = await admission;
+	trace(`fired after ${first.appends.length} appends, ${alice.calls} model calls, ${admitted}; reopening`);
 	alice.abandon();
 
 	await alice.open();
@@ -160,7 +187,7 @@ async function crashAndRecover(qw: QualWorld, fault: Fault, body: string) {
 	const settlement = await alice.requireHost().waitForSettlement(submissionId, context);
 	trace(`settled ${settlement.outcome} after ${alice.calls} model calls`);
 	await alice.flush();
-	return { alice, first, second, submissionId, settlement };
+	return { alice, first, second, submissionId, settlement, admitted };
 }
 
 async function events(qw: QualWorld, ref: EntityRef) {
