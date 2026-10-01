@@ -176,15 +176,20 @@ export class TestEntity {
 	}
 
 	/**
-	 * Crash: forget everything in memory without closing anything, as a killed
-	 * isolate does. Whatever the old incarnation still has in flight runs on
-	 * against the faults its wrappers inject; the next `open()` is a new one.
+	 * Crash: forget the incarnation in memory, as a killed isolate does; the
+	 * next `open()` is a new one. A dead process also stops running, so the
+	 * old host and runtime are shut down in the background — against the
+	 * fault wrappers that killed them, so nothing they try reaches storage.
 	 */
 	abandon(): void {
+		const runtime = this.runtime;
+		const host = this.host;
 		this.runtime = undefined;
 		this.host = undefined;
 		this.storage = undefined;
 		this.#opening = undefined;
+		void runtime?.dispose().catch(() => {});
+		void host?.close(context).catch(() => {});
 	}
 
 	/** The coordinator's `__flueWake`: open (reconstruct) if asleep, then handle. */
