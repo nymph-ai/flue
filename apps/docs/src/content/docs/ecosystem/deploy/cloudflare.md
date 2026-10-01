@@ -23,7 +23,7 @@ npm install @flue/runtime hono
 npm install -D @flue/vite @cloudflare/vite-plugin vite wrangler
 ```
 
-Flue builds on `agents`, Cloudflare's Agents SDK — it uses the SDK's Durable Object base class and native lifecycle capabilities while retaining ownership of application routing. `@flue/vite` ships the SDK as its own dependency, so each Flue release runs against the SDK minor it was tested with and your project doesn't declare it. To run a different SDK version, add your own `agents` dependency — a copy installed in your project always wins; the generated worker checks at runtime that the SDK provides the durability API Flue relies on (such as `runFiber`) and fails with an explicit error if it does not. If you also need a remote sandbox, additionally install `@cloudflare/sandbox` (see [Connecting a remote sandbox](#connecting-a-remote-sandbox) below).
+Flue builds on `agents`, Cloudflare's Agents SDK — each generated agent Durable Object composes the SDK's `Lifecycle` (`agents/lifecycle`: named addressing, startup and capability dispatch) while Flue retains ownership of application routing and of the object's alarm. `@flue/vite` ships the SDK as its own dependency, so each Flue release runs against the SDK minor it was tested with and your project doesn't declare it. To run a different SDK version, add your own `agents` dependency — a copy installed in your project always wins; it must provide `agents/lifecycle` (0.22 or later). If you also need a remote sandbox, additionally install `@cloudflare/sandbox` (see [Connecting a remote sandbox](#connecting-a-remote-sandbox) below).
 
 ```ts title="vite.config.ts"
 import { cloudflare } from '@cloudflare/vite-plugin';
@@ -190,12 +190,13 @@ Adjust the prefixes to match your `app.ts` route map.
 
 ### Extending generated Cloudflare Durable Objects
 
-Flue normally owns each generated agent Durable Object class. When an agent needs native Cloudflare Agents SDK capabilities such as `onStart()`, `schedule()`, `scheduleEvery()`, or `queue()`, export a `cloudflare` extension descriptor from its module:
+Flue normally owns each generated agent Durable Object class. When an agent needs an `onStart()` hook or a Cloudflare Agents SDK capability that does not use the alarm, such as `State`, export a `cloudflare` extension descriptor from its module and install the capability on `this.lifecycle`:
 
 ```ts title="src/agents/heartbeat.ts"
 'use agent';
 import { useModel } from '@flue/runtime';
 import { extend } from '@flue/runtime/cloudflare';
+import { State } from 'agents/state';
 
 export function Heartbeat() {
   useModel('anthropic/claude-sonnet-4-6');
@@ -204,18 +205,21 @@ export function Heartbeat() {
 export const cloudflare = extend({
   base: (Base) =>
     class extends Base {
-      async onStart() {
-        await this.scheduleEvery(60, 'heartbeat');
+      readonly preferences = new State({ initialState: { locale: 'en' } });
+
+      constructor(ctx: DurableObjectState, env: Env) {
+        super(ctx, env);
+        this.lifecycle.use(this.preferences);
       }
 
-      async heartbeat() {
-        this.setState({ ...this.state, lastHeartbeatAt: Date.now() });
+      async onStart() {
+        console.log(`${this.name} woke with locale ${this.preferences.get()?.locale}`);
       }
     },
 });
 ```
 
-This is an advanced Cloudflare-only extension point. Flue applies `base` first, then defines its own Durable Object subclass with the generated binding and class identity. For the `Heartbeat` agent, authored Worker code can access the namespace as `env.FLUE_HEARTBEAT_AGENT`, and Wrangler binds that name to `FlueHeartbeatAgent`. Use `base` for native SDK lifecycle hooks and additional named methods. Do not override `fetch()`, `onRequest()`, `onFiberRecovered()`, or `alarm()`: Flue and the Agents SDK use those methods for routing, interruption recovery, and alarm multiplexing.
+This is an advanced Cloudflare-only extension point. Flue applies `base` first, then defines its own Durable Object subclass with the generated binding and class identity. For the `Heartbeat` agent, authored Worker code can access the namespace as `env.FLUE_HEARTBEAT_AGENT`, and Wrangler binds that name to `FlueHeartbeatAgent`. Use `base` for SDK capabilities, lifecycle hooks and additional named methods. Do not override `fetch()`, `alarm()`, `onRequest()` or `__flueWake()`: Flue uses those methods for routing and wakes. Capabilities that use Lifecycle's job queue (`Scheduler`, `Queue`, `Tasks`) are not supported, because Flue owns the alarm.
 
 Use `wrap` when an integration needs to wrap the final Flue-generated Durable Object class:
 

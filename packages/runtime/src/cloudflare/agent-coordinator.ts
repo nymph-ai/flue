@@ -9,16 +9,40 @@
  *   `FlueAgentInstance.admit` → `FluePiHost.admit`: Flue receipts, the frozen
  *   submission id derivation, payload-conflict 409s and the uid send
  *   condition, then Pi's inbox (a busy run is steered, as Flue joined it).
+ * - The wake: the object's own alarm, which Flue owns. Every wake is a full
+ *   wake — pump what the wake book holds behind, fire due entity schedules,
+ *   repair admissions, enforce deadlines, resume Pi — and re-derives each
+ *   later deadline from durable state, so the alarm only ever needs the
+ *   earliest one. The alarm time is the record: an arm at or after the armed
+ *   time writes nothing; an earlier one is one `setAlarm`. While the alarm
+ *   runs, the arms it makes fold into one `setAlarm` at its end — now while
+ *   the pump is still behind (rule 4), the earliest asked-for time otherwise,
+ *   nothing when nothing is left to wake for (the platform has already
+ *   cleared the alarm that fired). A failed wake throws; the platform retries
+ *   the alarm.
  * - Doorbell (rule 3): the `__flueWake({ stream, head })` RPC writes the
- *   stream's high-water mark into the wake book and calls `setAlarm(now)` in
- *   the same synchronous turn — one coalesced, atomic storage write — and
- *   returns. It opens nothing.
- * - Pump (rule 4): every alarm runs the Agents SDK's scheduled callbacks
- *   first (Pi's own wakes: the live-task backstop, submission deadlines,
- *   schedules — `schedule()` multiplexes them onto the one alarm), then, while
- *   the wake book is behind, one bounded pump (`entity/pump.ts`), and re-arms
- *   `setAlarm(now)` while it is still behind. The SDK re-computes the alarm
- *   whenever it schedules; Flue re-asserts its own after each of those.
+ *   stream's high-water mark into the wake book and, when that leaves the
+ *   stream behind, `setAlarm(now)`, in the same synchronous turn — one
+ *   coalesced, atomic storage write — and resolves once it is durable. A
+ *   duplicate or stale doorbell writes nothing.
+ *
+ * Kept on purpose, not moved onto an Agents SDK capability (the object is
+ * composed with the SDK's `Lifecycle` for addressing, startup and capability
+ * dispatch, `flue-agent-class.ts`):
+ * - The alarm, not Lifecycle's job queue (`lifecycle.jobs`, which Scheduler,
+ *   Queue and Tasks ride). Measured on workerd, a queued wake costs a row for
+ *   the job, a `markRunning` update, a completion delete or reschedule, a
+ *   deadman `setAlarm` and a re-arm `setAlarm` — each billed as a row
+ *   written — where Flue's costs one `setAlarm`, or nothing when the alarm
+ *   is already early enough. The queue owns the physical alarm outright
+ *   (every re-arm overwrites or deletes it), so the two cannot share it.
+ * - Pi Durable, not `agents/tasks`: Pi is the durable execution engine
+ *   (sessions, tasks, tool replay, compaction); a second journal beside it
+ *   would duplicate every step in rows.
+ * - The wake book, not `agents/queue`: a doorbell is a high-water mark per
+ *   stream (one row, updated in place), and the pump reads Electric from a
+ *   cursor; a queue item per event would cost rows per event and lose the
+ *   coalescing of duplicate and stale webhooks.
  *
  * Pi owns what this module used to: attempts, leases, reconciliation,
  * recovery, joins and settlement.
@@ -65,20 +89,21 @@ import type { SqlStorage } from '../sql-storage.ts';
 import type { Agent, DeliveredMessage } from '../types.ts';
 import { createSqlConversationStores } from './agent-execution-store.ts';
 import { doSqliteDatabase } from './do-sqlite-database.ts';
-import type { WakeReason as FlueWakeReason } from '../pi/host.ts';
 
 export const CLOUDFLARE_AGENT_INTERNAL_DISPATCH_PATH = '/__flue/internal/dispatch';
 export const CLOUDFLARE_AGENT_INTERNAL_INSTANCE_INFO_PATH = '/__flue/internal/instance-info';
 
-/** The schedule target every wake rides (kept from the pre-Pi coordinator, so armed rows still fire). */
-const FLUE_WAKE_CALLBACK = '__flueWakeAgentSubmissions';
-/** The pre-Pi attempt fiber, recovered once after an upgrade. */
-const LEGACY_ATTEMPT_FIBER = 'flue:submission-attempt';
-
 interface CloudflareAgentStorage {
 	sql?: SqlStorage;
 	transactionSync?<T>(closure: () => T): T;
+	getAlarm?(): Promise<number | null>;
 	setAlarm?(scheduledTime: number): Promise<void>;
+}
+
+/** The slice of the Agents SDK `Lifecycle` Flue uses (`agents/lifecycle`). */
+export interface LifecycleLike {
+	readonly name: string;
+	start(): Promise<void>;
 }
 
 interface CloudflareAgentInstance {
@@ -89,23 +114,7 @@ interface CloudflareAgentInstance {
 		readonly storage: CloudflareAgentStorage;
 		waitUntil?(promise: Promise<unknown>): void;
 	};
-	schedule(
-		delaySeconds: number,
-		callback: string,
-		payload: unknown,
-		options: { idempotent: boolean },
-	): Promise<unknown>;
-}
-
-interface CloudflareAgentRecoveredFiberContext {
-	readonly name?: string;
-	readonly snapshot?: Record<string, unknown>;
-}
-
-interface CloudflareAgentPreparedCoordinator {
-	readonly agentName: string;
-	readonly conversationStreamStore: ConversationStreamStore;
-	readonly attachmentStore: AttachmentStore;
+	readonly lifecycle: LifecycleLike;
 }
 
 interface CloudflareAgentRuntimeOptions {
@@ -124,34 +133,16 @@ interface CloudflareAgentRuntimeOptions {
 }
 
 export interface CloudflareAgentRuntime {
-	prepare(options: {
-		readonly storage: CloudflareAgentStorage;
-		readonly className: string;
-		readonly agentName: string;
-	}): CloudflareAgentPreparedCoordinator;
-	attach(instance: CloudflareAgentInstance, prepared: CloudflareAgentPreparedCoordinator): void;
-	onStart(
+	/** Bind a coordinator to a newly constructed instance. Touches no storage. */
+	attach(
 		instance: CloudflareAgentInstance,
-		inherited: () => Promise<unknown> | unknown,
-	): Promise<void>;
-	/** The `__flueWakeAgentSubmissions` schedule target: one wake of the instance. */
-	drainSubmissions(instance: CloudflareAgentInstance, payload?: unknown): Promise<void>;
+		options: { readonly className: string; readonly agentName: string },
+	): void;
+	/** Run `callback` inside the instance context (every entry boundary does). */
+	run<T>(instance: CloudflareAgentInstance, callback: () => T): T;
 	onRequest(instance: CloudflareAgentInstance, request: Request): Promise<Response | null>;
-	onFiberRecovered(
-		instance: CloudflareAgentInstance,
-		ctx: CloudflareAgentRecoveredFiberContext,
-		inherited: () => Promise<unknown> | unknown,
-	): Promise<unknown>;
-	/**
-	 * Run the Agents SDK alarm handler inside the instance context — it
-	 * dispatches `schedule`/`scheduleEvery`/`queue` callbacks, Flue's wake
-	 * among them (`__flueWakeAgentSubmissions`) — then pump entity events
-	 * while the wake book is behind.
-	 */
-	onAlarm(
-		instance: CloudflareAgentInstance,
-		inherited: () => Promise<unknown> | unknown,
-	): Promise<unknown>;
+	/** The alarm: Flue's wake. */
+	onAlarm(instance: CloudflareAgentInstance): Promise<void>;
 	/** The `__flueWake({ stream, head })` RPC: the doorbell of a verified Electric wake. */
 	wake(
 		instance: CloudflareAgentInstance,
@@ -170,7 +161,8 @@ export function createCloudflareAgentRuntime(
 		return coordinator;
 	};
 	return {
-		prepare({ storage, className, agentName }) {
+		attach(instance, { className, agentName }) {
+			const storage = instance.ctx.storage;
 			if (!storage?.sql || typeof storage.transactionSync !== 'function') {
 				throw new Error(
 					`[flue] Cloudflare durable agent class "${className}" requires Durable Object SQLite. ` +
@@ -179,30 +171,26 @@ export function createCloudflareAgentRuntime(
 						'to SQLite in place.',
 				);
 			}
-			return { agentName, ...createSqlConversationStores(storage as never) };
+			coordinators.set(
+				instance,
+				new CloudflareAgentCoordinator(
+					instance,
+					{ agentName, ...createSqlConversationStores(storage as never) },
+					options,
+				),
+			);
 		},
-		attach(instance, prepared) {
-			coordinators.set(instance, new CloudflareAgentCoordinator(instance, prepared, options));
-		},
-		onStart: (instance, inherited) => coordinatorOf(instance).onStart(inherited),
-		drainSubmissions: (instance, payload) => coordinatorOf(instance).wakeFromAlarm(payload),
+		run: (instance, callback) => coordinatorOf(instance).run(callback),
 		onRequest: (instance, request) => coordinatorOf(instance).onRequest(request),
-		onFiberRecovered: (instance, ctx, inherited) =>
-			coordinatorOf(instance).onFiberRecovered(ctx, inherited),
-		onAlarm: (instance, inherited) => coordinatorOf(instance).onAlarm(inherited),
+		onAlarm: (instance) => coordinatorOf(instance).onAlarm(),
 		wake: (instance, doorbell) => coordinatorOf(instance).doorbell(doorbell),
 	};
 }
 
-function isWakeReason(value: unknown): value is FlueWakeReason {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { kind?: unknown }).kind === 'string' &&
-		['live-tasks', 'schedule', 'pump', 'dispatch', 'questions'].includes(
-			(value as { kind: string }).kind,
-		)
-	);
+interface CloudflareAgentPreparedCoordinator {
+	readonly agentName: string;
+	readonly conversationStreamStore: ConversationStreamStore;
+	readonly attachmentStore: AttachmentStore;
 }
 
 class CloudflareAgentCoordinator {
@@ -211,6 +199,13 @@ class CloudflareAgentCoordinator {
 	readonly #options: CloudflareAgentRuntimeOptions;
 	#agentInstance: FlueAgentInstance | undefined;
 	#book: EntityWakeBook | undefined;
+	/**
+	 * While the alarm runs: the earliest time an arm asked for since it
+	 * started (`Infinity` for none), set once at its end.
+	 */
+	#driving: { rearmAt: number } | undefined;
+	/** Arms outside the alarm, one at a time: each reads the alarm before it writes. */
+	#arming: Promise<void> = Promise.resolve();
 	/** Live MCP connections of this instance; eviction is the teardown. */
 	readonly #mcp = createMcpConnectionCache();
 
@@ -228,7 +223,7 @@ class CloudflareAgentCoordinator {
 		return this.#prepared.agentName;
 	}
 
-	#run<T>(callback: () => T): T {
+	run<T>(callback: () => T): T {
 		return this.#options.runWithInstanceContext(this.#instance, this.#agentName, callback);
 	}
 
@@ -257,7 +252,7 @@ class CloudflareAgentCoordinator {
 			entities: this.#entities(),
 			attachments: this.#prepared.attachmentStore,
 			legacy: this.#prepared.conversationStreamStore,
-			armWake: (atMs, reason) => this.#armWake(atMs, reason),
+			armWake: (atMs) => this.#armWake(atMs),
 			events,
 			mcp: this.#mcp,
 			onReport: (error) =>
@@ -296,131 +291,101 @@ class CloudflareAgentCoordinator {
 	/** Whether entity events wait to be pumped; never opens the instance. */
 	#behind(): boolean {
 		if (!configuredStreams(this.#instance.env)) return false;
-		try {
-			return this.#wakeBook().behind();
-		} catch {
-			return false;
-		}
+		return this.#wakeBook().behind();
 	}
 
-	/** `setAlarm(now)`: the alarm is the pump. */
-	#alarmNow(): Promise<void> {
-		const setAlarm = this.#instance.ctx.storage.setAlarm;
-		if (typeof setAlarm !== 'function')
-			throw new Error('[flue] This Durable Object storage has no setAlarm().');
-		return setAlarm.call(this.#instance.ctx.storage, Date.now());
+	#alarmStorage(): Required<Pick<CloudflareAgentStorage, 'getAlarm' | 'setAlarm'>> {
+		const storage = this.#instance.ctx.storage;
+		if (typeof storage.getAlarm !== 'function' || typeof storage.setAlarm !== 'function')
+			throw new Error('[flue] This Durable Object storage has no alarm API.');
+		return {
+			getAlarm: () => (storage.getAlarm as () => Promise<number | null>).call(storage),
+			setAlarm: (at) => (storage.setAlarm as (at: number) => Promise<void>).call(storage, at),
+		};
 	}
 
 	/**
-	 * Arm a wake on the Durable Object alarm through the Agents SDK
-	 * `schedule()`. Non-idempotent: an idempotent arm could dedupe onto the
-	 * row that is executing right now, which the SDK deletes after it returns.
+	 * Arm a wake at `atMs`. While the alarm runs, the arm folds into the one
+	 * `setAlarm` at its end. Otherwise the alarm moves earlier, or stays: an
+	 * alarm already due at or before `atMs` serves this wake too, and costs
+	 * nothing.
 	 */
-	async #armWake(atMs: number, reason: FlueWakeReason): Promise<void> {
-		if (typeof this.#instance.schedule !== 'function') {
-			throw new Error(
-				'[flue] The installed "agents" package does not provide the required Cloudflare Agents SDK method "schedule". Upgrade @flue/vite (which supplies the Cloudflare Agents SDK), or remove the "agents" dependency from your project if it declares an older one.',
-			);
+	#armWake(atMs: number): Promise<void> {
+		if (this.#driving) {
+			this.#driving.rearmAt = Math.min(this.#driving.rearmAt, atMs);
+			return Promise.resolve();
 		}
-		const delaySeconds = Math.max(0, Math.ceil((atMs - Date.now()) / 1000));
-		await this.#instance.schedule(delaySeconds, FLUE_WAKE_CALLBACK, reason, { idempotent: false });
-		// `schedule()` re-computed the alarm from the SDK's own rows; the pump's comes first.
-		if (this.#behind()) await this.#alarmNow();
+		const alarms = this.#alarmStorage();
+		const arm = this.#arming.then(async () => {
+			const armed = await alarms.getAlarm();
+			if (armed === null || armed > atMs) await alarms.setAlarm(atMs);
+		});
+		this.#arming = arm.catch(() => {});
+		return arm;
 	}
 
 	/** Whether this Durable Object has Pi state to resume (it served an agent before). */
 	#hasPiState(): boolean {
-		try {
-			return hasPiState(doSqliteDatabase(this.#storage()));
-		} catch {
-			return false;
-		}
-	}
-
-	onStart(inherited: () => Promise<unknown> | unknown): Promise<void> {
-		return this.#run(async () => {
-			// A restarted isolate resumes Pi's interrupted work: arm a wake before
-			// the (possibly extension-authored) onStart, so it is in place even if
-			// that throws.
-			if (this.#hasPiState()) await this.#armWake(Date.now(), { kind: 'live-tasks' });
-			else if (this.#behind()) await this.#alarmNow();
-			await inherited();
-		});
-	}
-
-	/** One scheduled wake (Pi's backstop, a deadline, a schedule): wake Pi, pumping first. */
-	wakeFromAlarm(payload?: unknown): Promise<void> {
-		return this.#run(async () => {
-			const reason = isWakeReason(payload) ? payload : { kind: 'live-tasks' as const };
-			if (!this.#hasPiState() && reason.kind === 'live-tasks') return;
-			try {
-				await this.#core().wake(reason);
-			} finally {
-				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
-			}
-		});
+		return hasPiState(doSqliteDatabase(this.#storage()));
 	}
 
 	/**
-	 * The alarm: the Agents SDK's due callbacks, then one bounded pump while
-	 * the wake book is behind, re-armed `setAlarm(now)` while it still is.
-	 * Turns the pump admits run on after the handler returns; Pi's live-task
-	 * backstop resumes them if the object is evicted first.
+	 * The alarm: one full wake — pump, schedules, deadlines, Pi — inside the
+	 * instance context, then one `setAlarm` for what it left: now while the
+	 * pump is still behind, else the earliest time an arm asked for. A new
+	 * instance with nothing to pump never opens Pi.
+	 *
+	 * Turns the wake admits run on after it returns; Pi's live-task backstop,
+	 * armed by this wake while they are live, resumes them if the object is
+	 * evicted or redeployed first.
 	 */
-	onAlarm(inherited: () => Promise<unknown> | unknown): Promise<unknown> {
-		return this.#run(async () => {
+	onAlarm(): Promise<void> {
+		return this.run(async () => {
+			if (!this.#behind() && !this.#hasPiState()) return;
+			const driving = { rearmAt: Number.POSITIVE_INFINITY };
+			this.#driving = driving;
+			let behind = false;
 			try {
-				return await inherited();
+				behind = (await this.#core().wake({ kind: 'live-tasks' })).behind;
 			} finally {
-				if (this.#behind()) {
-					try {
-						await this.#core().wake({ kind: 'pump' });
-					} finally {
-						if (this.#behind()) await this.#alarmNow();
-						this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
-					}
-				}
+				this.#driving = undefined;
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
 			}
+			const next = behind ? Date.now() : driving.rearmAt;
+			if (next !== Number.POSITIVE_INFINITY) await this.#armWake(next);
 		});
 	}
 
 	/**
 	 * The `__flueWake({ stream, head })` RPC body (rule 3): record the
-	 * high-water mark and `setAlarm(now)` in one synchronous turn — no await
-	 * between them, so they commit as one write — and resolve once that write
-	 * is durable. The webhook route acks only after this resolves.
+	 * high-water mark and, when the stream is behind, `setAlarm(now)` — no
+	 * await between them, so they commit as one write — and resolve once the
+	 * alarm is set. The webhook route acks only
+	 * after this resolves. A doorbell that records nothing new (a duplicate or
+	 * stale webhook, or one for events already pumped) writes nothing.
 	 */
-	doorbell(doorbell: EntityDoorbell): Promise<{ readonly recorded: true }> {
+	async doorbell(doorbell: EntityDoorbell): Promise<{ readonly recorded: true }> {
 		if (
 			typeof doorbell?.stream !== 'string' ||
 			doorbell.stream.length === 0 ||
 			typeof doorbell.head !== 'string' ||
 			doorbell.head.length === 0
 		) {
-			return Promise.reject(
-				new InvalidRequestError({ reason: 'A doorbell needs { stream, head }.' }),
-			);
+			throw new InvalidRequestError({ reason: 'A doorbell needs { stream, head }.' });
 		}
-		this.#wakeBook().ring(doorbell.stream, doorbell.head);
-		return this.#alarmNow().then(() => ({ recorded: true as const }));
-	}
-
-	/**
-	 * A pre-Pi attempt fiber surviving an upgrade: its work is gone (the legacy
-	 * loop no longer exists); resolve it so the SDK forgets the row, and wake.
-	 */
-	onFiberRecovered(
-		ctx: CloudflareAgentRecoveredFiberContext,
-		inherited: () => Promise<unknown> | unknown,
-	): Promise<unknown> {
-		return this.#run(async () => {
-			if (ctx.name !== LEGACY_ATTEMPT_FIBER) return inherited();
-			await this.#armWake(Date.now(), { kind: 'live-tasks' });
-		});
+		const alarms = this.#alarmStorage();
+		// While the alarm runs, a ring folds into its end; the head is durable
+		// now, and a wake that dies is retried by the platform.
+		const armed = this.#driving ? 0 : await alarms.getAlarm();
+		const now = Date.now();
+		if (!this.#wakeBook().ring(doorbell.stream, doorbell.head)) return { recorded: true };
+		if (this.#driving) this.#driving.rearmAt = now;
+		else if (armed === null || armed > now) await alarms.setAlarm(now);
+		return { recorded: true };
 	}
 
 	onRequest(request: Request): Promise<Response | null> {
-		return this.#run(async () => {
+		return this.run(async () => {
 			try {
 				return await this.#route(request);
 			} finally {

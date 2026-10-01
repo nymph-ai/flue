@@ -1,8 +1,8 @@
 /**
  * Which model the society runs, chosen by the deployment's `SOCIETY_MODEL`
  * var: `scripted` (the default — a deterministic provider over pi-ai's faux
- * model, for reproducible qualification runs) or `workers-ai` (Cloudflare
- * Workers AI through the `AI` binding, model `WORKERS_AI_MODEL`).
+ * model, for reproducible qualification runs) or `live` (the real model
+ * `LIVE_MODEL`, Muse Spark 1.3 Contributor on Meta's Model API).
  */
 import { env } from 'cloudflare:workers';
 import { typesafeProvider } from '@earendil-works/pi-ai/providers/typesafe';
@@ -16,8 +16,11 @@ setProvider(scriptedProvider({ tokensPerSecond: Number(vars.SCRIPTED_TOKENS_PER_
 setProvider(typesafeProvider());
 
 export function societyModel(): string {
-	if (vars.SOCIETY_MODEL === 'workers-ai') {
-		return `cloudflare/${vars.WORKERS_AI_MODEL ?? '@cf/moonshotai/kimi-k2.6'}`;
-	}
+	if (vars.SOCIETY_MODEL === 'live') return liveModel();
 	return `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
+}
+
+/** The real model, keyed by the `META_API_KEY` secret. */
+export function liveModel(): string {
+	return vars.LIVE_MODEL ?? 'meta/muse-spark-1.3-contributor';
 }

@@ -10,7 +10,7 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { CLASSIFY_SCRIPT, NOTES, notesMcp, toolResults } from './codemode-turn.ts';
-import { carol } from './turn-driver.ts';
+import { dora } from './turn-driver.ts';
 
 /** The JSON a completed script's result ends with (Pi's header, then the returned value). */
 function returned(text: string | undefined): unknown {
@@ -21,7 +21,7 @@ function returned(text: string | undefined): unknown {
 describe('models.classify() over MCP results in Code Mode (workerd)', () => {
 	it('classifies concurrently, and its store() write persists', { timeout: 60_000 }, async () => {
 		expect(CLASSIFY_SCRIPT).toContain('Promise.all');
-		const { stub, say } = await carol('classify');
+		const { stub, say } = await dora('classify');
 		const before = notesMcp.calls.length;
 		const seen = toolResults.length;
 		await say('Please classify the notes.');

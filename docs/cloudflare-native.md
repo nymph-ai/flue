@@ -9,6 +9,7 @@ Internet / clients ──► Gateway Worker ── auth, routing, wake doorbell,
                               │ DO RPC
                               ▼
                  AgentDO(entity id)     one SQLite-backed Durable Object per entity
+                   ├─ Lifecycle           (agents/lifecycle: name, startup, capability dispatch)
                    ├─ Pi Durable Harness  (cognition, tasks, compaction, recovery)
                    ├─ Pi SqliteStorage    (on ctx.storage.sql via Flue's adapter)
                    ├─ Flue tables         (stream cursors, wake high-water, conversation cache)
@@ -45,14 +46,24 @@ is uninteresting by design.
    events only. The public conversation wire for `@flue/sdk` is a projection
    over Pi storage, cached in the DO.
 3. **Wakes are doorbells.** A verified Electric webhook calls
-   `AgentDO.wake(stream, head)`, which durably records the high-water offset,
-   calls `setAlarm(now)` and returns. The webhook is acked once that record is
+   `AgentDO.wake(stream, head)`, which durably records the high-water offset
+   and, when that leaves the stream behind, calls `setAlarm(now)` — in one
+   synchronous turn, one atomic write — and returns. A duplicate or stale
+   doorbell writes nothing. The webhook is acked once that record is
    durable, not after processing.
 4. **Alarms are the pump.** The alarm drains each stream from its committed
    cursor toward the recorded head in bounded chunks: admit each event as an
    idempotent Pi submission keyed by its event id, advance the cursor, and
    re-arm while work remains. Pi Durable resumes interrupted turns on later
-   wakes; a turn is never required to fit in one alarm.
+   wakes; a turn is never required to fit in one alarm. Every wake is a full
+   wake that re-derives every later deadline from durable state, so the
+   alarm time itself is the only wake record: an arm moves it earlier or
+   writes nothing. The AgentDO is a plain `DurableObject` composed with the
+   Agents SDK's `Lifecycle` for addressing, startup and capability dispatch —
+   not `Agent`, which installs state, WebSockets, schedules, queue, tasks,
+   MCP and dynamic agents and migrates their tables on every new object.
+   Flue does not use Lifecycle's job queue: it costs several rows written per
+   wake, and it owns the physical alarm outright.
 5. **Effects are idempotent, not co-committed.** A send or publish appends one
    event with a deterministic id derived from the Pi task and tool call. Pi's
    tool replay re-sends the same id; receivers deduplicate on it — an inbox
@@ -77,7 +88,7 @@ is uninteresting by design.
    only through it. The VM is bounded by a heap limit and an interrupt-poll
    CPU budget inside the object's 30 s CPU limit. Nothing is persisted per
    script: `store()` writes go to a conversation document, and only a script
-   that asks a question (rule 9) journals its nested calls' results, so a
+   that asks a question (rule 8) journals its nested calls' results, so a
    rerun after an eviction answers them from the journal and runs the parked
    call once. The cost model is the reason: a Dynamic Worker is billed per
    unique (id, code) pair a day and model-written code is unique every time,

@@ -1,9 +1,10 @@
 /**
- * What `codemode.store(key, value)` keeps between scripts: one Pi document
- * per conversation, written in the same Pi commit discipline as every other
- * Flue value, so it survives eviction and follows the conversation through
- * rewinds and forks. Never isolate memory (docs/cloudflare-native.md, rule 7:
- * a Dynamic Worker owns nothing persistent).
+ * What a script's `store(key, value)` keeps between scripts: one Pi document
+ * per conversation, written from a successful script's `storeWrites` in the
+ * same Pi commit discipline as every other Flue value, so it survives
+ * eviction and follows the conversation through rewinds and forks. Never
+ * isolate memory (docs/cloudflare-native.md, rule 7: the QuickJS VM owns
+ * nothing persistent).
  */
 import type { JsonValue } from '@earendil-works/chord';
 import { defineDoc } from '@earendil-works/pi-durable';

@@ -22,7 +22,7 @@ and the instance's alarm admits what arrived.
   (read-only: `list_teams`, `list_issues`, `list_comments`) and, with
   `TYPESAFE_API_KEY`, classifies with Jev from Code Mode:
   `codemode frustration <team>` runs Earendil's "You Said No MCP!" script.
-- `sage` always answers with Workers AI (`SAGE_MODEL`) through the `AI` binding.
+- `sage` always answers with the real model (`LIVE_MODEL`).
 
 ## Models
 
@@ -32,7 +32,8 @@ and the instance's alarm admits what arrived.
   (`src/scripted.ts`). Only the model's choices are scripted; every turn still
   runs Pi Durable end to end. A prompt is a list of commands (`send bob/b1
 ping`, `spawn bob kid 50`, `observe <stream> <key> <from>`, `chain 3`, …).
-- `workers-ai`: Workers AI through the `AI` binding (`WORKERS_AI_MODEL`).
+- `live`: the real model `LIVE_MODEL`, Muse Spark 1.3 Contributor on Meta's Model API
+  (`meta/muse-spark-1.3-contributor`), keyed by the `META_API_KEY` secret.
 
 ## Qualification build
 

@@ -19,7 +19,8 @@
  * runs. It shares `first-wake.ts`'s Durable Streams server: the streams
  * configuration is one per isolate. Imported only by `*.workers.test.ts`.
  */
-import { Agent } from 'agents';
+import { DurableObject } from 'cloudflare:workers';
+import { Lifecycle } from 'agents/lifecycle';
 import {
 	type AssistantMessage,
 	type ClassifierApi,
@@ -187,15 +188,15 @@ const faux = fauxProvider({
 faux.setResponses(Array.from({ length: 1000 }, () => respond) as never);
 setProvider(faux.provider);
 
-const Carol = (() => {
+const Dora = (() => {
 	useModel('faux-codemode/m');
 	useMcpConnection({ name: 'notes', url: 'https://notes.test/mcp', fetch: notesMcp.fetch });
 	useCodeMode();
-	return 'You are Carol. You run scripts.';
+	return 'You are Dora. You run scripts.';
 }) as unknown as FlueAgent;
 
 const runtime = createCloudflareAgentRuntime({
-	agents: [{ name: 'carol', agent: Carol }],
+	agents: [{ name: 'dora', agent: Dora }],
 	createContext: ({ instance, agentName, request, submissionId }) =>
 		createFlueContext({
 			id: instance.name,
@@ -223,10 +224,11 @@ const runtime = createCloudflareAgentRuntime({
 });
 
 const Generated = createFlueAgentClass({
-	AgentBase: Agent,
+	DurableObject,
+	Lifecycle,
 	runtime,
 	className: 'CodemodeTurnAgent',
-	agentName: 'carol',
+	agentName: 'dora',
 });
 
 export class CodemodeTurnAgent extends Generated {

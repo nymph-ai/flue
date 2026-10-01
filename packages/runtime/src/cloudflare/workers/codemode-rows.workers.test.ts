@@ -16,7 +16,7 @@ import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { notesMcp } from './codemode-turn.ts';
 import { formatTrace, sqlTrace, type TraceSummary } from './sql-trace.ts';
-import { carol } from './turn-driver.ts';
+import { dora } from './turn-driver.ts';
 
 type Rows = { rowsRead: number; rowsWritten: number };
 
@@ -40,14 +40,15 @@ function take(label: string): TraceSummary {
 	return summary;
 }
 
+/** Billed rows: SQL rows, key-value keys, and a row written per `setAlarm`. */
 const total = (summary: TraceSummary): Rows => ({
 	rowsRead: summary.rowsRead + summary.kv.read,
-	rowsWritten: summary.rowsWritten + summary.kv.written,
+	rowsWritten: summary.rowsWritten + summary.kv.written + summary.alarms,
 });
 
 describe('a Code Mode turn on Durable Object SQLite (workerd)', () => {
 	it('10 MCP calls in one script, and a cold store() turn', { timeout: 60_000 }, async () => {
-		const { stub, say } = await carol('rows');
+		const { stub, say } = await dora('rows');
 		sqlTrace.reset();
 
 		const before = notesMcp.calls.length;
@@ -64,7 +65,7 @@ describe('a Code Mode turn on Durable Object SQLite (workerd)', () => {
 
 		const rows = { tenCalls: total(tenCalls), coldStore: total(coldStore) };
 		console.log(
-			`[codemode-rows] totals (sql + kv keys): ${Object.entries(rows)
+			`[codemode-rows] totals (billed): ${Object.entries(rows)
 				.map(([name, value]) => `${name} ${value.rowsRead}r/${value.rowsWritten}w`)
 				.join(', ')}; codemode tables: ${Object.entries({ tenCalls, coldStore })
 				.map(

@@ -1,5 +1,5 @@
 /**
- * `codemode.store()`'s document checkpoints itself (nymph-ai/nymphai #3862)
+ * `store()`'s document checkpoints itself (nymph-ai/nymphai #3862)
  * and stays rewindable: with a base every `DELTAS_PER_BASE` writes, a read
  * as of any earlier entry still returns the values written by then.
  */
@@ -18,7 +18,7 @@ import { openNodeSqliteDatabase } from '../node/node-sqlite-database.ts';
 import { DELTAS_PER_BASE } from '../pi/docs.ts';
 import { FlueCodemodeStore } from './store.ts';
 
-describe('the codemode.store() document', () => {
+describe('the Code Mode store() document', () => {
 	it('reads every past state as of its entry, with bases interleaved', async () => {
 		const file = await tempFile('codemode-store.sqlite');
 		const storage = await SqliteStorage.open(await openNodeSqliteDatabase(file));

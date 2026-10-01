@@ -15,7 +15,7 @@
  *   written: a cold start negotiates again, one round trip.
  * - A 2025 server that forgot its session answers 404; the call
  *   re-initializes once and is sent again.
- * - Nothing standing is held open (rule 8): no `subscriptions/listen`, no
+ * - Nothing standing is held open (rule 9): no `subscriptions/listen`, no
  *   `listChanged` handlers, and no 2025 GET stream (the transport's GET is
  *   answered 405 locally). Tool lists are refreshed when their cache hint
  *   (`ttlMs`) expires, or on the next wake when the server gave none.
@@ -23,7 +23,7 @@
  *   fresh client after a Durable Object eviction works mid-conversation.
  * - `input_required` (multi-round-trip requests): a leg carrying only
  *   `requestState` is sent again with it; a leg with input requests is put
- *   to the question seam (`questions.ts`, rule 9), and its answer is sent
+ *   to the question seam (`questions.ts`, rule 8), and its answer is sent
  *   back with the server's `requestState`. When the seam cannot answer, the
  *   call fails with {@link McpInputRequiredError}.
  */
@@ -562,7 +562,7 @@ function createTransport(
 
 /**
  * The 2025 transport opens a GET stream for server-initiated messages after
- * `initialize`. An agent holds nothing open (rule 8) and asks for nothing
+ * `initialize`. An agent holds nothing open (rule 9) and asks for nothing
  * the server could push, so that GET is answered here as a server without
  * one would: 405.
  */

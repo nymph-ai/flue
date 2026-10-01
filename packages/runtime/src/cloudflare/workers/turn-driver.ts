@@ -5,7 +5,6 @@
  * admitted submission settles. Imported only by `*.workers.test.ts`.
  */
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
-import { getAgentByName } from 'agents';
 import { spawnedUid } from '../../entity/facet.ts';
 import { eventsPath, inboxPath } from '../../entity/paths.ts';
 import { ElectricDurableStreamLog } from '../../streams/electric-log.ts';
@@ -35,14 +34,23 @@ async function settledSubmissions(stub: WakeStub): Promise<number> {
 	);
 }
 
-/** A new `carol` entity, born from a spawn message; `say(text)` runs one more turn. */
-export async function carol(id: string) {
+/** Run the object's alarm only once it is due, as the platform would. */
+async function runDueAlarm(stub: DurableObjectStub): Promise<boolean> {
+	const due = await runInDurableObject(stub, async (_instance, state) => {
+		const at = await sqlTrace.unrecorded(() => state.storage.getAlarm());
+		return at !== null && at <= Date.now();
+	});
+	return due ? runDurableObjectAlarm(stub) : false;
+}
+
+/** A new `dora` entity, born from a spawn message; `say(text)` runs one more turn. */
+export async function dora(id: string) {
 	const parent = { type: 'alice', id: `alice-${id}` };
-	const child = { type: 'carol', id: `${parent.id}/${id}` };
+	const child = { type: 'dora', id: `${parent.id}/${id}` };
 	const log = new ElectricDurableStreamLog({ baseUrl: STREAMS_ROOT, fetch: streamsServer.fetch });
 	await log.ensure(inboxPath(child));
 	await log.ensure(eventsPath(child));
-	const stub = (await getAgentByName(namespace as never, child.id)) as unknown as WakeStub;
+	const stub = namespace.getByName(child.id) as WakeStub;
 	let sent = 0;
 	const say = async (text: string, spawn = false) => {
 		const { nextOffset } = await log.append(inboxPath(child), [
@@ -58,7 +66,7 @@ export async function carol(id: string) {
 		const deadline = Date.now() + 30_000;
 		while ((await settledSubmissions(stub)) < sent) {
 			if (Date.now() > deadline) throw new Error(`no ${sent} settled submissions after 30 s`);
-			await runDurableObjectAlarm(stub);
+			await runDueAlarm(stub);
 			await sleep(100);
 		}
 	};

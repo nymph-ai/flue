@@ -5,8 +5,10 @@
  * stores that bypass `doSqliteDatabase` and Pi's `SqliteStorage` are all
  * seen — and counts the key-value API's keys (`get`/`put`/`delete`), which
  * SQLite-backed objects keep in a table of their own and which no cursor
- * reports. A cursor's `rowsRead`/`rowsWritten` are read when the trace is
- * summarized, after its consumer has stepped it.
+ * reports — both the asynchronous API and the synchronous `storage.kv` — and
+ * the alarm writes (`setAlarm`, billed as a row written; `deleteAlarm`). A cursor's
+ * `rowsRead`/`rowsWritten` are read when the trace is summarized, after its
+ * consumer has stepped it.
  *
  * Imported only by `*.workers.test.ts`.
  */
@@ -32,8 +34,12 @@ export interface TraceSummary {
 	readonly rowsRead: number;
 	readonly rowsWritten: number;
 	readonly byOwner: Readonly<Record<StatementOwner, { rowsRead: number; rowsWritten: number }>>;
-	/** Keys the key-value API read and wrote (`get`/`put`/`delete`). */
+	/** Keys the key-value API read and wrote (`get`/`put`/`delete`, async and `storage.kv`). */
 	readonly kv: { readonly read: number; readonly written: number };
+	/** `setAlarm` calls: each is billed as a row written. */
+	readonly alarms: number;
+	/** `deleteAlarm` calls (not billed as rows). */
+	readonly alarmDeletes: number;
 	/** Per statement text (whitespace collapsed), most expensive first. */
 	readonly statements: ReadonlyArray<readonly [string, StatementCost]>;
 }
@@ -46,6 +52,8 @@ interface Cursor {
 class SqlTrace {
 	#cursors: { sql: string; cursor: Cursor }[] = [];
 	#kv = { read: 0, written: 0 };
+	#alarms = 0;
+	#alarmDeletes = 0;
 	recording = true;
 
 	record(sql: string, cursor: Cursor): void {
@@ -56,9 +64,17 @@ class SqlTrace {
 		if (this.recording) this.#kv[kind] += keys;
 	}
 
+	alarm(kind: 'set' | 'delete'): void {
+		if (!this.recording) return;
+		if (kind === 'set') this.#alarms++;
+		else this.#alarmDeletes++;
+	}
+
 	reset(): void {
 		this.#cursors = [];
 		this.#kv = { read: 0, written: 0 };
+		this.#alarms = 0;
+		this.#alarmDeletes = 0;
 	}
 
 	/**
@@ -103,6 +119,8 @@ class SqlTrace {
 			rowsWritten,
 			byOwner,
 			kv: { ...this.#kv },
+			alarms: this.#alarms,
+			alarmDeletes: this.#alarmDeletes,
 			statements: [...statements.entries()].sort(
 				([, a], [, b]) => b.rowsRead + b.rowsWritten - (a.rowsRead + a.rowsWritten),
 			),
@@ -149,6 +167,36 @@ export function installSqlTrace(storage: DurableObjectStorage): void {
 	wrap('get', 'read');
 	wrap('put', 'written');
 	wrap('delete', 'written');
+	const kv = (storage as { kv?: object }).kv;
+	if (kv) {
+		const kvPrototype = Object.getPrototypeOf(kv) as Record<
+			'get' | 'put' | 'delete',
+			(...args: unknown[]) => unknown
+		>;
+		for (const [method, kind] of [
+			['get', 'read'],
+			['put', 'written'],
+			['delete', 'written'],
+		] as const) {
+			const original = kvPrototype[method];
+			if (typeof original !== 'function') continue;
+			kvPrototype[method] = function (this: unknown, ...args: unknown[]) {
+				sqlTrace.kv(kind, keyCount(args[0]));
+				return original.apply(this, args);
+			};
+		}
+	}
+	const alarmPrototype = storagePrototype as unknown as Record<
+		'setAlarm' | 'deleteAlarm',
+		(...args: unknown[]) => unknown
+	>;
+	for (const method of ['setAlarm', 'deleteAlarm'] as const) {
+		const original = alarmPrototype[method];
+		alarmPrototype[method] = function (this: unknown, ...args: unknown[]) {
+			sqlTrace.alarm(method === 'setAlarm' ? 'set' : 'delete');
+			return original.apply(this, args);
+		};
+	}
 }
 
 /** `[first-wake]` report lines: totals, then the `limit` most expensive statements. */
@@ -160,7 +208,7 @@ export function formatTrace(label: string, summary: TraceSummary, limit = 200): 
 				`${String(cost.rowsRead).padStart(5)}r ${String(cost.rowsWritten).padStart(4)}w ×${cost.calls} ${sql.slice(0, 140)}`,
 		);
 	return [
-		`[first-wake] ${label}: sql read ${summary.rowsRead} written ${summary.rowsWritten}; kv keys read ${summary.kv.read} written ${summary.kv.written}; ${summary.statements.length} statements`,
+		`[first-wake] ${label}: sql read ${summary.rowsRead} written ${summary.rowsWritten}; kv keys read ${summary.kv.read} written ${summary.kv.written}; setAlarm ${summary.alarms}, deleteAlarm ${summary.alarmDeletes}; ${summary.statements.length} statements`,
 		`  by owner: ${Object.entries(summary.byOwner)
 			.map(([owner, rows]) => `${owner} ${rows.rowsRead}r/${rows.rowsWritten}w`)
 			.join(', ')}`,

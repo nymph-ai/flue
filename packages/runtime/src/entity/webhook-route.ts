@@ -10,9 +10,9 @@
  *    entity its (signed) id names; otherwise each pending
  *    `flue/v1/{type}/{id}/inbox` belongs to that entity.
  * 3. Ring each entity's doorbell, once per stream — on Cloudflare the
- *    `__flueWake({ stream, head })` RPC of `idFromName(entity)`, which writes
- *    the stream's high-water mark in the same synchronous turn as
- *    `setAlarm(now)` and returns. Nothing is processed here; the alarm pumps.
+ *    `__flueWake({ stream, head })` RPC of `getByName(entity)`, which writes
+ *    the stream's high-water mark in the same synchronous turn as the wake
+ *    job it arms and returns. Nothing is processed here; the wake pumps.
  * 4. Once every doorbell resolved — the heads are durable — ack the wake's
  *    tails through its callback with `done: true`, so the server re-wakes
  *    only for events appended later. The reply is `{ ok: true }`, never
