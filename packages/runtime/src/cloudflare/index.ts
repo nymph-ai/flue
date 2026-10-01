@@ -25,10 +25,10 @@ export type { CloudflareSandboxOptions, CloudflareSandboxStub } from './cf-sandb
 export { cloudflareSandbox } from './cf-sandbox.ts';
 export {
 	CODEMODE_LOADER_BINDING,
+	type CodemodeExecutorOptions,
 	type CodemodeWorkerLoader,
-	DynamicWorkerCodemodeExecutor,
-	type DynamicWorkerCodemodeExecutorOptions,
-} from './codemode-dynamic-worker.ts';
+	createCodemodeExecutor,
+} from './codemode.ts';
 export type { CloudflareContext, FlueDurableObjectIdentity } from './context.ts';
 export { getCloudflareContext, getDurableObjectIdentity } from './context.ts';
 export type {

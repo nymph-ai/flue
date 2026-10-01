@@ -41,7 +41,7 @@ import type {
 	SubagentDefinition,
 	ThinkingLevel,
 } from '../types.ts';
-import { CODEMODE_TOOL_NAME, createCodemodeToolRegistration } from './codemode/tool.ts';
+import { CODEMODE_TOOL_NAME, createCodemodeToolRegistration } from '../codemode/tool.ts';
 import {
 	compactionPolicyFor,
 	modelLimits,
@@ -99,7 +99,7 @@ export interface RenderedAgent {
 	 * same sandbox: a new array re-registers the tools.
 	 */
 	readonly sandboxTools?: readonly ToolRegistration[];
-	/** `useCodeMode()` declaration: offers Pi's `codemode` tool over the render's other tools. */
+	/** `useCodeMode()` declaration: offers the `codemode` tool over the render's other tools. */
 	readonly codeMode?: CodeModeDeclaration;
 }
 
@@ -137,7 +137,7 @@ export function renderedAgentFrom(
 	};
 }
 
-/** Resolves `useMcpConnection` declarations to Pi tools (lane-mcp's `mcp.ts` on `pi-mcp`). */
+/** Resolves `useMcpConnection` declarations to Pi tools (`mcp.ts`). */
 export type McpToolResolver = (
 	connections: readonly McpConnectionDefinition[],
 	context: Context,
@@ -429,10 +429,6 @@ export class RegistryBridge {
 							...render.tools.map((tool) => flueToolRegistration(tool, this.#options.tools)),
 							...mcpTools,
 						],
-						...(declaration.timeoutMs !== undefined ? { timeoutMs: declaration.timeoutMs } : {}),
-						...(declaration.memoryLimitBytes !== undefined
-							? { memoryLimitBytes: declaration.memoryLimitBytes }
-							: {}),
 						...(declaration.maxOutputTokens !== undefined
 							? { maxOutputTokens: declaration.maxOutputTokens }
 							: {}),
