@@ -151,7 +151,7 @@ export function diffDigests(
 }
 
 /** A session document only the split-brain probe writes. */
-const SplitBrainMark = defineDoc<{ at: number; by: string }>({
+const SplitBrainMark = /* @__PURE__ */ defineDoc<{ at: number; by: string }>({
 	kind: 'flue.qualification.split-brain',
 	version: 1,
 	scope: 'session',
