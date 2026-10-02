@@ -15,9 +15,6 @@
 		{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }
 	],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
-	"r2_buckets": [
-		{ "binding": "LIBRARY_VAULT", "bucket_name": "library-vault" }
-	],
 	"artifacts": [
 		{ "binding": "ARTIFACTS", "namespace": "default" }
 	],
