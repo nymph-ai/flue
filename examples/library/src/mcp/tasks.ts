@@ -80,10 +80,12 @@ export class TaskStore {
 			timestamp: now,
 		});
 
-		// Trigger background execution
-		void this.executeTask(taskId);
+		// Trigger background execution asynchronously on next microtask
+		queueMicrotask(() => {
+			void this.executeTask(taskId);
+		});
 
-		return task;
+		return { ...task };
 	}
 
 	getTask(taskId: string): TaskRecord | null {
