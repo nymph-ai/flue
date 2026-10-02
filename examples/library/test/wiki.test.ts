@@ -5,6 +5,7 @@ vi.mock('cloudflare:workers', () => ({
 	DurableObject: class {},
 }));
 import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from '../src/wiki/okf.ts';
+import { createMcpRouter } from '../src/mcp/router.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
 import type { OKFConceptNote, OKFStoryNote } from '../src/wiki/types.ts';
@@ -268,5 +269,115 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(tokenData.scope).toBe('write');
 		expect(tokenData.repository).toBe('library-vault');
 		expect(tokenData.expiresAt).toBeDefined();
+	});
+
+	it('provides standard MCP JSON-RPC 2.0 interface for OpenAI Dots', async () => {
+		const vault = new LibraryVault();
+		const mcp = createMcpRouter(() => vault);
+
+		// 1. GET /mcp (Discovery)
+		const resGet = await mcp.request('/');
+		expect(resGet.status).toBe(200);
+		const getJson = (await resGet.json()) as { name: string; protocol: string; tools: string[] };
+		expect(getJson.name).toBe('library-knowledge-vault');
+		expect(getJson.protocol).toBe('2024-11-05');
+		expect(getJson.tools).toContain('search_vault');
+		expect(getJson.tools).toContain('curate_story');
+
+		// 2. POST /mcp initialize
+		const resInit = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'initialize',
+				params: { clientInfo: { name: 'openai-dot', version: '1.0' } },
+			}),
+		});
+		expect(resInit.status).toBe(200);
+		const initJson = (await resInit.json()) as { result: { serverInfo: { name: string } } };
+		expect(initJson.result.serverInfo.name).toBe('library-knowledge-vault');
+
+		// 3. POST /mcp tools/list
+		const resList = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 2,
+				method: 'tools/list',
+			}),
+		});
+		expect(resList.status).toBe(200);
+		const listJson = (await resList.json()) as { result: { tools: Array<{ name: string }> } };
+		expect(listJson.result.tools.map((t) => t.name)).toEqual(
+			expect.arrayContaining(['search_vault', 'get_note', 'curate_story', 'get_git_sync_info']),
+		);
+
+		// 4. POST /mcp tools/call curate_story (Dot curating a paper)
+		const resCurate = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 3,
+				method: 'tools/call',
+				params: {
+					name: 'curate_story',
+					arguments: {
+						native_id: '99001',
+						title: 'Verifiable Agent Checkpoints via Firecracker Snapshots',
+						url: 'https://example.com/checkpoints',
+						summary: 'Formal verification of agent state restoration.',
+						significance: 'Enables deterministic execution resumes.',
+						curatorNotes: 'Evaluated by OpenAI Dot.',
+						topics: ['Virtualization', 'Verification'],
+						concepts: ['[[Firecracker]]', '[[Memory Snapshots]]'],
+						significance_score: 0.96,
+					},
+				},
+			}),
+		});
+		expect(resCurate.status).toBe(200);
+		const curateJson = (await resCurate.json()) as { result: { content: Array<{ text: string }> } };
+		expect(curateJson.result.content[0].text).toContain('curated');
+		expect(curateJson.result.content[0].text).toContain('hn-99001');
+
+		// 5. POST /mcp tools/call search_vault (Dot searching)
+		const resSearch = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 4,
+				method: 'tools/call',
+				params: {
+					name: 'search_vault',
+					arguments: { query: 'Firecracker' },
+				},
+			}),
+		});
+		expect(resSearch.status).toBe(200);
+		const searchJson = (await resSearch.json()) as { result: { content: Array<{ text: string }> } };
+		expect(searchJson.result.content[0].text).toContain('Firecracker');
+
+		// 6. POST /mcp tools/call get_note (Dot reading note)
+		const resNote = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 5,
+				method: 'tools/call',
+				params: {
+					name: 'get_note',
+					arguments: { path: 'stories/hn-99001.md' },
+				},
+			}),
+		});
+		expect(resNote.status).toBe(200);
+		const noteJson = (await resNote.json()) as { result: { content: Array<{ text: string }> } };
+		expect(noteJson.result.content[0].text).toContain('Verifiable Agent Checkpoints');
 	});
 });

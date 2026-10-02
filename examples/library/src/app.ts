@@ -6,6 +6,7 @@
 import { createAgentRouter } from '@flue/runtime/routing';
 import { Hono } from 'hono';
 import { Curator } from './agent.ts';
+import { createMcpRouter } from './mcp/router.ts';
 import { libraryModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
 import { createWikiRouter } from './wiki/routes.ts';
@@ -17,6 +18,7 @@ app.get('/', (c) =>
 		agent: 'curator',
 		model: libraryModel(),
 		streams: Boolean(c.env.FLUE_STREAMS_URL),
+		mcp: '/mcp',
 		wiki: '/wiki',
 		manifest: '/wiki/manifest',
 		gitInfo: '/wiki/git/info',
@@ -26,6 +28,9 @@ app.get('/', (c) =>
 
 // Wiki vault routes (public / accessible for Obsidian sync)
 app.route('/wiki', createWikiRouter());
+
+// MCP server endpoint for OpenAI Dots & external AI tools
+app.route('/mcp', createMcpRouter());
 
 // Agent route protected by bearer token
 app.use('/agents/*', async (c, next) => {

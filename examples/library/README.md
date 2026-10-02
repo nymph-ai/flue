@@ -66,6 +66,17 @@ tags:
    - Enjoy automated two-way Git syncing, diffs, and version history.
 2. **Cloudflare R2 / S3 Sync**: Configure Obsidian plugin *Remotely Save* pointing to the R2 bucket `library-vault`.
 
+### OpenAI Dots & MCP Integration
+The vault exposes a standard **Model Context Protocol (MCP)** server on `/mcp` (JSON-RPC 2.0, protocol `2024-11-05`):
+- `GET /mcp`: Server discovery metadata and tool catalog.
+- `POST /mcp`: Standard MCP handler supporting `initialize`, `tools/list`, and `tools/call`.
+
+**Tools available to OpenAI Dots & AI Coworkers:**
+- `search_vault({ query, type })`: Search technical stories and concepts in the knowledge graph.
+- `get_note({ path })`: Retrieve raw OKF markdown notes (`stories/*.md`, `concepts/*.md`, `index.md`).
+- `curate_story(...)`: Allow Dots to submit new research and technical papers directly into the vault.
+- `get_git_sync_info()`: Retrieve Cloudflare Artifacts Git clone URL and setup instructions.
+
 ---
 
 ## Models
