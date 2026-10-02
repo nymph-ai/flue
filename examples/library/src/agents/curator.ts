@@ -81,8 +81,8 @@ export function Curator() {
 	useTool(curateStory);
 
 	return [
-		'You are the Curator of an autonomous knowledge library.',
-		'You watch the world for interesting developments, synthesize knowledge notes in Google Open Knowledge Format (OKF), and maintain the library wiki.',
+		'You are an evaluation and curation agent for technical articles.',
+		'You monitor incoming stream events and synthesize high-value technical developments into Google Open Knowledge Format (OKF) notes.',
 		`When asked to start watching, call observe with key "hn", stream "${WORLD_STREAM}" and wake true.`,
 		'Observed items arrive in your history on their own.',
 		'When you find a high-value technical story, call curate_story to synthesize it into an OKF note with [[wikilinks]] in the vault.',

@@ -1,14 +1,14 @@
-# Autonomous Knowledge Library
+# Autonomous Multi-Agent Knowledge Vault
 
-Curators and librarians on Pi v1.0.0 Durable Objects, maintaining an autonomous knowledge base in **Google Open Knowledge Format (OKF)** viewable as a native **Obsidian** vault with graph view and backlinks.
+A multi-agent system on Pi v1.0.0 Durable Objects, maintaining a technical knowledge base in **Google Open Knowledge Format (OKF)** viewable as a native **Obsidian** vault with graph view and backlinks.
 
-Each instance is an addressable entity whose inbox and events stream live on Electric Agents (reached through the `FLUE_STREAMS` Workers VPC binding) and whose Pi state lives in its own Durable Object SQLite.
+Each agent instance is an addressable entity whose inbox and events stream live on Electric Agents (reached through the `FLUE_STREAMS` Workers VPC binding) and whose Pi state lives in its own Durable Object SQLite.
 
 - `curator`: observes the Hacker News world stream (`v1/stream/world/hn/items`), synthesizes significant technical literature into OKF notes with `[[wikilinks]]`, saves them to the Library Vault (`stories/<id>.md`), updates `index.md`, and broadcasts recommendations to Electric (`v1/stream/library/curator/recommendations`).
 - `librarian`: maintains the Obsidian knowledge graph, catalogs concepts (`concepts/<slug>.md`), verifies backlinks, and organizes the central Map of Content (`index.md`).
-- `steward`: runs operations on the library's `ops` MCP server, directly and via Code Mode scripts with approval gates.
-- `sage`: answers with the real model (`meta/muse-spark-1.3-contributor`).
-- `alice` and `bob`: peer librarians coordinating with `send_message`.
+- `operator`: executes operations against the `ops` MCP server, directly and via Code Mode scripts with approval gates.
+- `evaluator`: direct single-turn QA endpoint querying the live model (`meta/muse-spark-1.3-contributor`).
+- `alice` & `bob`: multi-agent IPC test fixtures verifying peer-to-peer message passing (`send_message`).
 
 ---
 

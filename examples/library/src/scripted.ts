@@ -14,7 +14,7 @@
  *                                  start), waking on new items
  *   schedule <delay-ms> <text>     schedule_wake for this agent
  *   codemode record <id>           a Code Mode script calling tools.mcp__ops__record({ id })
- *                                  (approval-gated on the steward)
+ *                                  (approval-gated on the operator)
  *   codemode teams                 a script returning Linear's list_teams
  *   codemode frustration <team>    the "You Said No MCP!" script (you-said-no-mcp.ts)
  *   codemode recall                a script returning how many results it stored

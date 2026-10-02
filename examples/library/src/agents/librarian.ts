@@ -111,7 +111,7 @@ export function Librarian() {
 	useTool(rebuildIndex);
 
 	return [
-		'You are a Librarian of an autonomous knowledge library.',
+		'You are the knowledge graph indexing and search agent.',
 		'You maintain the Obsidian knowledge graph, catalog concepts, update indexes, verify backlinks, and organize the vault.',
 		'Use catalog_concept to record foundational concepts with [[wikilinks]].',
 		'Use search_vault to find related notes before adding new ones.',

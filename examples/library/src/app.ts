@@ -12,9 +12,9 @@ import { Hono } from 'hono';
 import { Alice } from './agents/alice.ts';
 import { Bob } from './agents/bob.ts';
 import { Curator } from './agents/curator.ts';
+import { Evaluator } from './agents/evaluator.ts';
 import { Librarian } from './agents/librarian.ts';
-import { Sage } from './agents/sage.ts';
-import { Steward } from './agents/steward.ts';
+import { Operator } from './agents/operator.ts';
 import { libraryModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
 import { createWikiRouter } from './wiki/routes.ts';
@@ -23,7 +23,7 @@ const app = new Hono<{ Bindings: Record<string, unknown> }>();
 
 app.get('/', (c) =>
 	c.json({
-		library: ['curator', 'librarian', 'steward', 'sage', 'alice', 'bob'],
+		agents: ['curator', 'librarian', 'operator', 'evaluator', 'alice', 'bob'],
 		model: libraryModel(),
 		streams: Boolean(c.env.FLUE_STREAMS_URL),
 		wiki: '/wiki',
@@ -49,9 +49,13 @@ if (__QUALIFICATION__) installQualification(app as never);
 
 app.route('/agents/curator', createAgentRouter(Curator));
 app.route('/agents/librarian', createAgentRouter(Librarian));
-app.route('/agents/steward', createAgentRouter(Steward));
-app.route('/agents/sage', createAgentRouter(Sage));
+app.route('/agents/operator', createAgentRouter(Operator));
+app.route('/agents/evaluator', createAgentRouter(Evaluator));
 app.route('/agents/alice', createAgentRouter(Alice));
 app.route('/agents/bob', createAgentRouter(Bob));
+
+// Compatibility routes for existing qualification harnesses
+app.route('/agents/steward', createAgentRouter(Operator));
+app.route('/agents/sage', createAgentRouter(Evaluator));
 
 export default app;

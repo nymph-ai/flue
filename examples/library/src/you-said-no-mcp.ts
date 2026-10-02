@@ -1,6 +1,6 @@
 /**
  * Earendil's "You Said No MCP!" script (2026-09-29,
- * https://earendil.com/posts/you-said-no-mcp/), for the steward's
+ * https://earendil.com/posts/you-said-no-mcp/), for the operator's
  * `codemode frustration <team>` command, against the real Linear MCP server
  * (read-only). It differs from the post where Pi itself or this workspace
  * makes it:
