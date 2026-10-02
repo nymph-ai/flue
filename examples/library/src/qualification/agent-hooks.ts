@@ -1,5 +1,5 @@
 /**
- * Test-only Durable Object hooks for the society's agents, compiled in only by
+ * Test-only Durable Object hooks for the library's agents, compiled in only by
  * a `QUALIFICATION=1` build (`hooks.ts`). They add RPC methods the admin
  * routes call and record what happens to each instance in its own SQLite
  * (`qual_activity`), so a doorbell, an alarm, an eviction or a boot is
@@ -45,7 +45,7 @@ export function recordActivity(
 			detail === undefined ? null : JSON.stringify(detail),
 		);
 	} catch (error) {
-		console.error('[society:qual] could not record activity', error);
+		console.error('[library:qual] could not record activity', error);
 	}
 }
 

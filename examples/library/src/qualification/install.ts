@@ -1,9 +1,9 @@
 /**
- * The qualification surface of the society Worker, compiled in only by a
+ * The qualification surface of the library Worker, compiled in only by a
  * `QUALIFICATION=1` build (`vite.config.ts` defines `__QUALIFICATION__`) and
  * served only when the deployment also sets the `QUALIFICATION` var to "1".
  *
- * `/qual/*` admin routes, behind the `SOCIETY_TOKEN` bearer secret, inspect
+ * `/qual/*` admin routes, behind the `LIBRARY_TOKEN` bearer secret, inspect
  * and drive instances through their Durable Object RPC hooks
  * (`agent-hooks.ts`): storage cost, the wake book, forced evictions and
  * hand-rung doorbells.
@@ -60,7 +60,7 @@ export function installQualification(app: Hono): void {
 	app.use('/qual/*', async (c, next) => {
 		const source = c.env as Vars;
 		if (!enabled(source)) return c.json({ error: 'qualification is off' }, 404);
-		const token = source.SOCIETY_TOKEN;
+		const token = (source.LIBRARY_TOKEN ?? source.SOCIETY_TOKEN) as string | undefined;
 		const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
 		if (typeof token !== 'string' || token.length < 32 || !timingSafeEqual(given, token)) {
 			return c.json({ error: 'unauthorized' }, 401);
@@ -74,7 +74,7 @@ export function installQualification(app: Hono): void {
 		return c.json({
 			ok: true,
 			qualification: enabled(source),
-			model: source.SOCIETY_MODEL ?? 'scripted',
+			model: (source.LIBRARY_MODEL ?? source.SOCIETY_MODEL ?? 'scripted') as string,
 			streams: streams ? { baseUrl: streams.baseUrl, webhook: streams.webhook ?? null } : null,
 			version: (source.CF_VERSION_METADATA as { id?: string; tag?: string } | undefined) ?? null,
 		});

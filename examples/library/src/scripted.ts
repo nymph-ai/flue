@@ -1,5 +1,5 @@
 /**
- * A deterministic scripted model for the society: a pi-ai provider over the
+ * A deterministic scripted model for the library: a pi-ai provider over the
  * faux model (`fauxProvider`), so every turn still runs the full Pi Durable
  * path — generation tasks, streamed partials, tool rounds, commits — and only
  * the model's choice is scripted.
@@ -40,7 +40,8 @@ import {
 import { frustrationScript } from './you-said-no-mcp.ts';
 
 export const SCRIPTED_PROVIDER = 'scripted';
-export const SCRIPTED_MODEL = 'society-1';
+export const SCRIPTED_MODEL = 'library-1';
+export const LEGACY_SCRIPTED_MODEL = 'society-1';
 
 interface Signal {
 	readonly type: string;
@@ -242,11 +243,14 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	return fauxAssistantMessage(`ack: ${body.slice(0, 80)}`);
 }
 
-/** The scripted provider: model `scripted/society-1`. */
+/** The scripted provider: model `scripted/library-1`. */
 export function scriptedProvider(options: { readonly tokensPerSecond?: number } = {}): Provider {
 	const faux = fauxProvider({
 		provider: SCRIPTED_PROVIDER,
-		models: [{ id: SCRIPTED_MODEL, name: 'Society scripted model' }],
+		models: [
+			{ id: SCRIPTED_MODEL, name: 'Library scripted model' },
+			{ id: LEGACY_SCRIPTED_MODEL, name: 'Library scripted model (legacy alias)' },
+		],
 		...(options.tokensPerSecond ? { tokensPerSecond: options.tokensPerSecond } : {}),
 		tokenSize: { min: 4, max: 4 },
 	});

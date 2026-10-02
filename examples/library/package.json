@@ -1,11 +1,12 @@
 {
-	"name": "agent-society",
+	"name": "library",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"build": "vite build",
 		"check:types": "tsc --noEmit",
-		"deploy": "vite build && wrangler deploy"
+		"deploy": "vite build && wrangler deploy",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "1.0.0",
@@ -18,6 +19,7 @@
 		"@flue/cli": "workspace:*",
 		"@flue/vite": "workspace:*",
 		"vite": "^8.0.14",
+		"vitest": "^4.1.6",
 		"wrangler": "^4.113.0"
 	}
 }
