@@ -18,7 +18,6 @@ app.get('/', (c) =>
 		model: libraryModel(),
 		streams: Boolean(c.env.FLUE_STREAMS_URL),
 		wiki: '/wiki',
-		vaultZip: '/wiki/vault.zip',
 		manifest: '/wiki/manifest',
 		gitInfo: '/wiki/git/info',
 		gitToken: '/wiki/git/token',

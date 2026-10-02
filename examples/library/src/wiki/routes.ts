@@ -71,20 +71,6 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 		return c.json(manifest);
 	});
 
-	// 1-Click Vault Download for Obsidian
-	wiki.get('/vault.zip', async (c) => {
-		const vault = resolveVault(c.env);
-		const zipBytes = await vault.exportVaultZip();
-		return new Response(zipBytes as unknown as BodyInit, {
-			status: 200,
-			headers: {
-				'content-type': 'application/zip',
-				'content-disposition': 'attachment; filename="library-obsidian-vault.zip"',
-				'content-length': String(zipBytes.byteLength),
-			},
-		});
-	});
-
 	// Curation endpoint
 	wiki.post('/curate', async (c) => {
 		const story = (await c.req.json()) as OKFStoryNote;
@@ -125,7 +111,6 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 			endpoints: {
 				token: '/wiki/git/token',
 				manifest: '/wiki/manifest',
-				zip: '/wiki/vault.zip',
 			},
 			instructions: {
 				obsidianGit: [

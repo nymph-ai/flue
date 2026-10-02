@@ -107,7 +107,6 @@ export interface GitSyncInfo {
 	endpoints: {
 		token: string;
 		manifest: string;
-		zip: string;
 	};
 	instructions: {
 		obsidianGit: string[];

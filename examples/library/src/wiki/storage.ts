@@ -4,7 +4,6 @@
  */
 import { formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from './okf.ts';
 import type { OKFConceptNote, OKFLogEntry, OKFStoryNote, VaultManifest } from './types.ts';
-import { createZip, type ZipEntry } from './zip.ts';
 
 export interface R2BucketLike {
 	get(key: string): Promise<{ text(): Promise<string> } | null>;
@@ -24,7 +23,7 @@ export class LibraryVault {
 	private readonly memoryStore = new Map<string, { content: string; modified: Date }>();
 	private readonly stories = new Map<string, OKFStoryNote>();
 	private readonly concepts = new Map<string, OKFConceptNote>();
-	private logContent = '# Curator & Librarian Activity Log\n\n';
+	private logContent = '# Curator Activity Log\n\n';
 
 	constructor(r2Bucket?: R2BucketLike) {
 		this.r2 = r2Bucket;
@@ -211,31 +210,6 @@ export class LibraryVault {
 			totalFiles: files.length,
 			files,
 		};
-	}
-
-	/**
-	 * Package the entire vault as a standard ZIP archive for 1-click import into Obsidian.
-	 */
-	async exportVaultZip(): Promise<Uint8Array> {
-		const entries: ZipEntry[] = [];
-		const allPaths = await this.listNotes();
-
-		// Ensure index and log are included
-		if (!allPaths.includes('index.md')) allPaths.push('index.md');
-		if (!allPaths.includes('log.md')) allPaths.push('log.md');
-
-		for (const path of allPaths) {
-			const content = await this.getNote(path);
-			if (content !== null) {
-				entries.push({
-					name: path,
-					data: content,
-					date: new Date(),
-				});
-			}
-		}
-
-		return createZip(entries);
 	}
 
 	private async putFile(path: string, content: string, contentType: string): Promise<void> {

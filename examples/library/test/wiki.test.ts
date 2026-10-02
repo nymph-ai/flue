@@ -83,7 +83,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(moc).toContain('[[bpf_fault]] (1 stories)');
 	});
 
-	it('saves notes, generates concepts, and packages vault zip in LibraryVault', async () => {
+	it('saves notes, generates concepts, and manifests in LibraryVault', async () => {
 		const vault = new LibraryVault();
 
 		const story: OKFStoryNote = {
@@ -132,18 +132,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(manifest.vaultName).toBe('Autonomous Knowledge Library');
 		expect(manifest.totalStories).toBe(1);
 		expect(manifest.totalConcepts).toBe(2);
-
-		// Check exportVaultZip generates a valid ZIP archive (signature 0x04034b50)
-		const zipBytes = await vault.exportVaultZip();
-		expect(zipBytes.byteLength).toBeGreaterThan(100);
-		// Check PK.. magic header
-		expect(zipBytes[0]).toBe(0x50); // 'P'
-		expect(zipBytes[1]).toBe(0x4b); // 'K'
-		expect(zipBytes[2]).toBe(0x03);
-		expect(zipBytes[3]).toBe(0x04);
 	});
 
-	it('routes serve vault index, notes, manifest, and vault.zip', async () => {
+	it('routes serve vault index, notes, and manifest', async () => {
 		const vault = new LibraryVault();
 		const router = createWikiRouter(() => vault);
 
@@ -184,16 +175,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resManifest.status).toBe(200);
 		const manifestJson = (await resManifest.json()) as { totalStories: number };
 		expect(manifestJson.totalStories).toBe(1);
-
-		// GET /vault.zip
-		const resZip = await router.request('/vault.zip');
-		expect(resZip.status).toBe(200);
-		expect(resZip.headers.get('content-type')).toBe('application/zip');
-		const zipBuffer = await resZip.arrayBuffer();
-		expect(zipBuffer.byteLength).toBeGreaterThan(100);
 	});
 
-	it('executes e2e curation workflow: ingest story -> agent tool -> vault persistence -> wiki API & zip', async () => {
+	it('executes e2e curation workflow: ingest story -> agent tool -> vault persistence -> wiki API', async () => {
 		// 1. Ingest: Hacker News sensory item
 		const sensoryObservation = {
 			id: 'hackernews:story:49930412',
@@ -248,11 +232,6 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const conceptContent = await resConcept.text();
 		expect(conceptContent).toContain('bpf_fault');
 		expect(conceptContent).toContain("It's the Kernel's Fault");
-
-		const resZip = await router.request('/vault.zip');
-		expect(resZip.status).toBe(200);
-		const zipBuffer = await resZip.arrayBuffer();
-		expect(zipBuffer.byteLength).toBeGreaterThan(500);
 	});
 
 	it('serves Cloudflare Artifacts Git sync info and tokens for obsidian-git', async () => {
