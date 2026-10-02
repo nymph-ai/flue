@@ -730,7 +730,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 
 		// 1. Submit task through POST /mcp -> should delegate to mockStub.submitMcpTask
 		const resSubmit = await router.fetch(
-			new Request('https://library.nymphai.workers.dev/mcp', {
+			new Request('http://localhost/', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -758,7 +758,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 
 		// 2. Query get_task through POST /mcp -> should delegate to mockStub.getMcpTask
 		const resGetTask = await router.fetch(
-			new Request('https://library.nymphai.workers.dev/mcp', {
+			new Request('http://localhost/', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -778,7 +778,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 
 		// 3. Fast read: search through POST /mcp -> should NOT call mockStub, runs at edge against vault
 		const resSearch = await router.fetch(
-			new Request('https://library.nymphai.workers.dev/mcp', {
+			new Request('http://localhost/', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({

@@ -154,13 +154,13 @@ export class TaskStore {
 	}
 
 	private scheduleExecution(taskId: string): void {
-		const execPromise = this.executeTask(taskId);
+		const run = async () => {
+			await new Promise<void>((resolve) => queueMicrotask(resolve));
+			await this.executeTask(taskId);
+		};
+		const promise = run();
 		if (this.ctx?.waitUntil) {
-			this.ctx.waitUntil(execPromise);
-		} else {
-			queueMicrotask(() => {
-				void execPromise;
-			});
+			this.ctx.waitUntil(promise);
 		}
 	}
 
