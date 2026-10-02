@@ -380,7 +380,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resSubmit.status).toBe(200);
 		const submitJson = (await resSubmit.json()) as { result: { content: Array<{ text: string }> } };
-		const submitData = JSON.parse(submitJson.result.content[0].text) as {
+		const submitData = JSON.parse(submitJson.result.content[0]!.text) as {
 			taskId: string;
 			status: string;
 			revision: number;
@@ -407,7 +407,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resGetTask.status).toBe(200);
 		const taskDataJson = (await resGetTask.json()) as { result: { content: Array<{ text: string }> } };
-		const taskData = JSON.parse(taskDataJson.result.content[0].text) as {
+		const taskData = JSON.parse(taskDataJson.result.content[0]!.text) as {
 			id: string;
 			status: string;
 			revision: number;
@@ -431,7 +431,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resResult.status).toBe(200);
 		const resultJson = (await resResult.json()) as { result: { content: Array<{ text: string }> } };
-		const resultData = JSON.parse(resultJson.result.content[0].text) as {
+		const resultData = JSON.parse(resultJson.result.content[0]!.text) as {
 			taskId: string;
 			status: string;
 			sources: Array<{ title: string; url: string }>;
@@ -466,7 +466,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resAck.status).toBe(200);
 		const ackJson = (await resAck.json()) as { result: { content: Array<{ text: string }> } };
-		const ackData = JSON.parse(ackJson.result.content[0].text) as { acknowledged: boolean };
+		const ackData = JSON.parse(ackJson.result.content[0]!.text) as { acknowledged: boolean };
 		expect(ackData.acknowledged).toBe(true);
 
 		// Verify result is now marked acknowledged
@@ -491,7 +491,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resSearch.status).toBe(200);
 		const searchJson = (await resSearch.json()) as { result: { content: Array<{ text: string }> } };
-		expect(searchJson.result.content[0].text).toContain('Firecracker');
+		expect(searchJson.result.content[0]!.text).toContain('Firecracker');
 
 		// 10. POST /mcp tools/call fetch
 		const resFetch = await mcp.request('/', {
@@ -509,7 +509,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resFetch.status).toBe(200);
 		const fetchJson = (await resFetch.json()) as { result: { content: Array<{ text: string }> } };
-		expect(fetchJson.result.content[0].text).toContain('Verifiable Agent Checkpoints');
+		expect(fetchJson.result.content[0]!.text).toContain('Verifiable Agent Checkpoints');
 
 		// 11. Test Replay & Deduplication: Subscribing with fromRevision: 1 replays events
 		const resReplaySub = await mcp.request('/', {
@@ -584,15 +584,15 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			revision: number;
 		}>;
 		expect(taskRows.length).toBe(1);
-		expect(taskRows[0].status).toBe('queued');
-		expect(taskRows[0].revision).toBe(1);
+		expect(taskRows[0]!.status).toBe('queued');
+		expect(taskRows[0]!.revision).toBe(1);
 
 		// Verify queued event was recorded in mcp_events
 		const eventRows = db
 			.prepare('SELECT * FROM mcp_events WHERE task_id = ?')
 			.all(task.id) as Array<{ event: string; status: string }>;
 		expect(eventRows.length).toBeGreaterThanOrEqual(1);
-		expect(eventRows[0].status).toBe('queued');
+		expect(eventRows[0]!.status).toBe('queued');
 
 		// 2. Wait for background execution triggered via ctx.waitUntil
 		await Promise.all(waitUntilPromises);
@@ -614,7 +614,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			.prepare('SELECT * FROM mcp_results WHERE task_id = ?')
 			.all(task.id) as Array<{ task_id: string; acknowledged: number }>;
 		expect(resultRows.length).toBe(1);
-		expect(resultRows[0].acknowledged).toBe(0);
+		expect(resultRows[0]!.acknowledged).toBe(0);
 
 		// 4. Acknowledge result
 		const ackOk = store.acknowledgeResult(task.id, { clientProcessed: true });
@@ -627,7 +627,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const resultRowsAfterAck = db
 			.prepare('SELECT acknowledged FROM mcp_results WHERE task_id = ?')
 			.all(task.id) as Array<{ acknowledged: number }>;
-		expect(resultRowsAfterAck[0].acknowledged).toBe(1);
+		expect(resultRowsAfterAck[0]!.acknowledged).toBe(1);
 
 		// 5. Scoped subscription & event replay from SQLite
 		const subRes = await store.subscribe({
@@ -665,8 +665,8 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const cancelledRows = db
 			.prepare('SELECT status, summary FROM mcp_tasks WHERE id = ?')
 			.all(task2.id) as Array<{ status: string; summary: string }>;
-		expect(cancelledRows[0].status).toBe('cancelled');
-		expect(cancelledRows[0].summary).toBe('User requested stop');
+		expect(cancelledRows[0]!.status).toBe('cancelled');
+		expect(cancelledRows[0]!.summary).toBe('User requested stop');
 	});
 
 	it('createMcpRouter delegates stateful operations via DO RPC to FLUE_CURATOR_AGENT and keeps fast reads at edge', async () => {
@@ -795,7 +795,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		);
 		expect(resSearch.status).toBe(200);
 		const searchData = (await resSearch.json()) as { result: { content: Array<{ text: string }> } };
-		expect(searchData.result.content[0].text).toContain('Edge Search Story');
+		expect(searchData.result.content[0]!.text).toContain('Edge Search Story');
 		// Verified fast read did not touch DO stub
 		expect(mockStub.listMcpEvents).not.toHaveBeenCalled();
 	});

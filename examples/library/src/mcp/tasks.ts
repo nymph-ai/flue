@@ -227,8 +227,8 @@ export class TaskStore {
 	getTask(taskId: string): TaskRecord | null {
 		if (this.sql) {
 			const rows = this.sql.exec(`SELECT * FROM mcp_tasks WHERE id = ?`, taskId).toArray();
-			if (rows.length === 0) return null;
 			const r = rows[0];
+			if (!r) return null;
 			return {
 				id: String(r.id),
 				correlationId: r.correlation_id ? String(r.correlation_id) : undefined,
@@ -249,8 +249,8 @@ export class TaskStore {
 	getResult(taskId: string): TaskResult | null {
 		if (this.sql) {
 			const rows = this.sql.exec(`SELECT * FROM mcp_results WHERE task_id = ?`, taskId).toArray();
-			if (rows.length === 0) return null;
 			const r = rows[0];
+			if (!r) return null;
 			return {
 				taskId: String(r.task_id),
 				resultId: String(r.result_id),
@@ -280,8 +280,8 @@ export class TaskStore {
 	cancelTask(taskId: string, reason = 'Cancelled by caller'): boolean {
 		if (this.sql) {
 			const rows = this.sql.exec(`SELECT * FROM mcp_tasks WHERE id = ?`, taskId).toArray();
-			if (rows.length === 0) return false;
 			const r = rows[0];
+			if (!r) return false;
 			const status = String(r.status);
 			if (status === 'completed' || status === 'failed' || status === 'cancelled') {
 				return false;
@@ -339,7 +339,7 @@ export class TaskStore {
 	acknowledgeResult(taskId: string, receipt?: unknown): boolean {
 		if (this.sql) {
 			const rows = this.sql.exec(`SELECT task_id FROM mcp_results WHERE task_id = ?`, taskId).toArray();
-			if (rows.length === 0) return false;
+			if (!rows[0]) return false;
 			const now = new Date().toISOString();
 			const rcpt = JSON.stringify(receipt ?? { clientAcknowledged: true });
 			this.sql.exec(
@@ -446,7 +446,7 @@ export class TaskStore {
 			const rows = this.sql
 				.exec(`SELECT id FROM mcp_subscriptions WHERE id = ?`, subscriptionId)
 				.toArray();
-			if (rows.length === 0) return false;
+			if (!rows[0]) return false;
 			this.sql.exec(`DELETE FROM mcp_subscriptions WHERE id = ?`, subscriptionId);
 			return true;
 		}
@@ -666,9 +666,8 @@ export class TaskStore {
 		let task: TaskRecord | null = null;
 		if (this.sql) {
 			const rows = this.sql.exec(`SELECT * FROM mcp_tasks WHERE id = ?`, taskId).toArray();
-			if (rows.length === 0) return;
 			const r = rows[0];
-			if (r.status === 'cancelled') return;
+			if (!r || r.status === 'cancelled') return;
 			task = {
 				id: String(r.id),
 				correlationId: r.correlation_id ? String(r.correlation_id) : undefined,
