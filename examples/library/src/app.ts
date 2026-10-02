@@ -41,7 +41,7 @@ app.use(
 );
 
 // Global preflight handler
-app.options('*', (c) => c.text('', 204));
+app.options('*', () => new Response(null, { status: 204 }));
 
 app.get('/', (c) => {
 	const origin = new URL(c.req.url).origin;

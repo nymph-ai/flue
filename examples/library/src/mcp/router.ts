@@ -245,7 +245,7 @@ export function createMcpRouter(
 		}),
 	);
 
-	router.options('*', (c) => c.text('', 204));
+	router.options('*', () => new Response(null, { status: 204 }));
 
 	const resolveTaskStore = () => getTaskStore(() => getVault());
 	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
