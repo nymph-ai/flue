@@ -11,7 +11,7 @@ allowBuilds:
   # Required by Astro support in apps/www.
   sharp: true
   workerd: false
-minimumReleaseAge: 1440
+minimumReleaseAge: 0
 resolutionMode: highest
 minimumReleaseAgeExclude:
   # The internal registry gateway omits the "time" metadata field, so the
