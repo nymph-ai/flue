@@ -1,5 +1,6 @@
 'use agent';
-import { useModel, useTool } from '@flue/runtime';
+import * as v from 'valibot';
+import { defineTool, useModel, useTool } from '@flue/runtime';
 import { libraryModel, liveModel } from '../model.ts';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import type { OKFStoryNote } from '../wiki/types.ts';
@@ -12,117 +13,72 @@ export const WORLD_STREAM = 'v1/stream/world/hn/items';
 /** The library recommendations stream where curated stories are broadcast. */
 export const LIBRARY_RECOMMENDATIONS_STREAM = 'v1/stream/library/curator/recommendations';
 
-export function Curator() {
-	useModel(libraryModel());
+export const curateStory = defineTool({
+	name: 'curate_story',
+	description:
+		'Curate a technical story into the autonomous knowledge library vault in Google Open Knowledge Format (OKF).',
+	input: v.object({
+		native_id: v.string(),
+		title: v.string(),
+		url: v.string(),
+		summary: v.string(),
+		significance: v.string(),
+		curatorNotes: v.string(),
+		topics: v.array(v.string()),
+		concepts: v.array(v.string()),
+		tags: v.optional(v.array(v.string())),
+		significance_score: v.optional(v.number()),
+		by: v.optional(v.string()),
+		score: v.optional(v.number()),
+	}),
+	run: async ({ data }) => {
+		const vault = getOrCreateVault();
+		const now = new Date().toISOString();
+		const storyId = `hn-${data.native_id}`;
 
-	useTool({
-		name: 'curate_story',
-		description:
-			'Curate a technical story into the autonomous knowledge library vault in Google Open Knowledge Format (OKF).',
-		input: {
-			type: 'object',
-			properties: {
-				native_id: { type: 'string', description: 'Hacker News item ID (e.g. "49930412")' },
-				title: { type: 'string', description: 'Story title' },
-				url: { type: 'string', description: 'Original URL of the article or paper' },
-				summary: { type: 'string', description: '2-3 paragraph executive summary of the story' },
-				significance: {
-					type: 'string',
-					description: 'Deep technical significance and implications for distributed/agent systems',
-				},
-				curatorNotes: { type: 'string', description: 'Short assessment of why this story matters' },
-				topics: { type: 'array', items: { type: 'string' }, description: 'Broad topics (e.g. Systems, eBPF)' },
-				concepts: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'Key concepts formatted as Obsidian wikilinks, e.g. ["[[bpf_fault]]", "[[userfaultfd]]"]',
-				},
-				conceptsDetail: {
-					type: 'object',
-					description: 'Map from concept name to 1-sentence description',
-				},
-				tags: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'Obsidian tags (e.g. ["#ebpf", "#kernel", "#memory"])',
-				},
-				significance_score: {
-					type: 'number',
-					description: 'Relevance score between 0.0 and 1.0',
-				},
-				by: { type: 'string', description: 'Submitter handle' },
-				score: { type: 'number', description: 'Community score' },
-			},
-			required: ['native_id', 'title', 'url', 'summary', 'significance', 'curatorNotes', 'topics', 'concepts'],
-		},
-		run: async ({
-			native_id,
-			title,
-			url,
-			summary,
-			significance,
-			curatorNotes,
-			topics,
-			concepts,
-			conceptsDetail = {},
-			tags = [],
-			significance_score = 0.9,
-			by,
-			score,
-		}: {
-			native_id: string;
-			title: string;
-			url: string;
-			summary: string;
-			significance: string;
-			curatorNotes: string;
-			topics: string[];
-			concepts: string[];
-			conceptsDetail?: Record<string, string>;
-			tags?: string[];
-			significance_score?: number;
-			by?: string;
-			score?: number;
-		}) => {
-			const vault = getOrCreateVault();
-			const now = new Date().toISOString();
-			const storyId = `hn-${native_id}`;
+		const story: OKFStoryNote = {
+			schema_version: 'okf/v1',
+			id: storyId,
+			type: 'story',
+			title: data.title,
+			resource: data.url,
+			source: 'hackernews',
+			native_id: data.native_id,
+			timestamp: now,
+			curator: 'curator',
+			curator_model: liveModel(),
+			significance_score: data.significance_score ?? 0.9,
+			topics: data.topics,
+			concepts: data.concepts,
+			tags:
+				data.tags && data.tags.length > 0
+					? data.tags
+					: data.topics.map((t) => `#${t.toLowerCase().replace(/\s+/g, '-')}`),
+			summary: data.summary,
+			significance: data.significance,
+			curatorNotes: data.curatorNotes,
+			discussionUrl: `https://news.ycombinator.com/item?id=${data.native_id}`,
+			by: data.by,
+			score: data.score,
+		};
 
-			const story: OKFStoryNote = {
-				schema_version: 'okf/v1',
-				id: storyId,
-				type: 'story',
-				title,
-				resource: url,
-				source: 'hackernews',
-				native_id,
-				timestamp: now,
-				curator: 'curator',
-				curator_model: liveModel(),
-				significance_score,
-				topics,
-				concepts,
-				conceptsDetail,
-				tags: tags.length > 0 ? tags : topics.map((t) => `#${t.toLowerCase().replace(/\s+/g, '-')}`),
-				summary,
-				significance,
-				curatorNotes,
-				discussionUrl: `https://news.ycombinator.com/item?id=${native_id}`,
-				by,
-				score,
-			};
-
-			const path = await vault.saveStoryNote(story);
-			return {
+		const path = await vault.saveStoryNote(story);
+		return {
+			output: {
 				status: 'curated',
 				path,
 				storyId,
-				title,
-				conceptsAdded: concepts.length,
+				title: data.title,
+				conceptsAdded: data.concepts.length,
 				vaultIndexUpdated: true,
-			};
-		},
-	});
+			},
+		};
+	},
+});
+
+export function Curator() {
+	useModel(libraryModel());
+	useTool(curateStory);
 
 	return [
 		'You are the Curator of an autonomous knowledge library.',

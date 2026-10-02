@@ -11,7 +11,8 @@
 	"dependencies": {
 		"@earendil-works/pi-ai": "1.0.0",
 		"@flue/runtime": "workspace:*",
-		"hono": "^4.12.32"
+		"hono": "^4.12.32",
+		"valibot": "^1.4.2"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.39.2",
