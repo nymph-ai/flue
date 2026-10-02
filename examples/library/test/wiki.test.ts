@@ -4,8 +4,10 @@ vi.mock('cloudflare:workers', () => ({
 	env: {},
 	DurableObject: class {},
 }));
+import { DatabaseSync } from 'node:sqlite';
 import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from '../src/wiki/okf.ts';
 import { createMcpRouter } from '../src/mcp/router.ts';
+import { TaskStore } from '../src/mcp/tasks.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
 import type { OKFConceptNote, OKFStoryNote } from '../src/wiki/types.ts';
@@ -527,5 +529,274 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resReplaySub.status).toBe(200);
 		const replaySubJson = (await resReplaySub.json()) as { result: { replayedEventsCount: number } };
 		expect(replaySubJson.result.replayedEventsCount).toBeGreaterThan(0);
+	});
+
+	it('persists tasks, results, events, and subscriptions to SQLite via TaskStore with Durable Object storage', async () => {
+		const db = new DatabaseSync(':memory:');
+		const sql = {
+			exec: (query: string, ...bindings: unknown[]) => {
+				const stmt = db.prepare(query);
+				const cleanBindings = bindings.map((b) => (b === undefined ? null : b));
+				if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(query)) {
+					const rows = stmt.all(...(cleanBindings as never[])) as Record<string, unknown>[];
+					return { toArray: () => rows };
+				}
+				stmt.run(...(cleanBindings as never[]));
+				return { toArray: () => [] };
+			},
+		};
+
+		const waitUntilPromises: Promise<unknown>[] = [];
+		const mockCtx = {
+			waitUntil: (p: Promise<unknown>) => {
+				waitUntilPromises.push(p);
+			},
+		};
+
+		const vault = new LibraryVault();
+		const store = new TaskStore(() => vault, { sql, ctx: mockCtx });
+
+		// 1. Submit task
+		const task = store.submitTask({
+			type: 'curate',
+			correlationId: 'sqlite-thread-001',
+			payload: {
+				native_id: '4999901',
+				title: 'Zero-Copy IO with io_uring and BPF',
+				url: 'https://example.com/io_uring',
+				summary: 'Modern Linux async IO primitives.',
+				significance: 'Enables high-throughput sensor telemetry.',
+				curatorNotes: 'Evaluated by OpenAI Dot.',
+				topics: ['Kernel', 'IO'],
+				concepts: ['[[io_uring]]', '[[zero-copy]]'],
+				significance_score: 0.95,
+			},
+		});
+
+		expect(task.id).toMatch(/^task_/);
+		expect(task.status).toBe('queued');
+		expect(task.revision).toBe(1);
+
+		// Verify task was immediately written to SQLite table mcp_tasks
+		const taskRows = db.prepare('SELECT * FROM mcp_tasks WHERE id = ?').all(task.id) as Array<{
+			id: string;
+			status: string;
+			revision: number;
+		}>;
+		expect(taskRows.length).toBe(1);
+		expect(taskRows[0].status).toBe('queued');
+		expect(taskRows[0].revision).toBe(1);
+
+		// Verify queued event was recorded in mcp_events
+		const eventRows = db
+			.prepare('SELECT * FROM mcp_events WHERE task_id = ?')
+			.all(task.id) as Array<{ event: string; status: string }>;
+		expect(eventRows.length).toBeGreaterThanOrEqual(1);
+		expect(eventRows[0].status).toBe('queued');
+
+		// 2. Wait for background execution triggered via ctx.waitUntil
+		await Promise.all(waitUntilPromises);
+
+		// 3. Verify task updated to completed in SQLite
+		const completedTask = store.getTask(task.id);
+		expect(completedTask).not.toBeNull();
+		expect(completedTask?.status).toBe('completed');
+		expect(completedTask?.revision).toBe(3); // queued -> running -> completed
+
+		// Verify result stored in mcp_results table in SQLite
+		const result = store.getResult(task.id);
+		expect(result).not.toBeNull();
+		expect(result?.status).toBe('completed');
+		expect(result?.artifacts).toContain('stories/hn-4999901.md');
+		expect(result?.acknowledged).toBe(false);
+
+		const resultRows = db
+			.prepare('SELECT * FROM mcp_results WHERE task_id = ?')
+			.all(task.id) as Array<{ task_id: string; acknowledged: number }>;
+		expect(resultRows.length).toBe(1);
+		expect(resultRows[0].acknowledged).toBe(0);
+
+		// 4. Acknowledge result
+		const ackOk = store.acknowledgeResult(task.id, { clientProcessed: true });
+		expect(ackOk).toBe(true);
+
+		const ackedResult = store.getResult(task.id);
+		expect(ackedResult?.acknowledged).toBe(true);
+		expect(ackedResult?.acknowledgedAt).toBeDefined();
+
+		const resultRowsAfterAck = db
+			.prepare('SELECT acknowledged FROM mcp_results WHERE task_id = ?')
+			.all(task.id) as Array<{ acknowledged: number }>;
+		expect(resultRowsAfterAck[0].acknowledged).toBe(1);
+
+		// 5. Scoped subscription & event replay from SQLite
+		const subRes = await store.subscribe({
+			callbackUrl: 'https://example.com/webhook',
+			filter: { taskId: task.id },
+			fromRevision: 1,
+		});
+		expect(subRes.subscription.id).toMatch(/^sub_/);
+		expect(subRes.replayedEvents.length).toBeGreaterThanOrEqual(2);
+
+		const subRows = db
+			.prepare('SELECT * FROM mcp_subscriptions WHERE id = ?')
+			.all(subRes.subscription.id) as Array<{ id: string }>;
+		expect(subRows.length).toBe(1);
+
+		// 6. Unsubscribe deletes from SQLite
+		const unsubOk = store.unsubscribe(subRes.subscription.id);
+		expect(unsubOk).toBe(true);
+		const subRowsAfter = db
+			.prepare('SELECT * FROM mcp_subscriptions WHERE id = ?')
+			.all(subRes.subscription.id) as Array<{ id: string }>;
+		expect(subRowsAfter.length).toBe(0);
+
+		// 7. Cancellation
+		const task2 = store.submitTask({
+			type: 'curate',
+			payload: { title: 'To be cancelled' },
+		});
+		const cancelOk = store.cancelTask(task2.id, 'User requested stop');
+		expect(cancelOk).toBe(true);
+
+		const cancelledTask = store.getTask(task2.id);
+		expect(cancelledTask?.status).toBe('cancelled');
+
+		const cancelledRows = db
+			.prepare('SELECT status, summary FROM mcp_tasks WHERE id = ?')
+			.all(task2.id) as Array<{ status: string; summary: string }>;
+		expect(cancelledRows[0].status).toBe('cancelled');
+		expect(cancelledRows[0].summary).toBe('User requested stop');
+	});
+
+	it('createMcpRouter delegates stateful operations via DO RPC to FLUE_CURATOR_AGENT and keeps fast reads at edge', async () => {
+		const vault = new LibraryVault();
+		await vault.saveStoryNote({
+			schema_version: 'okf/v1',
+			id: 'hn-5555',
+			type: 'story',
+			title: 'Edge Search Story',
+			resource: 'https://example.com/search',
+			source: 'hackernews',
+			native_id: '5555',
+			timestamp: '2026-10-02T10:00:00Z',
+			curator: 'curator',
+			curator_model: 'meta/muse-spark-1.3-contributor',
+			significance_score: 0.9,
+			topics: ['Edge'],
+			concepts: ['[[Cloudflare Workers]]'],
+			tags: ['#edge'],
+			summary: 'Fast edge search demonstration.',
+			significance: 'Sub-10ms response.',
+			curatorNotes: 'Evaluated at edge.',
+		});
+
+		const mockStub = {
+			submitMcpTask: vi.fn().mockResolvedValue({
+				id: 'task_mock_123',
+				status: 'queued',
+				revision: 1,
+				createdAt: '2026-10-02T10:00:00Z',
+				correlationId: 'corr-do-rpc',
+			}),
+			getMcpTask: vi.fn().mockResolvedValue({
+				id: 'task_mock_123',
+				status: 'completed',
+				revision: 2,
+			}),
+			getMcpResult: vi.fn().mockResolvedValue({
+				taskId: 'task_mock_123',
+				status: 'completed',
+				summary: 'Result from DO RPC',
+			}),
+			cancelMcpTask: vi.fn().mockResolvedValue(true),
+			acknowledgeMcpResult: vi.fn().mockResolvedValue(true),
+			subscribeMcp: vi.fn().mockResolvedValue({
+				subscription: { id: 'sub_mock_123' },
+				replayedEvents: [],
+			}),
+			unsubscribeMcp: vi.fn().mockResolvedValue(true),
+			listMcpEvents: vi.fn().mockResolvedValue([]),
+			getMcpDeliveries: vi.fn().mockResolvedValue([]),
+		};
+
+		const envWithDO = {
+			FLUE_CURATOR_AGENT: {
+				getByName: vi.fn().mockReturnValue(mockStub),
+			},
+		};
+
+		const router = createMcpRouter(() => vault);
+
+		// 1. Submit task through POST /mcp -> should delegate to mockStub.submitMcpTask
+		const resSubmit = await router.fetch(
+			new Request('https://library.nymphai.workers.dev/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: {
+						name: 'submit_task',
+						arguments: {
+							task_type: 'curate',
+							correlation_id: 'corr-do-rpc',
+							payload: { title: 'RPC Story' },
+						},
+					},
+				}),
+			}),
+			envWithDO,
+		);
+		expect(resSubmit.status).toBe(200);
+		expect(mockStub.submitMcpTask).toHaveBeenCalledWith({
+			type: 'curate',
+			correlationId: 'corr-do-rpc',
+			payload: { title: 'RPC Story' },
+		});
+
+		// 2. Query get_task through POST /mcp -> should delegate to mockStub.getMcpTask
+		const resGetTask = await router.fetch(
+			new Request('https://library.nymphai.workers.dev/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 2,
+					method: 'tools/call',
+					params: {
+						name: 'get_task',
+						arguments: { task_id: 'task_mock_123' },
+					},
+				}),
+			}),
+			envWithDO,
+		);
+		expect(resGetTask.status).toBe(200);
+		expect(mockStub.getMcpTask).toHaveBeenCalledWith('task_mock_123');
+
+		// 3. Fast read: search through POST /mcp -> should NOT call mockStub, runs at edge against vault
+		const resSearch = await router.fetch(
+			new Request('https://library.nymphai.workers.dev/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 3,
+					method: 'tools/call',
+					params: {
+						name: 'search',
+						arguments: { query: 'Edge Search Story' },
+					},
+				}),
+			}),
+			envWithDO,
+		);
+		expect(resSearch.status).toBe(200);
+		const searchData = (await resSearch.json()) as { result: { content: Array<{ text: string }> } };
+		expect(searchData.result.content[0].text).toContain('Edge Search Story');
+		// Verified fast read did not touch DO stub
+		expect(mockStub.listMcpEvents).not.toHaveBeenCalled();
 	});
 });

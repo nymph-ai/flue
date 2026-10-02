@@ -4,11 +4,19 @@
  * - Commands: submit_task, get_task, get_result, cancel_task, search, fetch, acknowledge_result.
  * - Events: events/list, events/subscribe, events/unsubscribe, task_changed notifications.
  * - Atomic durable results with sources, versions, limitations, and signed webhook deliveries.
+ * - Stateless edge ingress with delegation to Durable Object SQLite backend.
  */
 import { Hono } from 'hono';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
 import { getOrCreateTaskStore, TaskStore } from './tasks.ts';
+import type {
+	DeliveryRecord,
+	SubscriptionRecord,
+	TaskChangedEvent,
+	TaskRecord,
+	TaskResult,
+} from './types.ts';
 
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
 export const SERVER_INFO = {
@@ -158,6 +166,31 @@ export const EVENT_DEFINITIONS = [
 	},
 ];
 
+export interface McpTaskStore {
+	submitTask(params: {
+		type: string;
+		payload: Record<string, unknown>;
+		correlationId?: string;
+	}): Promise<TaskRecord> | TaskRecord;
+	getTask(taskId: string): Promise<TaskRecord | null> | TaskRecord | null;
+	getResult(taskId: string): Promise<TaskResult | null> | TaskResult | null;
+	cancelTask(taskId: string, reason?: string): Promise<boolean> | boolean;
+	acknowledgeResult(taskId: string, receipt?: unknown): Promise<boolean> | boolean;
+	subscribe(params: {
+		callbackUrl: string;
+		secret?: string;
+		filter?: { taskId?: string; correlationId?: string };
+		fromRevision?: number;
+	}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[] }>;
+	unsubscribe(subscriptionId: string): Promise<boolean> | boolean;
+	listEvents(filter?: {
+		taskId?: string;
+		correlationId?: string;
+		fromRevision?: number;
+	}): Promise<TaskChangedEvent[]> | TaskChangedEvent[];
+	getDeliveryRecords(taskId?: string): Promise<DeliveryRecord[]> | DeliveryRecord[];
+}
+
 function rpcSuccess(id: unknown, result: unknown): Response {
 	return Response.json({ jsonrpc: '2.0', id, result });
 }
@@ -182,6 +215,27 @@ export function createMcpRouter(
 	const resolveTaskStore = () => getTaskStore(() => getVault());
 	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
 
+	const resolveStore = (env?: Record<string, unknown>): McpTaskStore => {
+		const curatorBinding = env?.FLUE_CURATOR_AGENT as
+			| { getByName(name: string): any }
+			| undefined;
+		if (curatorBinding && typeof curatorBinding.getByName === 'function') {
+			const stub = curatorBinding.getByName('curator');
+			return {
+				submitTask: (params) => stub.submitMcpTask(params),
+				getTask: (taskId) => stub.getMcpTask(taskId),
+				getResult: (taskId) => stub.getMcpResult(taskId),
+				cancelTask: (taskId, reason) => stub.cancelMcpTask(taskId, reason),
+				acknowledgeResult: (taskId, receipt) => stub.acknowledgeMcpResult(taskId, receipt),
+				subscribe: (params) => stub.subscribeMcp(params),
+				unsubscribe: (subId) => stub.unsubscribeMcp(subId),
+				listEvents: (filter) => stub.listMcpEvents(filter),
+				getDeliveryRecords: (taskId) => stub.getMcpDeliveries(taskId),
+			};
+		}
+		return resolveTaskStore();
+	};
+
 	// GET /mcp — Discovery and protocol capability negotiation
 	router.get('/', (c) =>
 		c.json({
@@ -204,27 +258,31 @@ export function createMcpRouter(
 	);
 
 	// REST endpoints for direct inspection
-	router.get('/tasks/:id', (c) => {
-		const task = resolveTaskStore().getTask(c.req.param('id'));
+	router.get('/tasks/:id', async (c) => {
+		const store = resolveStore(c.env);
+		const task = await store.getTask(c.req.param('id'));
 		if (!task) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		return c.json(task);
 	});
 
-	router.get('/results/:id', (c) => {
-		const result = resolveTaskStore().getResult(c.req.param('id'));
+	router.get('/results/:id', async (c) => {
+		const store = resolveStore(c.env);
+		const result = await store.getResult(c.req.param('id'));
 		if (!result) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		return c.json(result);
 	});
 
-	router.get('/events', (c) => {
+	router.get('/events', async (c) => {
+		const store = resolveStore(c.env);
 		const taskId = c.req.query('taskId');
 		const correlationId = c.req.query('correlationId');
-		const events = resolveTaskStore().listEvents({ taskId, correlationId });
+		const events = await store.listEvents({ taskId, correlationId });
 		return c.json({ total: events.length, events });
 	});
 
-	router.get('/deliveries/:taskId', (c) => {
-		const deliveries = resolveTaskStore().getDeliveryRecords(c.req.param('taskId'));
+	router.get('/deliveries/:taskId', async (c) => {
+		const store = resolveStore(c.env);
+		const deliveries = await store.getDeliveryRecords(c.req.param('taskId'));
 		return c.json({ total: deliveries.length, deliveries });
 	});
 
@@ -239,7 +297,7 @@ export function createMcpRouter(
 
 		const id = body.id ?? null;
 		const method = body.method;
-		const taskStore = resolveTaskStore();
+		const taskStore = resolveStore(c.env);
 		const vault = resolveVault(c.env);
 
 		// 1. initialize
@@ -306,7 +364,7 @@ export function createMcpRouter(
 		if (method === 'events/unsubscribe') {
 			const params = body.params ?? {};
 			const subId = String(params.subscriptionId ?? params.subscription_id ?? '');
-			const ok = taskStore.unsubscribe(subId);
+			const ok = await taskStore.unsubscribe(subId);
 			return rpcSuccess(id, { success: ok, subscriptionId: subId });
 		}
 
@@ -324,7 +382,7 @@ export function createMcpRouter(
 
 					if (!taskType) return toolResult(id, 'submit_task requires task_type', true);
 
-					const task = taskStore.submitTask({
+					const task = await taskStore.submitTask({
 						type: taskType,
 						payload,
 						correlationId,
@@ -350,7 +408,7 @@ export function createMcpRouter(
 				case 'get_task': {
 					const taskId = String(args.task_id ?? '');
 					if (!taskId) return toolResult(id, 'get_task requires task_id', true);
-					const task = taskStore.getTask(taskId);
+					const task = await taskStore.getTask(taskId);
 					if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
 					return toolResult(id, JSON.stringify(task, null, 2));
 				}
@@ -358,9 +416,9 @@ export function createMcpRouter(
 				case 'get_result': {
 					const taskId = String(args.task_id ?? '');
 					if (!taskId) return toolResult(id, 'get_result requires task_id', true);
-					const result = taskStore.getResult(taskId);
+					const result = await taskStore.getResult(taskId);
 					if (!result) {
-						const task = taskStore.getTask(taskId);
+						const task = await taskStore.getTask(taskId);
 						if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
 						return toolResult(id, `Task ${taskId} is currently ${task.status}; result not yet ready.`, true);
 					}
@@ -371,7 +429,7 @@ export function createMcpRouter(
 					const taskId = String(args.task_id ?? '');
 					const reason = args.reason ? String(args.reason) : undefined;
 					if (!taskId) return toolResult(id, 'cancel_task requires task_id', true);
-					const ok = taskStore.cancelTask(taskId, reason);
+					const ok = await taskStore.cancelTask(taskId, reason);
 					return toolResult(id, JSON.stringify({ taskId, cancelled: ok }));
 				}
 
@@ -379,7 +437,7 @@ export function createMcpRouter(
 					const taskId = String(args.task_id ?? '');
 					const receipt = args.receipt;
 					if (!taskId) return toolResult(id, 'acknowledge_result requires task_id', true);
-					const ok = taskStore.acknowledgeResult(taskId, receipt);
+					const ok = await taskStore.acknowledgeResult(taskId, receipt);
 					return toolResult(id, JSON.stringify({ taskId, acknowledged: ok }));
 				}
 
