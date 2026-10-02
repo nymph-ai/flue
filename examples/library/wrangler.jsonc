@@ -8,7 +8,7 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
 	"observability": { "enabled": true },
-	// Electric Agents in k3s (namespace fabric-society), through Cloudflare
+	// Electric Agents in k3s, through Cloudflare
 	// Tunnel b5c8a1b2-99d5-4914-b64a-a7874383cb5e: FLUE_STREAMS is the binding
 	// every instance's inbox and events stream are reached through. Pi's own
 	// state stays in each agent's Durable Object SQLite.

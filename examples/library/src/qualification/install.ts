@@ -60,7 +60,7 @@ export function installQualification(app: Hono): void {
 	app.use('/qual/*', async (c, next) => {
 		const source = c.env as Vars;
 		if (!enabled(source)) return c.json({ error: 'qualification is off' }, 404);
-		const token = (source.LIBRARY_TOKEN ?? source.SOCIETY_TOKEN) as string | undefined;
+		const token = source.LIBRARY_TOKEN as string | undefined;
 		const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
 		if (typeof token !== 'string' || token.length < 32 || !timingSafeEqual(given, token)) {
 			return c.json({ error: 'unauthorized' }, 401);
@@ -74,7 +74,7 @@ export function installQualification(app: Hono): void {
 		return c.json({
 			ok: true,
 			qualification: enabled(source),
-			model: (source.LIBRARY_MODEL ?? source.SOCIETY_MODEL ?? 'scripted') as string,
+			model: (source.LIBRARY_MODEL ?? 'scripted') as string,
 			streams: streams ? { baseUrl: streams.baseUrl, webhook: streams.webhook ?? null } : null,
 			version: (source.CF_VERSION_METADATA as { id?: string; tag?: string } | undefined) ?? null,
 		});

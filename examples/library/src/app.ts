@@ -3,7 +3,7 @@
  * an Obsidian-compatible knowledge base structured in Google Open Knowledge Format (OKF),
  * with real-time ingress over Electric streams and persistent storage.
  *
- * The agent routes are behind the `LIBRARY_TOKEN` (or `SOCIETY_TOKEN`) bearer secret.
+ * The agent routes are behind the `LIBRARY_TOKEN` bearer secret.
  * The wiki routes (`/wiki/*`) expose the Obsidian vault, markdown notes, manifest,
  * and 1-click vault download (`/wiki/vault.zip`).
  */

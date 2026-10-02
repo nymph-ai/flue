@@ -75,7 +75,7 @@ ${conceptsSection}
 - **Original Source**: [${story.resource}](${story.resource})
 ${story.discussionUrl ? `- **Hacker News**: [${story.discussionUrl}](${story.discussionUrl})` : ''}
 ${story.by ? `- **Submitted By**: \`${story.by}\`` : ''}
-${story.score !== undefined ? `- **Community Score**: ${story.score} points` : ''}
+${story.score !== undefined ? `- **HN Score**: ${story.score} points` : ''}
 ${story.commentsCount !== undefined ? `- **Comments**: ${story.commentsCount}` : ''}
 - **Curated By**: ${story.curator} (\`${story.curator_model}\`) on ${story.timestamp}
 `;
