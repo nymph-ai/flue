@@ -1,14 +1,10 @@
-# Autonomous Multi-Agent Knowledge Vault
+# Autonomous Knowledge Vault
 
-A multi-agent system on Pi v1.0.0 Durable Objects, maintaining a technical knowledge base in **Google Open Knowledge Format (OKF)** viewable as a native **Obsidian** vault with graph view and backlinks.
+A single Pi agent running **Muse Spark 1.3 Contributor** (`meta/muse-spark-1.3-contributor`), maintaining a technical knowledge base in **Google Open Knowledge Format (OKF)** viewable as a native **Obsidian** vault with graph view and backlinks.
 
-Each agent instance is an addressable entity whose inbox and events stream live on Electric Agents (reached through the `FLUE_STREAMS` Workers VPC binding) and whose Pi state lives in its own Durable Object SQLite.
+The agent observes the Hacker News world stream (`v1/stream/world/hn/items`), synthesizes significant technical literature into OKF notes with `[[wikilinks]]`, automatically maintains concept cards and backlinks, saves notes to the R2 Library Vault (`stories/<id>.md`), updates `index.md`, and broadcasts recommendations to Electric (`v1/stream/library/curator/recommendations`).
 
-- `curator`: observes the Hacker News world stream (`v1/stream/world/hn/items`), synthesizes significant technical literature into OKF notes with `[[wikilinks]]`, saves them to the Library Vault (`stories/<id>.md`), updates `index.md`, and broadcasts recommendations to Electric (`v1/stream/library/curator/recommendations`).
-- `librarian`: maintains the Obsidian knowledge graph, catalogs concepts (`concepts/<slug>.md`), verifies backlinks, and organizes the central Map of Content (`index.md`).
-- `operator`: executes operations against the `ops` MCP server, directly and via Code Mode scripts with approval gates.
-- `evaluator`: direct single-turn QA endpoint querying the live model (`meta/muse-spark-1.3-contributor`).
-- `alice` & `bob`: multi-agent IPC test fixtures verifying peer-to-peer message passing (`send_message`).
+The agent inbox and events stream live on Electric Agents (reached through the `FLUE_STREAMS` Workers VPC binding) and its Pi state lives in its Durable Object SQLite.
 
 ---
 
@@ -52,7 +48,7 @@ tags:
 - `stories/<id>.md`: Curated story notes with executive summary, technical significance, and concept links.
 - `concepts/<slug>.md`: Concept cards tracking definition, provenance, and backlinks across stories.
 - `index.md`: Map of Content (MOC) cataloging all stories, concepts, and system statistics.
-- `log.md`: Append-only audit trail of all curator and librarian actions.
+- `log.md`: Append-only audit trail of all curation actions.
 
 ### HTTP Vault Endpoints
 - `GET /wiki/` or `GET /wiki/index.md`: Returns central Map of Content.
@@ -63,7 +59,7 @@ tags:
 
 ### Obsidian Setup
 1. **Direct Download**: Download `https://library.<subdomain>.workers.dev/wiki/vault.zip`, unzip to an Obsidian folder, and open as a vault.
-2. **Cloudflare R2 / S3 Sync**: Configure Obsidian plugin *Remotely Save* pointing to the R2 bucket `library-wiki`.
+2. **Cloudflare R2 / S3 Sync**: Configure Obsidian plugin *Remotely Save* pointing to the R2 bucket `library-vault`.
 
 ---
 
