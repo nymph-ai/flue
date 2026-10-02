@@ -137,7 +137,7 @@ export function flueToolRegistration(
 		// parked question; everything else settles as interrupted.
 		replay: tool.durable || asks ? 'safe' : 'unsafe',
 		async execute(args, api, context): Promise<ToolExecutionResult> {
-			const plain = () => executeFlueTool(tool, prepared, deps, args, api, context);
+			const plain = () => executeFlueTool(tool, prepared, deps, args as JsonValue, api, context);
 			const run =
 				asks && source
 					? () =>

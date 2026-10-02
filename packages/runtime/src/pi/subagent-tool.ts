@@ -23,8 +23,8 @@ import type { Context, JsonValue } from '@earendil-works/chord';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { Type } from '@earendil-works/pi-ai';
 import {
+	AgentDoc,
 	AssistantEntry,
-	ConversationConfig,
 	type ConversationId,
 	type DocumentReader,
 	defineTask,
@@ -104,13 +104,12 @@ export const DelegateTask = defineTask<DelegateInput, DelegateState, DelegateRes
 					existing?.id ??
 					(await tx.createConversation({ ownership: { kind: 'task', taskId: runtime.taskId } })).id;
 				if (existing === undefined) {
-					const parent = await tx.doc(ConversationConfig, runtime.conversationId);
-					const config = await tx.doc(ConversationConfig, child);
+					const parent = await tx.doc(AgentDoc, runtime.conversationId);
+					const config = await tx.doc(AgentDoc, child);
 					const model = task.input.model ?? parent.model;
 					if (model !== undefined) config.model = { provider: model.provider, modelId: model.modelId };
 					config.thinkingLevel = task.input.thinkingLevel ?? parent.thinkingLevel;
-					config.activeTools = [...task.input.tools];
-					if (parent.compaction !== undefined) config.compaction = { ...parent.compaction };
+					config.tools = [...task.input.tools];
 					const profile = await tx.doc(FlueProfile, child);
 					profile.agent = task.input.agent;
 					if (task.input.instructions !== undefined) profile.instructions = task.input.instructions;

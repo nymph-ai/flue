@@ -147,7 +147,8 @@ describe('A2A entities (#3752 acceptance)', () => {
 
 		// The entity tools are offered like any other tool.
 		const root = await alice.requireHost().harness.conversation(ROOT_CONVERSATION_ID, context);
-		expect(await root?.getActiveTools(context)).toEqual(
+		const agent = await root?.agent(context);
+		expect(agent?.tools.map((t) => t.name)).toEqual(
 			expect.arrayContaining([...ENTITY_TOOL_NAMES]),
 		);
 

@@ -48,13 +48,13 @@ async function open(file: string, options: { tokensPerSecond?: number } = {}) {
 	const cache = new PiConversationCache({ database, onReport: (error) => reports.push(error) });
 	const harness = await Harness.open(
 		storage,
-		{ models, registry: createRegistry<ToolRegistration>() },
+		{ models, registry: createRegistry() },
 		context,
 	);
 	await cache.attach(harness, storage, context);
 	const root = await harness.root(context);
-	if (!(await root.getModel(context)))
-		await root.setModel({ provider: 'cache', modelId: 'm' }, context);
+	if (!(await root.agent(context)).model)
+		await root.configure({ model: { provider: 'cache', modelId: 'm' } }, context);
 	let counter = 0;
 	return {
 		database,

@@ -8,11 +8,6 @@
  * `formatSkillInvocation`, both from `pi-agent-core`.
  */
 import type { Context } from '@earendil-works/chord';
-import {
-	formatSkillInvocation,
-	formatSkillsForSystemPrompt,
-	type Skill as PiSkill,
-} from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
 import type {
 	ConversationId,
@@ -31,6 +26,59 @@ import { agentToolRegistration } from './tools.ts';
 
 export const ACTIVATE_SKILL_TOOL_NAME = 'activate_skill';
 export const SKILLS_SECTION_KEY = 'flue.skills';
+
+export interface PiSkill {
+	name: string;
+	description: string;
+	content: string;
+	filePath: string;
+	disableModelInvocation?: boolean;
+}
+
+function escapeXml(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&apos;');
+}
+
+function dirnameEnvPath(path: string): string {
+	const normalized = path.replace(/[\\/]+$/, '');
+	const separatorIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+	if (separatorIndex === 2 && normalized[1] === ':') return normalized.slice(0, 3);
+	return separatorIndex <= 0 ? '/' : normalized.slice(0, separatorIndex);
+}
+
+export function formatSkillInvocation(skill: PiSkill, additionalInstructions?: string): string {
+	const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${dirnameEnvPath(skill.filePath)}.\n\n${skill.content}\n</skill>`;
+	return additionalInstructions ? `${skillBlock}\n\n${additionalInstructions}` : skillBlock;
+}
+
+export function formatSkillsForSystemPrompt(skills: PiSkill[]): string {
+	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
+	if (visibleSkills.length === 0) return '';
+
+	const lines = [
+		'The following skills provide specialized instructions for specific tasks.',
+		'Read the full skill file when the task matches its description.',
+		'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
+		'',
+		'<available_skills>',
+	];
+
+	for (const skill of visibleSkills) {
+		lines.push('  <skill>');
+		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+		lines.push('  </skill>');
+	}
+
+	lines.push('</available_skills>');
+	return lines.join('\n');
+}
 
 /** Resolve the skills visible to one conversation (root render or delegate profile). */
 export type SkillResolver = (
@@ -111,7 +159,7 @@ export function activateSkillRegistration(resolve: SkillResolver): ToolRegistrat
 		replay: 'safe',
 		async execute(args, api, context): Promise<ToolExecutionResult> {
 			const name =
-				typeof args === 'object' && args !== null && !Array.isArray(args) && typeof args.name === 'string'
+				typeof args === 'object' && args !== null && !Array.isArray(args) && 'name' in args && typeof args.name === 'string'
 					? args.name
 					: '';
 			const skills = await resolve(api.conversationId, api, context);

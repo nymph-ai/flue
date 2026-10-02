@@ -34,7 +34,7 @@ import {
 import type { EntityToolName } from './tool-names.ts';
 
 export interface EntityToolsFacetOptions {
-	readonly registry: Registry<ToolRegistration>;
+	readonly registry: Registry;
 	readonly entity: EntityRef;
 	readonly now?: () => number;
 }
@@ -343,15 +343,15 @@ export function createEntityToolsFacet(options: EntityToolsFacetOptions): Facet 
 			const messaging = env.use(EntityMessaging);
 			const observation = env.use(EntityObservation);
 			const lifecycle = env.use(EntityLifecycle);
-			let registration: { dispose(): void } | undefined;
+			const extension = {
+				name: 'flue.entity.tools',
+				tools: tools(messaging, observation, lifecycle),
+			};
 			env.onActivate(() => {
-				registration = registry.batch(() => {
-					for (const tool of tools(messaging, observation, lifecycle)) registry.tools.add(tool);
-				});
+				registry.install(extension);
 			});
 			env.onDeactivate(() => {
-				registration?.dispose();
-				registration = undefined;
+				registry.uninstall(extension);
 			});
 		},
 	});

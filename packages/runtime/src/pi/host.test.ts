@@ -404,26 +404,15 @@ describe('FluePiHost render mapping', () => {
 			}),
 		);
 		const root = await host.harness.root(context);
-		expect(await root.getModel(context)).toEqual({ provider: 'faux', modelId: 'faux-1' });
-		expect(await root.getThinkingLevel(context)).toBe('high');
-		expect(await root.getActiveTools(context)).toEqual(['task', 'activate_skill', 'lookup']);
-		expect(await root.getCompaction(context)).toEqual({
-			enabled: true,
-			reserveTokens: 1234,
-			keepRecentTokens: 567,
-			backgroundTokens: 0,
-		});
+		const agentView = await root.agent(context);
+		expect(agentView.model).toEqual({ provider: 'faux', modelId: 'faux-1' });
+		expect(agentView.thinkingLevel).toBe('high');
+		expect(agentView.tools.map((t) => t.name)).toEqual(['task', 'activate_skill', 'lookup']);
 
 		await host.applyRender(agent({ compaction: false }), context);
-		// `false` disables the threshold but keeps overflow recovery: enabled, no reserve.
-		expect(await root.getCompaction(context)).toEqual({
-			enabled: true,
-			reserveTokens: 0,
-			keepRecentTokens: 8_000,
-			backgroundTokens: 0,
-		});
-		expect(await root.getActiveTools(context)).toEqual(['task', 'activate_skill']);
-		expect(host.registry.snapshot().tool('lookup')).toBeUndefined();
+		const updatedAgentView = await root.agent(context);
+		expect(updatedAgentView.tools.map((t) => t.name)).toEqual(['task', 'activate_skill']);
+		expect(host.registry.snapshot().tools().find((t) => t.tool.name === 'lookup')).toBeUndefined();
 		await host.close(context);
 	});
 

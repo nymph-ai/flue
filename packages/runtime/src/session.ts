@@ -18,11 +18,12 @@ import { withAbortSignal } from '@earendil-works/chord/context';
 import type { AssistantMessage, ImageContent, UserMessage } from '@earendil-works/pi-ai';
 import {
 	ConversationBusy,
+	type AgentChange,
 	type Conversation,
 	type ConversationId,
 	type EntryId,
 	type EntryRecord,
-	type Registration,
+	type ToolRegistration,
 } from '@earendil-works/pi-durable';
 import type * as v from 'valibot';
 import { abortErrorFor, createCallHandle } from './abort.ts';
@@ -32,7 +33,7 @@ import { SessionBusyError, SkillNotRegisteredError } from './errors.ts';
 import type { FlueExecutionContext } from './execution-interceptor.ts';
 import { GeneralSubagent } from './hooks/use-subagent.ts';
 import { parseModelSpecifier } from './pi/config.ts';
-import type { FluePiHost } from './pi/host.ts';
+import type { FluePiHost, Registration } from './pi/host.ts';
 import { packagedDirectoryOf } from './pi/skills.ts';
 import { resultFromToolDetails, resultToolRegistrations } from './pi/tools.ts';
 import {
@@ -336,26 +337,40 @@ class PiSession implements FlueSession {
 		const restore: (() => Promise<void>)[] = [];
 		let registration: Registration | undefined;
 		try {
+			const agent = await conversation.agent(context);
+			const change: AgentChange = {};
+			const previousChange: AgentChange = {};
+			let modified = false;
+
 			if (input.model !== undefined) {
-				const previous = await conversation.getModel(context);
-				await conversation.setModel(parseModelSpecifier(input.model), context);
-				restore.push(() => conversation.setModel(previous, context));
+				change.model = parseModelSpecifier(input.model);
+				previousChange.model = agent.model ?? null;
+				modified = true;
 			}
 			if (input.thinkingLevel !== undefined) {
-				const previous = await conversation.getThinkingLevel(context);
-				await conversation.setThinkingLevel(input.thinkingLevel, context);
-				restore.push(() => conversation.setThinkingLevel(previous, context));
+				change.thinkingLevel = input.thinkingLevel;
+				previousChange.thinkingLevel = agent.thinkingLevel ?? null;
+				modified = true;
 			}
 			const extra = input.result ? resultToolRegistrations(input.result) : [];
 			if ((input.tools?.length ?? 0) > 0 || extra.length > 0) {
 				registration = host.addTools(input.tools ?? [], extra);
-				const previous = await conversation.getActiveTools(context);
+				const previousNames = agent.tools.map((tool) => tool.name);
 				const added = [
 					...(input.tools ?? []).map((tool) => tool.name),
 					...extra.map((tool) => tool.name),
 				];
-				await conversation.setActiveTools([...new Set([...previous, ...added])], context);
-				restore.push(() => conversation.setActiveTools(previous, context));
+				change.tools = [...new Set([...previousNames, ...added])].map(
+					(name) => ({ name }) as unknown as ToolRegistration,
+				);
+				previousChange.tools = previousNames.map(
+					(name) => ({ name }) as unknown as ToolRegistration,
+				);
+				modified = true;
+			}
+			if (modified) {
+				await conversation.configure(change, context);
+				restore.push(() => conversation.configure(previousChange, context));
 			}
 			const text = footer ? buildPromptText(input.text, input.result) : input.text;
 			let response = await this.#submit(

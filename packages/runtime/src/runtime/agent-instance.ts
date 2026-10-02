@@ -19,6 +19,7 @@ import type { Context } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import {
 	GenerationTask,
+	hook,
 	ROOT_CONVERSATION_ID,
 	type ToolRegistration,
 	type Tx,
@@ -384,29 +385,33 @@ export class FlueAgentInstance {
 				}),
 			logger: (source) => this.#logger({ hook: source }),
 		});
-		host.registry.hooks.add(
-			GenerationTask,
-			{
-				// The turn boundary: re-render so state written by the round's tools
-				// reaches the next request; flush what lifecycle callbacks wrote.
-				// What `useAgentStart` callbacks wrote lands before the request, so a
-				// tool aborted in this round cannot take it down with its own writes.
-				beforeRequest: async () => {
-					await this.#flushWrites((change) => host.harness.commit(change, context));
-					return undefined;
-				},
-				afterTools: async () => {
-					await this.#flushWrites((change) => host.harness.commit(change, context));
-					await this.#render(host, undefined, context);
-				},
-				onYield: async () => {
-					await this.#flushWrites((change) => host.harness.commit(change, context));
-					return undefined;
-				},
-			},
-			{ key: 'flue.render' },
-		);
-		host.registry.hooks.add(GenerationTask, telemetry.generationHooks(), { key: 'flue.telemetry' });
+		host.registry.install({
+			name: 'flue.render',
+			hooks: [
+				hook(GenerationTask, {
+					// The turn boundary: re-render so state written by the round's tools
+					// reaches the next request; flush what lifecycle callbacks wrote.
+					// What `useAgentStart` callbacks wrote lands before the request, so a
+					// tool aborted in this round cannot take it down with its own writes.
+					beforeRequest: async () => {
+						await this.#flushWrites((change) => host.harness.commit(change, context));
+						return undefined;
+					},
+					afterTools: async () => {
+						await this.#flushWrites((change) => host.harness.commit(change, context));
+						await this.#render(host, undefined, context);
+					},
+					onYield: async () => {
+						await this.#flushWrites((change) => host.harness.commit(change, context));
+						return undefined;
+					},
+				}),
+			],
+		});
+		host.registry.install({
+			name: 'flue.telemetry',
+			hooks: [hook(GenerationTask, telemetry.generationHooks())],
+		});
 		// The entity tools register before the first render picks active tools.
 		// The entity runtime admits on its own (inbox messages, spawns, fired
 		// schedules), so its host renders first, exactly as `admit()` does: an

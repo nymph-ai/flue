@@ -163,25 +163,30 @@ async function bareHarness(file = ':memory:') {
 	const models = createModels();
 	models.setProvider(fast.provider);
 	models.setProvider(slow.provider);
-	const registry = createRegistry<ToolRegistration>();
-	registry.tools.add({
-		name: 'probe',
-		description: 'Probe.',
-		parameters: Type.Object({}),
-		execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
-	});
-	registry.tools.add({
-		name: 'send_message',
-		description: 'Send.',
-		parameters: Type.Object({}, { additionalProperties: true }),
-		execute: async () => ({ content: [{ type: 'text', text: 'sent' }] }),
+	const registry = createRegistry();
+	registry.install({
+		name: 'tools',
+		tools: [
+			{
+				name: 'probe',
+				description: 'Probe.',
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+			},
+			{
+				name: 'send_message',
+				description: 'Send.',
+				parameters: Type.Object({}, { additionalProperties: true }),
+				execute: async () => ({ content: [{ type: 'text', text: 'sent' }] }),
+			},
+		],
 	});
 	const database = await openNodeSqliteDatabase(file);
 	const storage = await SqliteStorage.open(database);
 	const harness = await Harness.open(storage, { models, registry }, context);
 	const root = await harness.root(context);
-	if ((await root.getModel(context))?.provider !== 'fast')
-		await root.setModel({ provider: 'fast', modelId: 'm' }, context);
+	if ((await root.agent(context)).model?.provider !== 'fast')
+		await root.configure({ model: { provider: 'fast', modelId: 'm' } }, context);
 	harness.resume();
 	let counter = Date.now();
 	const ask = async (content: string) => {
@@ -308,9 +313,9 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 			const pi = await bareHarness(piFile);
 			await pi.history(size);
 			const piRows: Record<string, Rows> = {};
-			await pi.root.setModel({ provider: 'slow', modelId: 'm' }, context);
+			await pi.root.configure({ model: { provider: 'slow', modelId: 'm' } }, context);
 			piRows['plain answer (~30 partials)'] = await measure(pi.database, () => pi.ask('stream'));
-			await pi.root.setModel({ provider: 'fast', modelId: 'm' }, context);
+			await pi.root.configure({ model: { provider: 'fast', modelId: 'm' } }, context);
 			piRows['5-tool-call turn'] = await measure(pi.database, () => pi.ask('tools 5'));
 			piRows['A2A send (sender turn)'] = await measure(pi.database, () => pi.ask('send budget/x'));
 			piRows['A2A receive (doorbell, pump, admission, turn)'] = await measure(pi.database, () =>

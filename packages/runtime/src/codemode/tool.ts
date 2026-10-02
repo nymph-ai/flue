@@ -1157,7 +1157,9 @@ export function createCodemodeToolRegistration(options: CodemodeToolOptions): To
 		// Rerun only to continue a parked question; see the module documentation.
 		replay: 'safe',
 		execute(args, api, context): Promise<ToolExecutionResult> {
-			return runInQuestionCall({ api, context }, () => executeCall(args, api, context));
+			return runInQuestionCall({ api, context }, () =>
+				executeCall(args as JsonValue, api, context),
+			);
 		},
 	};
 	Object.defineProperty(registration, RESUME, { value: resume, enumerable: false });

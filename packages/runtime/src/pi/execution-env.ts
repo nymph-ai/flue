@@ -114,7 +114,11 @@ const toBytes = (content: string | Uint8Array): Uint8Array =>
  * Wrap a Flue sandbox driver as a Pi execution environment rooted at `cwd`.
  * Relative paths resolve against `cwd`; the driver receives absolute paths.
  */
-export function executionEnvFromSandbox(driver: SandboxDriver, cwd: string): ExecutionEnv {
+export function executionEnvFromSandbox(
+	driver: SandboxDriver,
+	cwd: string,
+	options?: { id?: string },
+): ExecutionEnv {
 	const root = normalizePosixPath(cwd.startsWith('/') ? cwd : `/${cwd}`);
 	const abs = (path: string) => resolveAgainst(root, path);
 	let tempCounter = 0;
@@ -151,6 +155,7 @@ export function executionEnvFromSandbox(driver: SandboxDriver, cwd: string): Exe
 	};
 
 	const env: ExecutionEnv = {
+		id: options?.id ?? root,
 		cwd: root,
 		async absolutePath(path, _context) {
 			return ok(abs(path));

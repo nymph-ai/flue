@@ -18,13 +18,17 @@ import {
 	createRegistry,
 	GenerationTask,
 	Harness,
-	type Registration,
+	hook,
 	type Registry,
 	ROOT_CONVERSATION_ID,
 	type Storage,
 	type SubmissionId,
 	type ToolRegistration,
 } from '@earendil-works/pi-durable';
+
+export interface Registration {
+	remove(): void;
+}
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
 import type { Sandbox } from '../sandbox.ts';
 import type { DispatchReceipt, FlueHarness, FlueLogger, SubagentDefinition } from '../types.ts';
@@ -119,7 +123,7 @@ export interface FlueTaskRequest {
 export interface FluePiHost {
 	/** The open Harness; throws before `open()`. */
 	readonly harness: Harness;
-	readonly registry: Registry<ToolRegistration>;
+	readonly registry: Registry;
 	/** Open storage and the Harness, ensure the root conversation, count attempts. Scheduling stays paused. */
 	open(context: Context): Promise<void>;
 	/** Publish one render: registry batch plus model/thinking/tools/compaction of every session. */
@@ -164,13 +168,14 @@ export interface FluePiHost {
 }
 
 class PiHost implements FluePiHost {
-	readonly registry: Registry<ToolRegistration>;
+	readonly registry: Registry;
 	readonly #options: FluePiHostOptions;
 	readonly #bridge: RegistryBridge;
 	readonly #env: ExecutionEnv | undefined;
 	readonly #now: () => number;
 	#harness: Harness | undefined;
 	#questionHandler: QuestionHandler | undefined;
+	#dynamicToolCounter = 0;
 
 	constructor(options: FluePiHostOptions) {
 		this.#options = options;
@@ -178,9 +183,7 @@ class PiHost implements FluePiHost {
 		this.#env =
 			options.env ??
 			(options.sandbox ? executionEnvFromSandbox(options.sandbox, options.sandbox.cwd) : undefined);
-		this.registry = createRegistry<ToolRegistration>();
-		this.registry.tasks.add(DelegateTask);
-		this.registry.tasks.add(QuestionTask);
+		this.registry = createRegistry();
 		const delegation = {
 			rosterFor: (...args: Parameters<RegistryBridge['rosterFor']>) =>
 				this.#bridge.rosterFor(...args),
@@ -196,24 +199,29 @@ class PiHost implements FluePiHost {
 			taskTool: createSubagentToolRegistration(delegation),
 			onReport: options.onReport,
 		});
-		this.registry.hooks.add(
-			GenerationTask,
-			lifecycleHooks({
-				lifecycle: (conversationId, read, context) =>
-					this.#bridge.lifecycleFor(conversationId, read, context),
-				commit: (change, context) => this.harness.commit(change, context),
-				write: async (conversationId, entry, requestId, context) => {
-					const conversation = await this.harness.conversation(conversationId, context);
-					await conversation?.submit({ type: 'write', entry, requestId }, context);
-				},
-				...(options.attachments ? { attachments: options.attachments } : {}),
-				...(options.lifecycleHarness ? { harness: options.lifecycleHarness } : {}),
-				...(options.logger ? { logger: options.logger } : {}),
-				now: this.#now,
-				onReport: options.onReport,
-			}),
-			{ key: 'flue.lifecycle' },
-		);
+		this.registry.install({
+			name: 'flue.core',
+			tasks: [DelegateTask, QuestionTask],
+			hooks: [
+				hook(
+					GenerationTask,
+					lifecycleHooks({
+						lifecycle: (conversationId, read, context) =>
+							this.#bridge.lifecycleFor(conversationId, read, context),
+						commit: (change, context) => this.harness.commit(change, context),
+						write: async (conversationId, entry, requestId, context) => {
+							const conversation = await this.harness.conversation(conversationId, context);
+							await conversation?.submit({ type: 'write', entry, requestId }, context);
+						},
+						...(options.attachments ? { attachments: options.attachments } : {}),
+						...(options.lifecycleHarness ? { harness: options.lifecycleHarness } : {}),
+						...(options.logger ? { logger: options.logger } : {}),
+						now: this.#now,
+						onReport: options.onReport,
+					}),
+				),
+			],
+		});
 	}
 
 	get harness(): Harness {
@@ -385,11 +393,19 @@ class PiHost implements FluePiHost {
 		tools: readonly ToolDefinition[],
 		extra: readonly ToolRegistration[] = [],
 	): Registration {
-		return this.registry.batch(() => {
-			for (const tool of tools)
-				this.registry.tools.add(flueToolRegistration(tool, this.#options.tools));
-			for (const tool of extra) this.registry.tools.add(tool);
-		});
+		const ext = {
+			name: `flue.dynamic.tools.${++this.#dynamicToolCounter}`,
+			tools: [
+				...tools.map((tool) => flueToolRegistration(tool, this.#options.tools)),
+				...extra,
+			],
+		};
+		this.registry.install(ext);
+		return {
+			remove: () => {
+				this.registry.uninstall(ext);
+			},
+		};
 	}
 
 	async configure(conversationId: ConversationId, context: Context): Promise<void> {
