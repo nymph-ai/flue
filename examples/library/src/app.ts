@@ -37,7 +37,7 @@ app.route('/wiki', createWikiRouter());
 
 // Agent routes protected by bearer token
 app.use('/agents/*', async (c, next) => {
-	const token = (c.env.LIBRARY_TOKEN ?? c.env.SOCIETY_TOKEN) as string | undefined;
+	const token = c.env.LIBRARY_TOKEN as string | undefined;
 	const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
 	if (typeof token !== 'string' || token.length === 0 || given !== token) {
 		return c.json({ error: 'unauthorized' }, 401);

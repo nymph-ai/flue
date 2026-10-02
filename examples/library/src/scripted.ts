@@ -41,7 +41,6 @@ import { frustrationScript } from './you-said-no-mcp.ts';
 
 export const SCRIPTED_PROVIDER = 'scripted';
 export const SCRIPTED_MODEL = 'library-1';
-export const LEGACY_SCRIPTED_MODEL = 'society-1';
 
 interface Signal {
 	readonly type: string;
@@ -249,7 +248,6 @@ export function scriptedProvider(options: { readonly tokensPerSecond?: number } 
 		provider: SCRIPTED_PROVIDER,
 		models: [
 			{ id: SCRIPTED_MODEL, name: 'Library scripted model' },
-			{ id: LEGACY_SCRIPTED_MODEL, name: 'Library scripted model (legacy alias)' },
 		],
 		...(options.tokensPerSecond ? { tokensPerSecond: options.tokensPerSecond } : {}),
 		tokenSize: { min: 4, max: 4 },

@@ -24,7 +24,7 @@ export function Steward() {
 	if (ops && withOps) {
 		useMcpConnection({
 			name: 'ops',
-			url: 'https://society-ops.internal/mcp',
+			url: 'https://library-ops.internal/mcp',
 			headers: { authorization: `Bearer ${vars.OPS_MCP_TOKEN}` },
 			fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
 				ops.fetch(input as never, init)) as typeof fetch,

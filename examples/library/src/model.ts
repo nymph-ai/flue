@@ -16,13 +16,10 @@ setProvider(scriptedProvider({ tokensPerSecond: Number(vars.SCRIPTED_TOKENS_PER_
 setProvider(typesafeProvider());
 
 export function libraryModel(): string {
-	const mode = vars.LIBRARY_MODEL ?? vars.SOCIETY_MODEL;
+	const mode = vars.LIBRARY_MODEL;
 	if (mode === 'live') return liveModel();
 	return `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
 }
-
-/** Legacy alias for backwards compatibility. */
-export const societyModel = libraryModel;
 
 /** The real model, keyed by the `META_API_KEY` secret. */
 export function liveModel(): string {
