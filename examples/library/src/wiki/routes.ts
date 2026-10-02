@@ -98,7 +98,7 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 
 	// Cloudflare Artifacts Git Sync Endpoints (Path B)
 	wiki.get('/git/info', async (c) => {
-		const artifacts = c.env.ARTIFACTS as ArtifactsBinding | undefined;
+		const artifacts = c.env?.ARTIFACTS as ArtifactsBinding | undefined;
 		let cloneUrl = 'https://git.cloudflare.com/default/library-vault.git';
 		let repoName = 'library-vault';
 
@@ -147,7 +147,7 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 	});
 
 	wiki.post('/git/token', async (c) => {
-		const artifacts = c.env.ARTIFACTS as ArtifactsBinding | undefined;
+		const artifacts = c.env?.ARTIFACTS as ArtifactsBinding | undefined;
 		let body: { scope?: 'read' | 'write'; ttlSeconds?: number } = {};
 		try {
 			body = (await c.req.json()) ?? {};
