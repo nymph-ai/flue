@@ -1,0 +1,22 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/2026-07-28/mcp.json",
+  "name": "fabric-library-vault",
+  "version": "2.0.0",
+  "protocolVersion": "2026-07-28",
+  "transport": {
+    "type": "http",
+    "endpoint": "https://library.nymphai.workers.dev/mcp"
+  },
+  "capabilities": {
+    "tools": { "listChanged": false },
+    "events": { "subscribe": true, "list": true, "history": true }
+  },
+  "endpoints": {
+    "rpc": "https://library.nymphai.workers.dev/mcp",
+    "tasks": "https://library.nymphai.workers.dev/mcp/tasks",
+    "results": "https://library.nymphai.workers.dev/mcp/results",
+    "events": "https://library.nymphai.workers.dev/mcp/events",
+    "deliveries": "https://library.nymphai.workers.dev/mcp/deliveries",
+    "testCallback": "https://library.nymphai.workers.dev/mcp/test-callback"
+  }
+}
