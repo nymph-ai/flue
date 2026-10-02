@@ -41,7 +41,7 @@ export class EntityWakeBook {
 
 	#ensure(): void {
 		if (this.#schema) return;
-		void this.#db.exec(SCHEMA);
+		this.#db.prepare(SCHEMA).run();
 		this.#schema = true;
 	}
 

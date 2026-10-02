@@ -338,37 +338,40 @@ class PiSession implements FlueSession {
 		let registration: Registration | undefined;
 		try {
 			const agent = await conversation.agent(context);
-			const change: AgentChange = {};
-			const previousChange: AgentChange = {};
-			let modified = false;
-
-			if (input.model !== undefined) {
-				change.model = parseModelSpecifier(input.model);
-				previousChange.model = agent.model ?? null;
-				modified = true;
-			}
-			if (input.thinkingLevel !== undefined) {
-				change.thinkingLevel = input.thinkingLevel;
-				previousChange.thinkingLevel = agent.thinkingLevel ?? null;
-				modified = true;
-			}
+			const modelChange =
+				input.model !== undefined ? parseModelSpecifier(input.model) : undefined;
+			const thinkingChange = input.thinkingLevel;
 			const extra = input.result ? resultToolRegistrations(input.result) : [];
-			if ((input.tools?.length ?? 0) > 0 || extra.length > 0) {
+			const toolsAdded = (input.tools?.length ?? 0) > 0 || extra.length > 0;
+			let toolsChange: ToolRegistration[] | undefined;
+			let previousToolsChange: ToolRegistration[] | undefined;
+
+			if (toolsAdded) {
 				registration = host.addTools(input.tools ?? [], extra);
 				const previousNames = agent.tools.map((tool) => tool.name);
 				const added = [
 					...(input.tools ?? []).map((tool) => tool.name),
 					...extra.map((tool) => tool.name),
 				];
-				change.tools = [...new Set([...previousNames, ...added])].map(
+				toolsChange = [...new Set([...previousNames, ...added])].map(
 					(name) => ({ name }) as unknown as ToolRegistration,
 				);
-				previousChange.tools = previousNames.map(
+				previousToolsChange = previousNames.map(
 					(name) => ({ name }) as unknown as ToolRegistration,
 				);
-				modified = true;
 			}
-			if (modified) {
+
+			if (modelChange !== undefined || thinkingChange !== undefined || toolsChange !== undefined) {
+				const change: AgentChange = {
+					...(modelChange !== undefined ? { model: modelChange } : {}),
+					...(thinkingChange !== undefined ? { thinkingLevel: thinkingChange } : {}),
+					...(toolsChange !== undefined ? { tools: toolsChange } : {}),
+				};
+				const previousChange: AgentChange = {
+					...(modelChange !== undefined ? { model: agent.model ?? null } : {}),
+					...(thinkingChange !== undefined ? { thinkingLevel: agent.thinkingLevel ?? null } : {}),
+					...(previousToolsChange !== undefined ? { tools: previousToolsChange } : {}),
+				};
 				await conversation.configure(change, context);
 				restore.push(() => conversation.configure(previousChange, context));
 			}
@@ -403,7 +406,7 @@ class PiSession implements FlueSession {
 			}
 		} finally {
 			for (const undo of restore.reverse()) await undo().catch(() => {});
-			registration?.dispose();
+			registration?.remove();
 		}
 	}
 

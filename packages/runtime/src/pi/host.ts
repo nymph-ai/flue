@@ -246,7 +246,7 @@ class PiHost implements FluePiHost {
 			{
 				models: this.#options.models,
 				registry: this.registry,
-				...(this.#env ? { env: this.#env } : {}),
+				...(this.#env ? { env: () => this.#env } : {}),
 				now: this.#now,
 				onReport: this.#options.onReport,
 			},
