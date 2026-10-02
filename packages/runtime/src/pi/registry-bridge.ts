@@ -19,6 +19,7 @@
 import type { Context } from '@earendil-works/chord';
 import type { Models } from '@earendil-works/pi-ai';
 import {
+	type CompactionPolicy,
 	type Conversation,
 	type ConversationId,
 	type DocumentReader,
@@ -454,7 +455,6 @@ export class RegistryBridge {
 					model: model ?? null,
 					thinkingLevel: thinkingLevel ?? null,
 					tools: active.map((name) => ({ name }) as unknown as ToolRegistration),
-					compaction: policy ?? null,
 				},
 				context,
 			);

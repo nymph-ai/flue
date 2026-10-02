@@ -190,8 +190,8 @@ async function readPi(agentName: string, id: string) {
 
 describe('golden conversation wire: Pi host vs the legacy loop', () => {
 	afterEach(async () => {
-		const runtime = getFlueRuntime();
-		if (runtime) await runtime.stop().catch(() => {});
+		const runtime = getFlueRuntime() as { stop?: () => Promise<void> } | undefined;
+		if (runtime?.stop) await runtime.stop().catch(() => {});
 	});
 
 	for (const scenario of GOLDEN_SCENARIOS) {
