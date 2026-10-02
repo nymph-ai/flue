@@ -1,20 +1,11 @@
 /**
- * The Autonomous Knowledge Library: curators and librarians on Pi Durable,
- * an Obsidian-compatible knowledge base structured in Google Open Knowledge Format (OKF),
- * with real-time ingress over Electric streams and persistent storage.
- *
- * The agent routes are behind the `LIBRARY_TOKEN` bearer secret.
- * The wiki routes (`/wiki/*`) expose the Obsidian vault, markdown notes, manifest,
- * and 1-click vault download (`/wiki/vault.zip`).
+ * Autonomous Knowledge Vault: a single Pi agent running Muse Spark,
+ * maintaining an Obsidian-compatible knowledge base in Google Open Knowledge Format (OKF)
+ * on Cloudflare R2, driven by Hacker News stream events over Electric.
  */
 import { createAgentRouter } from '@flue/runtime/routing';
 import { Hono } from 'hono';
-import { Alice } from './agents/alice.ts';
-import { Bob } from './agents/bob.ts';
-import { Curator } from './agents/curator.ts';
-import { Evaluator } from './agents/evaluator.ts';
-import { Librarian } from './agents/librarian.ts';
-import { Operator } from './agents/operator.ts';
+import { Curator } from './agent.ts';
 import { libraryModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
 import { createWikiRouter } from './wiki/routes.ts';
@@ -23,7 +14,7 @@ const app = new Hono<{ Bindings: Record<string, unknown> }>();
 
 app.get('/', (c) =>
 	c.json({
-		agents: ['curator', 'librarian', 'operator', 'evaluator', 'alice', 'bob'],
+		agent: 'curator',
 		model: libraryModel(),
 		streams: Boolean(c.env.FLUE_STREAMS_URL),
 		wiki: '/wiki',
@@ -35,8 +26,16 @@ app.get('/', (c) =>
 // Wiki vault routes (public / accessible for Obsidian sync)
 app.route('/wiki', createWikiRouter());
 
-// Agent routes protected by bearer token
+// Agent route protected by bearer token
 app.use('/agents/*', async (c, next) => {
+	const token = c.env.LIBRARY_TOKEN as string | undefined;
+	const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
+	if (typeof token !== 'string' || token.length === 0 || given !== token) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+	await next();
+});
+app.use('/agent/*', async (c, next) => {
 	const token = c.env.LIBRARY_TOKEN as string | undefined;
 	const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
 	if (typeof token !== 'string' || token.length === 0 || given !== token) {
@@ -47,15 +46,8 @@ app.use('/agents/*', async (c, next) => {
 
 if (__QUALIFICATION__) installQualification(app as never);
 
+// Single agent endpoints
+app.route('/agent', createAgentRouter(Curator));
 app.route('/agents/curator', createAgentRouter(Curator));
-app.route('/agents/librarian', createAgentRouter(Librarian));
-app.route('/agents/operator', createAgentRouter(Operator));
-app.route('/agents/evaluator', createAgentRouter(Evaluator));
-app.route('/agents/alice', createAgentRouter(Alice));
-app.route('/agents/bob', createAgentRouter(Bob));
-
-// Compatibility routes for existing qualification harnesses
-app.route('/agents/steward', createAgentRouter(Operator));
-app.route('/agents/sage', createAgentRouter(Evaluator));
 
 export default app;

@@ -37,7 +37,6 @@ import {
 	type Message,
 	type Provider,
 } from '@earendil-works/pi-ai';
-import { frustrationScript } from './you-said-no-mcp.ts';
 
 export const SCRIPTED_PROVIDER = 'scripted';
 export const SCRIPTED_MODEL = 'library-1';
@@ -137,7 +136,7 @@ function commandCalls(line: string): Call[] | undefined {
 		];
 	}
 	if (verb === 'codemode' && words[1] === 'frustration' && words[2]) {
-		return [{ name: 'codemode', args: { code: frustrationScript(words.slice(2).join(' ')) } }];
+		return [{ name: 'codemode', args: { code: 'return [];' } }];
 	}
 	if (verb === 'codemode' && words[1] === 'recall') {
 		return [{ name: 'codemode', args: { code: 'return load("frustration")?.length ?? null;' } }];
