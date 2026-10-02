@@ -5,7 +5,7 @@
  * row counters.
  *
  * Nothing here is part of the authoring surface. It exists so a test-only
- * build (`examples/agent-society` with `QUALIFICATION=1`) can drive entity
+ * build (`examples/library` with `QUALIFICATION=1`) can drive entity
  * doorbells and measure storage cost against a real deployment.
  */
 import type { Context } from '@earendil-works/chord';
