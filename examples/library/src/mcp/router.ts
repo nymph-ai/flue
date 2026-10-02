@@ -1,35 +1,98 @@
 /**
- * Model Context Protocol (MCP) server endpoints for OpenAI Dots and AI coworkers.
- * Exposes the Google OKF knowledge vault over standard MCP JSON-RPC 2.0 (2024-11-05).
+ * Model Context Protocol (MCP) 2.0 (2026-07-28) Server with Native MCP Events.
+ * Implements full protocol contract for OpenAI Dots and persistent AI coworkers:
+ * - Commands: submit_task, get_task, get_result, cancel_task, search, fetch, acknowledge_result.
+ * - Events: events/list, events/subscribe, events/unsubscribe, task_changed notifications.
+ * - Atomic durable results with sources, versions, limitations, and signed webhook deliveries.
  */
 import { Hono } from 'hono';
-import { liveModel } from '../model.ts';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
-import type { ArtifactsBinding, GitSyncInfo, OKFStoryNote } from '../wiki/types.ts';
+import { getOrCreateTaskStore, TaskStore } from './tasks.ts';
 
-export const MCP_PROTOCOL_VERSION = '2024-11-05';
+export const MCP_PROTOCOL_VERSION = '2026-07-28';
 export const SERVER_INFO = {
 	name: 'library-knowledge-vault',
-	version: '1.0.0',
+	version: '2.0.0',
 };
 
-export const MCP_TOOLS = [
+export const COMMAND_TOOLS = [
 	{
-		name: 'search_vault',
+		name: 'submit_task',
 		description:
-			'Search technical stories, concepts, and notes in the Google Open Knowledge Format (OKF) knowledge vault.',
+			'Submit an asynchronous job to the knowledge library (e.g. story curation, literature synthesis, topic research). Returns immediately with a durable task ID.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				query: {
+				task_type: {
 					type: 'string',
-					description: 'The search query to match against story titles, summaries, and concept notes.',
+					description: 'Type of task to execute ("curate" | "synthesize" | "research" | "rebuild_index").',
 				},
+				payload: {
+					type: 'object',
+					description: 'Arguments for the task (e.g. native_id, title, url, summary, concepts, query).',
+				},
+				correlation_id: {
+					type: 'string',
+					description: 'Optional caller-supplied correlation ID (e.g. Dot conversation ID or thread ID).',
+				},
+			},
+			required: ['task_type', 'payload'],
+		},
+		annotations: { destructiveHint: false },
+	},
+	{
+		name: 'get_task',
+		description:
+			'Check the status, revision, and summary of a submitted task by its durable task ID.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				task_id: { type: 'string', description: 'The durable task ID returned from submit_task.' },
+			},
+			required: ['task_id'],
+		},
+		annotations: { readOnlyHint: true },
+	},
+	{
+		name: 'get_result',
+		description:
+			'Retrieve the completed durable result for a task, including verified sources, model versions, limitations, vault artifacts, and synthesized content.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				task_id: { type: 'string', description: 'The durable task ID.' },
+			},
+			required: ['task_id'],
+		},
+		annotations: { readOnlyHint: true },
+	},
+	{
+		name: 'cancel_task',
+		description:
+			'Cancel an in-flight or queued task, preventing or aborting further work.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				task_id: { type: 'string', description: 'The durable task ID to cancel.' },
+				reason: { type: 'string', description: 'Optional explanation for cancellation.' },
+			},
+			required: ['task_id'],
+		},
+		annotations: { destructiveHint: true },
+	},
+	{
+		name: 'search',
+		description:
+			'Search the Google OKF knowledge vault for technical stories, concepts, or literature.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				query: { type: 'string', description: 'Search term or keyword.' },
 				type: {
 					type: 'string',
 					enum: ['all', 'stories', 'concepts'],
-					description: 'Filter search by note type (default: all).',
+					description: 'Optional filter by note type.',
 				},
 			},
 			required: ['query'],
@@ -37,64 +100,61 @@ export const MCP_TOOLS = [
 		annotations: { readOnlyHint: true },
 	},
 	{
-		name: 'get_note',
+		name: 'fetch',
 		description:
-			'Get the raw Google OKF markdown content of any note in the vault (stories/<id>.md, concepts/<slug>.md, or index.md).',
+			'Fetch the raw Google OKF markdown content of any note in the vault (stories/<id>.md, concepts/<slug>.md, index.md).',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				path: {
-					type: 'string',
-					description: 'The relative vault path of the note, e.g. "stories/hn-49930412.md" or "concepts/bpf-fault.md".',
-				},
+				path: { type: 'string', description: 'Relative path of the note, e.g. "stories/hn-49930412.md".' },
 			},
 			required: ['path'],
 		},
 		annotations: { readOnlyHint: true },
 	},
 	{
-		name: 'curate_story',
+		name: 'acknowledge_result',
 		description:
-			'Curate a technical paper, literature, or story into the knowledge vault in Google Open Knowledge Format (OKF) with [[wikilinks]].',
+			'Explicitly acknowledge that the client (OpenAI Dot) has read and processed a task result. Distinct from HTTP delivery acknowledgement.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				native_id: { type: 'string', description: 'Unique identifier or discussion ID (e.g. "49930412").' },
-				title: { type: 'string', description: 'The title of the technical literature or paper.' },
-				url: { type: 'string', description: 'Direct URL to the primary research paper or article.' },
-				summary: { type: 'string', description: 'Concise executive summary of what this research introduces.' },
-				significance: { type: 'string', description: 'Technical significance and analysis of why this matters.' },
-				curatorNotes: { type: 'string', description: 'Assessment notes from the curator/agent.' },
-				topics: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'High-level topic categories (e.g. ["Systems", "Linux Kernel"]).',
+				task_id: { type: 'string', description: 'The task ID whose result is being acknowledged.' },
+				receipt: {
+					type: 'object',
+					description: 'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
 				},
-				concepts: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'Key technical concepts formatted as [[wikilinks]], e.g. ["[[bpf_fault]]", "[[userfaultfd]]"].',
-				},
-				significance_score: {
-					type: 'number',
-					description: 'Technical significance score between 0.0 and 1.0 (default: 0.9).',
-				},
-				by: { type: 'string', description: 'Author or submitter handle.' },
-				score: { type: 'number', description: 'Community score / upvotes if applicable.' },
 			},
-			required: ['native_id', 'title', 'url', 'summary', 'significance', 'curatorNotes', 'topics', 'concepts'],
+			required: ['task_id'],
 		},
 		annotations: { destructiveHint: false },
 	},
+];
+
+export const EVENT_DEFINITIONS = [
 	{
-		name: 'get_git_sync_info',
+		name: 'task_changed',
 		description:
-			'Get Cloudflare Artifacts Git repository metadata, clone URL, and token instructions for Obsidian and Dots.',
-		inputSchema: {
+			'Fired whenever a task changes state (queued, running, completed, failed, input_required, cancelled). Includes revision, correlation ID, and result reference.',
+		schema: {
 			type: 'object',
-			properties: {},
+			properties: {
+				event: { type: 'string', enum: ['task_changed'] },
+				eventId: { type: 'string', description: 'Unique UUID for event deduplication.' },
+				taskId: { type: 'string', description: 'Durable task ID.' },
+				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
+				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				status: {
+					type: 'string',
+					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
+				},
+				summary: { type: 'string', description: 'Short human-readable summary of the state change.' },
+				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
+				error: { type: 'string', description: 'Error message if status is failed.' },
+				timestamp: { type: 'string', description: 'ISO-8601 timestamp.' },
+			},
+			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
 		},
-		annotations: { readOnlyHint: true },
 	},
 ];
 
@@ -113,53 +173,62 @@ function toolResult(id: unknown, text: string, isError = false): Response {
 	});
 }
 
-/**
- * Dispatches an asynchronous MCP Event notification to an OpenAI Dot or webhook subscriber.
- */
-export async function notifyDotWebhook(
-	webhookUrl: string,
-	story: OKFStoryNote,
-	vaultPath: string,
-): Promise<{ ok: boolean; status?: number; error?: string }> {
-	try {
-		const res = await fetch(webhookUrl, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				event: 'library.story_curated',
-				schema_version: 'okf/v1',
-				timestamp: new Date().toISOString(),
-				story_id: story.id,
-				title: story.title,
-				url: story.resource,
-				significance_score: story.significance_score,
-				significance: story.significance,
-				concepts: story.concepts,
-				topics: story.topics,
-				vault_path: vaultPath,
-			}),
-		});
-		return { ok: res.ok, status: res.status };
-	} catch (err) {
-		return { ok: false, error: err instanceof Error ? err.message : String(err) };
-	}
-}
-
-export function createMcpRouter(getVault: (env?: Record<string, unknown>) => LibraryVault = getOrCreateVault) {
+export function createMcpRouter(
+	getVault: (env?: Record<string, unknown>) => LibraryVault = getOrCreateVault,
+	getTaskStore: (vaultFn?: () => LibraryVault) => TaskStore = getOrCreateTaskStore,
+) {
 	const router = new Hono<{ Bindings: Record<string, unknown> }>();
 
-	// GET /mcp — Discovery endpoint
+	const resolveTaskStore = () => getTaskStore(() => getVault());
+	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
+
+	// GET /mcp — Discovery and protocol capability negotiation
 	router.get('/', (c) =>
 		c.json({
 			name: SERVER_INFO.name,
 			version: SERVER_INFO.version,
 			protocol: MCP_PROTOCOL_VERSION,
-			transport: 'http-jsonrpc',
-			tools: MCP_TOOLS.map((t) => t.name),
+			capabilities: {
+				tools: { listChanged: false },
+				events: { subscribe: true, list: true, history: true },
+			},
+			tools: COMMAND_TOOLS.map((t) => t.name),
+			events: EVENT_DEFINITIONS.map((e) => e.name),
+			endpoints: {
+				rpc: '/mcp',
+				tasks: '/mcp/tasks',
+				results: '/mcp/results',
+				events: '/mcp/events',
+			},
 		}),
 	);
 
-	// POST /mcp — JSON-RPC 2.0 Handler
+	// REST endpoints for direct inspection
+	router.get('/tasks/:id', (c) => {
+		const task = resolveTaskStore().getTask(c.req.param('id'));
+		if (!task) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
+		return c.json(task);
+	});
+
+	router.get('/results/:id', (c) => {
+		const result = resolveTaskStore().getResult(c.req.param('id'));
+		if (!result) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
+		return c.json(result);
+	});
+
+	router.get('/events', (c) => {
+		const taskId = c.req.query('taskId');
+		const correlationId = c.req.query('correlationId');
+		const events = resolveTaskStore().listEvents({ taskId, correlationId });
+		return c.json({ total: events.length, events });
+	});
+
+	router.get('/deliveries/:taskId', (c) => {
+		const deliveries = resolveTaskStore().getDeliveryRecords(c.req.param('taskId'));
+		return c.json({ total: deliveries.length, deliveries });
+	});
+
+	// POST /mcp — Unified JSON-RPC 2.0 Handler
 	router.post('/', async (c) => {
 		let body: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
 		try {
@@ -170,6 +239,8 @@ export function createMcpRouter(getVault: (env?: Record<string, unknown>) => Lib
 
 		const id = body.id ?? null;
 		const method = body.method;
+		const taskStore = resolveTaskStore();
+		const vault = resolveVault(c.env);
 
 		// 1. initialize
 		if (method === 'initialize') {
@@ -177,14 +248,15 @@ export function createMcpRouter(getVault: (env?: Record<string, unknown>) => Lib
 				protocolVersion: MCP_PROTOCOL_VERSION,
 				capabilities: {
 					tools: { listChanged: false },
+					events: { subscribe: true, list: true, history: true },
 				},
 				serverInfo: SERVER_INFO,
 				instructions:
-					'Autonomous Knowledge Vault in Google Open Knowledge Format (OKF) backed by Cloudflare Artifacts and Muse Spark on Pi.',
+					'Autonomous Knowledge Vault with MCP Events for OpenAI Dots. Submit tasks asynchronously, subscribe to task_changed events, and retrieve verified durable results.',
 			});
 		}
 
-		// 2. notifications/initialized (client ack, no response id)
+		// 2. notifications/initialized
 		if (method === 'notifications/initialized') {
 			return new Response(null, { status: 204 });
 		}
@@ -196,20 +268,124 @@ export function createMcpRouter(getVault: (env?: Record<string, unknown>) => Lib
 
 		// 4. tools/list
 		if (method === 'tools/list') {
-			return rpcSuccess(id, { tools: MCP_TOOLS });
+			return rpcSuccess(id, { tools: COMMAND_TOOLS });
 		}
 
-		// 5. tools/call
+		// 5. events/list
+		if (method === 'events/list') {
+			return rpcSuccess(id, { events: EVENT_DEFINITIONS });
+		}
+
+		// 6. events/subscribe
+		if (method === 'events/subscribe') {
+			const params = body.params ?? {};
+			const callbackUrl = String(params.callbackUrl ?? params.callback_url ?? '');
+			if (!callbackUrl) {
+				return rpcError(id, -32602, 'events/subscribe requires a callbackUrl parameter');
+			}
+			const secret = params.secret ? String(params.secret) : undefined;
+			const filter = params.filter as { taskId?: string; correlationId?: string } | undefined;
+			const fromRevision = typeof params.fromRevision === 'number' ? params.fromRevision : undefined;
+
+			const { subscription, replayedEvents } = await taskStore.subscribe({
+				callbackUrl,
+				secret,
+				filter,
+				fromRevision,
+			});
+
+			return rpcSuccess(id, {
+				subscriptionId: subscription.id,
+				callbackUrl: subscription.callbackUrl,
+				replayedEventsCount: replayedEvents.length,
+				filter: subscription.filter,
+			});
+		}
+
+		// 7. events/unsubscribe
+		if (method === 'events/unsubscribe') {
+			const params = body.params ?? {};
+			const subId = String(params.subscriptionId ?? params.subscription_id ?? '');
+			const ok = taskStore.unsubscribe(subId);
+			return rpcSuccess(id, { success: ok, subscriptionId: subId });
+		}
+
+		// 8. tools/call
 		if (method === 'tools/call') {
 			const params = body.params ?? {};
 			const toolName = String(params.name ?? '');
 			const args = (params.arguments ?? {}) as Record<string, unknown>;
-			const vault = getVault(c.env);
 
 			switch (toolName) {
-				case 'search_vault': {
+				case 'submit_task': {
+					const taskType = String(args.task_type ?? args.type ?? '');
+					const payload = (args.payload ?? {}) as Record<string, unknown>;
+					const correlationId = args.correlation_id ? String(args.correlation_id) : undefined;
+
+					if (!taskType) return toolResult(id, 'submit_task requires task_type', true);
+
+					const task = taskStore.submitTask({
+						type: taskType,
+						payload,
+						correlationId,
+					});
+
+					return toolResult(
+						id,
+						JSON.stringify(
+							{
+								taskId: task.id,
+								correlationId: task.correlationId,
+								status: task.status,
+								revision: task.revision,
+								createdAt: task.createdAt,
+								resultReference: `/mcp/results/${task.id}`,
+							},
+							null,
+							2,
+						),
+					);
+				}
+
+				case 'get_task': {
+					const taskId = String(args.task_id ?? '');
+					if (!taskId) return toolResult(id, 'get_task requires task_id', true);
+					const task = taskStore.getTask(taskId);
+					if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
+					return toolResult(id, JSON.stringify(task, null, 2));
+				}
+
+				case 'get_result': {
+					const taskId = String(args.task_id ?? '');
+					if (!taskId) return toolResult(id, 'get_result requires task_id', true);
+					const result = taskStore.getResult(taskId);
+					if (!result) {
+						const task = taskStore.getTask(taskId);
+						if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
+						return toolResult(id, `Task ${taskId} is currently ${task.status}; result not yet ready.`, true);
+					}
+					return toolResult(id, JSON.stringify(result, null, 2));
+				}
+
+				case 'cancel_task': {
+					const taskId = String(args.task_id ?? '');
+					const reason = args.reason ? String(args.reason) : undefined;
+					if (!taskId) return toolResult(id, 'cancel_task requires task_id', true);
+					const ok = taskStore.cancelTask(taskId, reason);
+					return toolResult(id, JSON.stringify({ taskId, cancelled: ok }));
+				}
+
+				case 'acknowledge_result': {
+					const taskId = String(args.task_id ?? '');
+					const receipt = args.receipt;
+					if (!taskId) return toolResult(id, 'acknowledge_result requires task_id', true);
+					const ok = taskStore.acknowledgeResult(taskId, receipt);
+					return toolResult(id, JSON.stringify({ taskId, acknowledged: ok }));
+				}
+
+				case 'search': {
 					const query = String(args.query ?? '').toLowerCase();
-					if (!query) return toolResult(id, 'search_vault requires a query argument', true);
+					if (!query) return toolResult(id, 'search requires query', true);
 					const allPaths = await vault.listNotes();
 					const targetType = args.type ? String(args.type) : 'all';
 
@@ -232,115 +408,19 @@ export function createMcpRouter(getVault: (env?: Record<string, unknown>) => Lib
 							});
 						}
 					}
-
 					return toolResult(
 						id,
 						JSON.stringify({ query, totalMatches: matches.length, matches: matches.slice(0, 10) }, null, 2),
 					);
 				}
 
-				case 'get_note': {
+				case 'fetch': {
 					let path = String(args.path ?? '').trim();
-					if (!path) return toolResult(id, 'get_note requires a path argument', true);
+					if (!path) return toolResult(id, 'fetch requires path', true);
 					if (!path.endsWith('.md')) path = `${path}.md`;
 					const content = await vault.getNote(path);
 					if (content === null) return toolResult(id, `Note not found: ${path}`, true);
 					return toolResult(id, content);
-				}
-
-				case 'curate_story': {
-					const nativeId = String(args.native_id ?? '');
-					const title = String(args.title ?? '');
-					const url = String(args.url ?? '');
-					if (!nativeId || !title || !url) {
-						return toolResult(id, 'curate_story requires native_id, title, and url', true);
-					}
-
-					const topics = Array.isArray(args.topics) ? (args.topics as string[]) : ['General'];
-					const concepts = Array.isArray(args.concepts) ? (args.concepts as string[]) : [];
-
-					const story: OKFStoryNote = {
-						schema_version: 'okf/v1',
-						id: `hn-${nativeId}`,
-						type: 'story',
-						title,
-						resource: url,
-						source: 'hackernews',
-						native_id: nativeId,
-						timestamp: new Date().toISOString(),
-						curator: 'curator',
-						curator_model: liveModel(),
-						significance_score: typeof args.significance_score === 'number' ? args.significance_score : 0.9,
-						topics,
-						concepts,
-						tags: topics.map((t) => `#${t.toLowerCase().replace(/\s+/g, '-')}`),
-						summary: String(args.summary ?? ''),
-						significance: String(args.significance ?? ''),
-						curatorNotes: String(args.curatorNotes ?? ''),
-						discussionUrl: `https://news.ycombinator.com/item?id=${nativeId}`,
-						by: args.by ? String(args.by) : undefined,
-						score: typeof args.score === 'number' ? args.score : undefined,
-					};
-
-					const path = await vault.saveStoryNote(story);
-
-					// If a Dot webhook is configured in env, notify asynchronously
-					const dotWebhook = c.env?.DOT_WEBHOOK_URL as string | undefined;
-					if (dotWebhook && story.significance_score >= 0.85) {
-						c.executionCtx?.waitUntil?.(notifyDotWebhook(dotWebhook, story, path));
-					}
-
-					return toolResult(
-						id,
-						JSON.stringify(
-							{
-								status: 'curated',
-								path,
-								storyId: story.id,
-								title: story.title,
-								conceptsAdded: concepts.length,
-								vaultIndexUpdated: true,
-							},
-							null,
-							2,
-						),
-					);
-				}
-
-				case 'get_git_sync_info': {
-					const artifacts = c.env?.ARTIFACTS as ArtifactsBinding | undefined;
-					let cloneUrl = 'https://git.cloudflare.com/default/library-vault.git';
-					if (artifacts) {
-						try {
-							const repo = await artifacts.get('library-vault');
-							if (repo) cloneUrl = repo.httpUrl ?? repo.url ?? cloneUrl;
-						} catch {
-							// fallback
-						}
-					}
-					const info: GitSyncInfo = {
-						backend: 'cloudflare-artifacts',
-						repository: 'library-vault',
-						branch: 'main',
-						cloneUrl,
-						endpoints: {
-							token: '/wiki/git/token',
-							manifest: '/wiki/manifest',
-						},
-						instructions: {
-							obsidianGit: [
-								'1. Install Obsidian plugin: "Obsidian Git"',
-								'2. Request a scoped token via POST /wiki/git/token',
-								`3. Configure remote: ${cloneUrl}`,
-								'4. Set automatic sync interval',
-							],
-							gitCli: [
-								`git clone ${cloneUrl} library-vault`,
-								'cd library-vault',
-							],
-						},
-					};
-					return toolResult(id, JSON.stringify(info, null, 2));
 				}
 
 				default:
