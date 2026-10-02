@@ -260,6 +260,13 @@ export class RegistryBridge {
 		return this.#current;
 	}
 
+	/** Current compaction policy for HarnessSettings. */
+	get compactionPolicy(): CompactionPolicy {
+		const render = this.#current;
+		const model = render?.model !== undefined ? parseModelSpecifier(render.model) : undefined;
+		return compactionPolicyFor(render?.compaction, modelLimits(this.#options.models, model));
+	}
+
 	/** The lifecycle declarations governing a conversation: the root agent's, never a delegate's. */
 	async lifecycleFor(
 		conversationId: ConversationId,

@@ -249,11 +249,17 @@ class PiHost implements FluePiHost {
 			? withContextValue(QUESTION_HANDLER, this.#questionHandler, openContext)
 			: openContext;
 		const storage = await this.#options.storage();
+		const bridge = this.#bridge;
 		this.#harness = await Harness.open(
 			storage,
 			{
 				models: this.#options.models,
 				registry: this.registry,
+				settings: {
+					get compaction() {
+						return bridge.compactionPolicy;
+					},
+				},
 				...(this.#env
 					? {
 							env: () => (typeof this.#env === 'function' ? this.#env() : this.#env),

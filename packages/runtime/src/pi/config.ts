@@ -62,13 +62,12 @@ export function compactionPolicyFor(
 	const defaults = flueCompactionDefaults(model ?? { contextWindow: 0, maxTokens: 0 });
 	if (config === false) {
 		// Pi's `enabled` gates threshold AND overflow compaction; Flue's `false`
-		// disables only the threshold. Keep it enabled with no reserve: Pi then
-		// compacts only a context that would not fit the window at all — the
-		// overflow it would otherwise fail on.
+		// disables only the threshold. Keep it enabled with keepRecentTokens: 0
+		// so that overflow compaction can cut even when the recent turn is small.
 		return {
 			enabled: true,
-			reserveTokens: 0,
-			keepRecentTokens: defaults.keepRecentTokens,
+			reserveTokens: defaults.reserveTokens,
+			keepRecentTokens: 0,
 			backgroundTokens: 0,
 		};
 	}
