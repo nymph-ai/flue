@@ -50,16 +50,23 @@ tags:
 - `index.md`: Map of Content (MOC) cataloging all stories, concepts, and system statistics.
 - `log.md`: Append-only audit trail of all curation actions.
 
-### HTTP Vault Endpoints
+### HTTP Vault & Git Sync Endpoints
 - `GET /wiki/` or `GET /wiki/index.md`: Returns central Map of Content.
 - `GET /wiki/stories/:id`: Returns raw OKF story markdown.
 - `GET /wiki/concepts/:slug`: Returns raw concept note.
 - `GET /wiki/manifest`: JSON manifest of all vault files, hashes, and topics.
 - `GET /wiki/vault.zip`: **1-Click Obsidian Vault Download** — generates and downloads the complete `.zip` archive ready to open directly in Obsidian!
+- `GET /wiki/git/info`: Returns Cloudflare Artifacts Git repository metadata and clone instructions.
+- `POST /wiki/git/token`: Mints scoped Git access tokens for `obsidian-git` or standard git CLI.
 
-### Obsidian Setup
-1. **Direct Download**: Download `https://library.<subdomain>.workers.dev/wiki/vault.zip`, unzip to an Obsidian folder, and open as a vault.
-2. **Cloudflare R2 / S3 Sync**: Configure Obsidian plugin *Remotely Save* pointing to the R2 bucket `library-vault`.
+### Obsidian Setup Options
+1. **Cloudflare Artifacts (Native Git Sync)**:
+   - Install the **Obsidian Git** plugin in Obsidian.
+   - Request a scoped token via `POST /wiki/git/token` (or query `/wiki/git/info`).
+   - Clone the vault repository from the Cloudflare Artifacts Git remote URL using the token.
+   - Enjoy automated two-way Git syncing, diffs, and version history.
+2. **Direct 1-Click Download**: Download `https://library.<subdomain>.workers.dev/wiki/vault.zip`, unzip to an Obsidian folder, and open as a vault.
+3. **Cloudflare R2 / S3 Sync**: Configure Obsidian plugin *Remotely Save* pointing to the R2 bucket `library-vault`.
 
 ---
 

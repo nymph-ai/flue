@@ -80,3 +80,38 @@ export interface VaultManifest {
 		lastModified: string;
 	}>;
 }
+
+export interface ArtifactsTokenResult {
+	plaintext: string;
+	expiresAt: string;
+}
+
+export interface ArtifactsRepoHandle {
+	name?: string;
+	url?: string;
+	httpUrl?: string;
+	createToken(scope: 'read' | 'write', ttlSeconds?: number): Promise<ArtifactsTokenResult>;
+}
+
+export interface ArtifactsBinding {
+	get(name: string): Promise<ArtifactsRepoHandle | null>;
+	create(name: string, options?: { description?: string }): Promise<ArtifactsRepoHandle>;
+	list?(): Promise<Array<{ name: string }>>;
+}
+
+export interface GitSyncInfo {
+	backend: 'cloudflare-artifacts';
+	repository: string;
+	branch: string;
+	cloneUrl?: string;
+	endpoints: {
+		token: string;
+		manifest: string;
+		zip: string;
+	};
+	instructions: {
+		obsidianGit: string[];
+		gitCli: string[];
+	};
+}
+

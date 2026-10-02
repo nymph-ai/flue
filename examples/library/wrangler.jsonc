@@ -18,6 +18,9 @@
 	"r2_buckets": [
 		{ "binding": "LIBRARY_VAULT", "bucket_name": "library-vault" }
 	],
+	"artifacts": [
+		{ "binding": "ARTIFACTS", "namespace": "default" }
+	],
 	"migrations": [
 		{
 			"tag": "society-v1",

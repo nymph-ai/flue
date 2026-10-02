@@ -254,4 +254,40 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const zipBuffer = await resZip.arrayBuffer();
 		expect(zipBuffer.byteLength).toBeGreaterThan(500);
 	});
+
+	it('serves Cloudflare Artifacts Git sync info and tokens for obsidian-git', async () => {
+		const router = createWikiRouter();
+
+		// GET /git/info
+		const resInfo = await router.request('/git/info');
+		expect(resInfo.status).toBe(200);
+		const info = (await resInfo.json()) as {
+			backend: string;
+			repository: string;
+			cloneUrl: string;
+			instructions: { obsidianGit: string[] };
+		};
+		expect(info.backend).toBe('cloudflare-artifacts');
+		expect(info.repository).toBe('library-vault');
+		expect(info.cloneUrl).toContain('library-vault');
+		expect(info.instructions.obsidianGit.length).toBeGreaterThan(0);
+
+		// POST /git/token
+		const resToken = await router.request('/git/token', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ scope: 'write', ttlSeconds: 3600 }),
+		});
+		expect(resToken.status).toBe(200);
+		const tokenData = (await resToken.json()) as {
+			token: string;
+			expiresAt: string;
+			scope: string;
+			repository: string;
+		};
+		expect(tokenData.token).toBeDefined();
+		expect(tokenData.scope).toBe('write');
+		expect(tokenData.repository).toBe('library-vault');
+		expect(tokenData.expiresAt).toBeDefined();
+	});
 });

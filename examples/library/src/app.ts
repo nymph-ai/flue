@@ -20,6 +20,8 @@ app.get('/', (c) =>
 		wiki: '/wiki',
 		vaultZip: '/wiki/vault.zip',
 		manifest: '/wiki/manifest',
+		gitInfo: '/wiki/git/info',
+		gitToken: '/wiki/git/token',
 	}),
 );
 
