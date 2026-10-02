@@ -28,7 +28,7 @@ export function getOpenApiSpec(origin = 'https://library.nymphai.workers.dev') {
 					operationId: 'mcpRpc',
 					summary: 'MCP 2.0 JSON-RPC 2.0 endpoint',
 					description:
-						'Handles all standard MCP 2.0 methods: initialize, ping, tools/list, tools/call, events/list, events/subscribe, events/unsubscribe.',
+						'Handles all standard MCP 2.0 methods: server/discover, initialize, ping, tools/list, tools/call, events/list, events/subscribe, events/unsubscribe, resources/list, prompts/list.',
 					requestBody: {
 						required: true,
 						content: {

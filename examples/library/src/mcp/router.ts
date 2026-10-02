@@ -145,7 +145,57 @@ export const EVENT_DEFINITIONS = [
 	{
 		name: 'task_changed',
 		description:
-			'Fired whenever a task changes state (queued, running, completed, failed, input_required, cancelled). Includes revision, correlation ID, and result reference.',
+			'Fired whenever an asynchronous task changes state (queued, running, completed, failed, input_required, cancelled). Delivers state revision, status, summary, and durable result reference.',
+		delivery: ['webhook'],
+		inputSchema: {
+			type: 'object',
+			properties: {
+				callbackUrl: {
+					type: 'string',
+					format: 'uri',
+					description: 'Webhook endpoint to which signed event notifications will be POSTed.',
+				},
+				secret: {
+					type: 'string',
+					description:
+						'Optional HMAC-SHA256 secret key used to compute x-mcp-event-signature header.',
+				},
+				filter: {
+					type: 'object',
+					properties: {
+						taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
+						correlationId: {
+							type: 'string',
+							description: 'Filter notifications to a specific conversation or correlation ID.',
+						},
+					},
+				},
+				fromRevision: {
+					type: 'integer',
+					description: 'Replay past matching events starting at this revision.',
+				},
+			},
+			required: ['callbackUrl'],
+		},
+		payloadSchema: {
+			type: 'object',
+			properties: {
+				event: { type: 'string', enum: ['task_changed'] },
+				eventId: { type: 'string', description: 'Unique UUID for event deduplication.' },
+				taskId: { type: 'string', description: 'Durable task ID.' },
+				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
+				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				status: {
+					type: 'string',
+					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
+				},
+				summary: { type: 'string', description: 'Human-readable summary of the state change.' },
+				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
+				error: { type: 'string', description: 'Error message if status is failed.' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
+			},
+			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
+		},
 		schema: {
 			type: 'object',
 			properties: {
@@ -161,7 +211,7 @@ export const EVENT_DEFINITIONS = [
 				summary: { type: 'string', description: 'Short human-readable summary of the state change.' },
 				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
 				error: { type: 'string', description: 'Error message if status is failed.' },
-				timestamp: { type: 'string', description: 'ISO-8601 timestamp.' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
 			},
 			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
 		},
@@ -274,20 +324,26 @@ export function createMcpRouter(
 	// GET /mcp — Discovery and protocol capability negotiation
 	router.get('/', (c) =>
 		c.json({
-			name: SERVER_INFO.name,
-			version: SERVER_INFO.version,
-			protocol: MCP_PROTOCOL_VERSION,
+			resultType: 'complete',
+			protocolVersion: MCP_PROTOCOL_VERSION,
+			supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+			serverInfo: SERVER_INFO,
+			_meta: SERVER_INFO,
 			capabilities: {
 				tools: { listChanged: false },
 				events: { subscribe: true, list: true, history: true },
+				resources: { subscribe: false, listChanged: false },
+				prompts: { listChanged: false },
 			},
-			tools: COMMAND_TOOLS.map((t) => t.name),
-			events: EVENT_DEFINITIONS.map((e) => e.name),
+			tools: COMMAND_TOOLS,
+			events: EVENT_DEFINITIONS,
 			endpoints: {
 				rpc: '/mcp',
 				tasks: '/mcp/tasks',
 				results: '/mcp/results',
 				events: '/mcp/events',
+				deliveries: '/mcp/deliveries',
+				testCallback: '/mcp/test-callback',
 			},
 		}),
 	);
@@ -390,15 +446,49 @@ export function createMcpRouter(
 		const taskStore = resolveStore(c.env);
 		const vault = resolveVault(c.env);
 
-		// 1. initialize
-		if (method === 'initialize') {
+		// 0. server/discover (Stateless discovery mandatory in MCP 2026-07-28)
+		if (
+			method === 'server/discover' ||
+			method === 'discover' ||
+			method === 'server/info' ||
+			method === 'server/capabilities'
+		) {
 			return rpcSuccess(id, {
+				resultType: 'complete',
 				protocolVersion: MCP_PROTOCOL_VERSION,
+				supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+				serverInfo: SERVER_INFO,
+				_meta: SERVER_INFO,
 				capabilities: {
 					tools: { listChanged: false },
 					events: { subscribe: true, list: true, history: true },
+					resources: { subscribe: false, listChanged: false },
+					prompts: { listChanged: false },
+				},
+				instructions:
+					'Autonomous Knowledge Vault with MCP Events for OpenAI Dots. Submit tasks asynchronously, subscribe to task_changed events, and retrieve verified durable results.',
+				tools: COMMAND_TOOLS,
+				events: EVENT_DEFINITIONS,
+			});
+		}
+
+		// 1. initialize
+		if (method === 'initialize') {
+			const reqVersion =
+				typeof body.params?.protocolVersion === 'string'
+					? body.params.protocolVersion
+					: MCP_PROTOCOL_VERSION;
+			return rpcSuccess(id, {
+				protocolVersion: reqVersion,
+				supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+				capabilities: {
+					tools: { listChanged: false },
+					events: { subscribe: true, list: true, history: true },
+					resources: { subscribe: false, listChanged: false },
+					prompts: { listChanged: false },
 				},
 				serverInfo: SERVER_INFO,
+				_meta: SERVER_INFO,
 				instructions:
 					'Autonomous Knowledge Vault with MCP Events for OpenAI Dots. Submit tasks asynchronously, subscribe to task_changed events, and retrieve verified durable results.',
 			});
@@ -412,6 +502,16 @@ export function createMcpRouter(
 		// 3. ping
 		if (method === 'ping') {
 			return rpcSuccess(id, {});
+		}
+
+		// resources/list
+		if (method === 'resources/list') {
+			return rpcSuccess(id, { resources: [] });
+		}
+
+		// prompts/list
+		if (method === 'prompts/list') {
+			return rpcSuccess(id, { prompts: [] });
 		}
 
 		// 4. tools/list

@@ -304,6 +304,35 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		);
 		expect(getJson.events).toContain('task_changed');
 
+		// 1.5. POST /mcp server/discover (MCP 2026-07-28 stateless discovery)
+		const resDiscover = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 99,
+				method: 'server/discover',
+			}),
+		});
+		expect(resDiscover.status).toBe(200);
+		const discoverJson = (await resDiscover.json()) as {
+			result: {
+				resultType: string;
+				protocolVersion: string;
+				supportedVersions: string[];
+				capabilities: { events: { subscribe: boolean } };
+				tools: Array<{ name: string }>;
+				events: Array<{ name: string; delivery: string[]; inputSchema: object; payloadSchema: object }>;
+			};
+		};
+		expect(discoverJson.result.resultType).toBe('complete');
+		expect(discoverJson.result.supportedVersions).toContain('2026-07-28');
+		expect(discoverJson.result.capabilities.events.subscribe).toBe(true);
+		expect(discoverJson.result.tools.length).toBeGreaterThan(0);
+		expect(discoverJson.result.events[0]?.delivery).toEqual(['webhook']);
+		expect(discoverJson.result.events[0]?.inputSchema).toBeDefined();
+		expect(discoverJson.result.events[0]?.payloadSchema).toBeDefined();
+
 		// 2. POST /mcp initialize
 		const resInit = await mcp.request('/', {
 			method: 'POST',
@@ -329,8 +358,20 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'events/list' }),
 		});
 		expect(resEvtList.status).toBe(200);
-		const evtListJson = (await resEvtList.json()) as { result: { events: Array<{ name: string }> } };
-		expect(evtListJson.result.events.map((e) => e.name)).toContain('task_changed');
+		const evtListJson = (await resEvtList.json()) as {
+			result: {
+				events: Array<{
+					name: string;
+					delivery: string[];
+					inputSchema: Record<string, unknown>;
+					payloadSchema: Record<string, unknown>;
+				}>;
+			};
+		};
+		expect(evtListJson.result.events[0]?.name).toBe('task_changed');
+		expect(evtListJson.result.events[0]?.delivery).toEqual(['webhook']);
+		expect(evtListJson.result.events[0]?.inputSchema).toBeDefined();
+		expect(evtListJson.result.events[0]?.payloadSchema).toBeDefined();
 
 		// 4. POST /mcp events/subscribe (establishing scoped subscription before job)
 		const resSub = await mcp.request('/', {
