@@ -155,9 +155,9 @@ describe('PiConversationCache', () => {
 
 		// Gone: as an instance written before the cache existed.
 		const raw = await openNodeSqliteDatabase(file);
-		raw.exec('DROP TABLE flue_conversation_state');
-		raw.exec('DROP TABLE flue_conversation_log');
-		raw.close();
+		await raw.exec('DROP TABLE flue_conversation_state');
+		await raw.exec('DROP TABLE flue_conversation_log');
+		await raw.close();
 		const rebuilt = await open(file);
 		const head = await rebuilt.cache.head();
 		expect(head.incarnation).not.toBe(live.incarnation);
@@ -171,10 +171,10 @@ describe('PiConversationCache', () => {
 
 		// Left open: the object died mid-stream with partials only in memory.
 		const crashed = await openNodeSqliteDatabase(file);
-		crashed.exec(
+		await crashed.exec(
 			"INSERT INTO flue_conversation_log (first_row, last_row, closed, page, folded) VALUES (1000000, 1000000, 0, '[]', '[]')",
 		);
-		crashed.close();
+		await crashed.close();
 		const recovered = await open(file);
 		const after = await recovered.cache.head();
 		expect(after.incarnation).not.toBe(head.incarnation);

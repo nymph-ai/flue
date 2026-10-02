@@ -16,7 +16,7 @@
  * reads one row per stream the entity has ever been woken for (its inbox and
  * the streams it observes) — never anything that grows with its history.
  */
-import type { SqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite';
+import type { CountingSqliteDatabase } from '../cloudflare/do-sqlite-database.ts';
 import { compareOffsets, STREAM_START } from '../streams/offset.ts';
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS flue_entity_streams (
@@ -32,16 +32,16 @@ export interface WakeStreamState {
 }
 
 export class EntityWakeBook {
-	readonly #db: SqliteDatabase;
+	readonly #db: CountingSqliteDatabase;
 	#schema = false;
 
-	constructor(database: SqliteDatabase) {
+	constructor(database: CountingSqliteDatabase) {
 		this.#db = database;
 	}
 
 	#ensure(): void {
 		if (this.#schema) return;
-		this.#db.exec(SCHEMA);
+		void this.#db.exec(SCHEMA);
 		this.#schema = true;
 	}
 

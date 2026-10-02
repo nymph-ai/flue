@@ -43,16 +43,16 @@ overrides:
   # Pi is pinned exactly at one release across the workspace (PI_UPGRADE_PLAN.md
   # §7 step 1). Pi packages depend on each other with caret ranges, so every
   # @earendil-works package is forced to the same version here.
-  '@earendil-works/chord': 0.99.2
-  '@earendil-works/pi-agent-core': 0.99.2
-  '@earendil-works/pi-ai': 0.99.2
-  '@earendil-works/pi-codemode': 0.99.2
-  '@earendil-works/pi-durable': 0.99.2
-  '@earendil-works/pi-telemetry': 0.99.2
+  '@earendil-works/chord': 1.0.0
+  '@earendil-works/pi-agent-core': 1.0.0
+  '@earendil-works/pi-ai': 1.0.0
+  '@earendil-works/pi-codemode': 1.0.0
+  '@earendil-works/pi-durable': 1.0.0
+  '@earendil-works/pi-telemetry': 1.0.0
 patchedDependencies:
   # Runs pi-codemode's QuickJS VM without node:worker_threads: an injectable
   # `spawn`, the VM half as `@earendil-works/pi-codemode/vm`, and node:fs /
   # node:worker_threads imported only on first use. Shaped to go upstream
   # (earendil-works/pi packages/codemode); Code Mode runs the VM in-process
   # in the agent's Durable Object (packages/runtime/src/codemode/sandbox.ts).
-  '@earendil-works/pi-codemode@0.99.2': patches/@earendil-works__pi-codemode@0.99.2.patch
+  '@earendil-works/pi-codemode@1.0.0': patches/@earendil-works__pi-codemode@1.0.0.patch

@@ -25,6 +25,7 @@ import {
 } from '@earendil-works/pi-durable';
 import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
 import { type SqliteDatabase, SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
+import type { CountingSqliteDatabase } from '../cloudflare/do-sqlite-database.ts';
 import { decodeBase64, encodeBase64 } from '../base64.ts';
 import type { FlueContextInternal } from '../client.ts';
 import { discoverWorkspace } from '../context.ts';
@@ -90,7 +91,7 @@ export interface FlueAgentInstanceOptions {
 	readonly instanceId: string;
 	readonly agent: Agent;
 	/** The instance's database: DO SQLite on Cloudflare, `node:sqlite` on Node. Opened once. */
-	readonly database: () => SqliteDatabase | Promise<SqliteDatabase>;
+	readonly database: () => CountingSqliteDatabase | Promise<CountingSqliteDatabase>;
 	readonly attachments: AttachmentStore;
 	/** The pre-upgrade record store holding this instance's legacy stream, if any. */
 	readonly legacy?: ConversationStreamStore;
@@ -140,7 +141,7 @@ function isSandboxFactory(value: unknown): value is SandboxFactory {
 }
 
 interface Opened {
-	readonly database: SqliteDatabase;
+	readonly database: CountingSqliteDatabase;
 	readonly host: FluePiHost;
 	readonly telemetry: PiTelemetry;
 	readonly entity: EntityRuntime | undefined;
@@ -162,7 +163,7 @@ export class FlueAgentInstance {
 	readonly logPath: string;
 	readonly #options: FlueAgentInstanceOptions;
 	readonly #now: () => number;
-	#database: Promise<SqliteDatabase> | undefined;
+	#database: Promise<CountingSqliteDatabase> | undefined;
 	#cache: PiConversationCache | undefined;
 	#book: EntityWakeBook | undefined;
 	#opened: Promise<Opened> | undefined;
@@ -270,7 +271,7 @@ export class FlueAgentInstance {
 	// ─── Opening ────────────────────────────────────────────────────────────
 
 	/** The instance's database, opened once. */
-	#db(): Promise<SqliteDatabase> {
+	#db(): Promise<CountingSqliteDatabase> {
 		this.#database ??= Promise.resolve(this.#options.database());
 		return this.#database;
 	}

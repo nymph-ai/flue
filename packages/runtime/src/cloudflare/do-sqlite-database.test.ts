@@ -15,9 +15,9 @@ import { doSqliteDatabase } from './do-sqlite-database.ts';
 import { FakeDurableObjectStorage } from './do-sqlite-test-support.ts';
 
 describe('DoSqliteDatabase', () => {
-	it('maps bindings and results to what DO SQL carries', () => {
+	it('maps bindings and results to what DO SQL carries', async () => {
 		const db = doSqliteDatabase(new FakeDurableObjectStorage());
-		db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER, b BLOB, s TEXT)');
+		await db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER, b BLOB, s TEXT)');
 		db.prepare('INSERT INTO t (id, n, b, s) VALUES (?, ?, ?, ?)').run(
 			1,
 			42n,
@@ -34,28 +34,42 @@ describe('DoSqliteDatabase', () => {
 		expect(() => db.prepare('SELECT ?').get(2n ** 60n)).toThrow(RangeError);
 	});
 
-	it('rolls a throwing transaction back and rethrows the same error', () => {
+	it('rolls a throwing transaction back and rethrows the same error', async () => {
 		const db = doSqliteDatabase(new FakeDurableObjectStorage());
-		db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+		await db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
 		const failure = new Error('boom');
 		expect(() =>
-			db.transaction(() => {
+			db.transactionSync(() => {
 				db.prepare('INSERT INTO t (id) VALUES (?)').run(1);
 				throw failure;
 			}),
 		).toThrow(failure);
 		expect(db.prepare('SELECT id FROM t').all()).toEqual([]);
-		expect(db.transaction(() => 7)).toBe(7);
-		expect(() => db.transaction(() => Promise.resolve(1))).toThrow(/synchronous/);
+		expect(db.transactionSync(() => 7)).toBe(7);
+		expect(() => db.transactionSync(() => Promise.resolve(1) as any)).toThrow(/synchronous/);
+
+		await expect(
+			db.transaction(async (tx) => {
+				await tx.run('INSERT INTO t (id) VALUES (?)', 2);
+				throw failure;
+			}),
+		).rejects.toThrow(failure);
+		expect(db.prepare('SELECT id FROM t WHERE id = ?').get(2)).toBeUndefined();
+		const result = await db.transaction(async (tx) => {
+			await tx.run('INSERT INTO t (id) VALUES (?)', 2);
+			return 42;
+		});
+		expect(result).toBe(42);
+		expect(db.prepare('SELECT id FROM t WHERE id = ?').get(2)).toEqual({ id: 2 });
 	});
 });
 
 describe('DoSqliteDatabase row counters', () => {
-	it("accumulates every cursor's rowsRead and rowsWritten, one counter per storage", () => {
+	it("accumulates every cursor's rowsRead and rowsWritten, one counter per storage", async () => {
 		const storage = new FakeDurableObjectStorage();
 		const db = doSqliteDatabase(storage);
 		expect(doSqliteDatabase(storage)).toBe(db);
-		db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+		await db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
 		db.prepare('INSERT INTO t (id) VALUES (?), (?)').run(1, 2);
 		expect(db.rows).toEqual({ rowsRead: 0, rowsWritten: 2 });
 		db.prepare('SELECT id FROM t').all();

@@ -1,5 +1,5 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index ac2d9d8..69ef602 100644
+index 02876fa..aebb556 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -3,6 +3,6 @@ export { toCodemodeIdentifier } from "./identifier.ts";
@@ -583,7 +583,7 @@ index 1b1c12e..792bdbb 100644
 \ No newline at end of file
 +//# sourceMappingURL=wasm.js.map
 diff --git a/package.json b/package.json
-index b0a3b27..aebe59b 100644
+index 81a5257..942027a 100644
 --- a/package.json
 +++ b/package.json
 @@ -21,6 +21,11 @@

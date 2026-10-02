@@ -35,9 +35,14 @@ import {
 } from '@earendil-works/pi-durable';
 import {
 	type SqliteDatabase,
-	type SqliteStatement,
+	type SqliteExecutor,
+	type SqliteValue,
 	SqliteStorage,
 } from '@earendil-works/pi-durable/storage/sqlite';
+import type {
+	CountingSqliteDatabase,
+	SqliteStatement,
+} from '../cloudflare/do-sqlite-database.ts';
 import { encodeBase64 } from '../base64.ts';
 import { openNodeSqliteDatabase } from '../node/node-sqlite-database.ts';
 import { createFluePiHost, type FluePiHost, type WakeReason } from '../pi/host.ts';
@@ -209,9 +214,9 @@ class KillableLog implements DurableStreamLog {
 	}
 }
 
-class KillableDatabase implements SqliteDatabase {
+class KillableDatabase implements CountingSqliteDatabase {
 	constructor(
-		readonly inner: SqliteDatabase & { rows?: { rowsRead: number; rowsWritten: number } },
+		readonly inner: CountingSqliteDatabase,
 		private readonly incarnation: Incarnation,
 	) {}
 
@@ -219,9 +224,24 @@ class KillableDatabase implements SqliteDatabase {
 		return this.inner.rows;
 	}
 
-	exec(sql: string): void {
+	async exec(sql: string): Promise<void> {
 		this.incarnation.alive();
-		this.inner.exec(sql);
+		await this.inner.exec(sql);
+	}
+
+	async run(sql: string, ...params: SqliteValue[]): Promise<void> {
+		this.incarnation.alive();
+		await this.inner.run(sql, ...params);
+	}
+
+	async get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {
+		this.incarnation.alive();
+		return await this.inner.get<T>(sql, ...params);
+	}
+
+	async all<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T[]> {
+		this.incarnation.alive();
+		return await this.inner.all<T>(sql, ...params);
 	}
 
 	prepare(sql: string): SqliteStatement {
@@ -241,21 +261,31 @@ class KillableDatabase implements SqliteDatabase {
 				incarnation.alive();
 				return statement.all(...params);
 			},
-		} as SqliteStatement;
+		};
 	}
 
-	transaction<T>(callback: () => T): T {
+	async transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T> {
 		this.incarnation.alive();
-		const result = this.inner.transaction(() => {
+		const result = await this.inner.transaction(async (tx) => {
 			this.incarnation.alive();
-			return callback();
-		}) as T;
+			return await callback(tx);
+		});
 		this.incarnation.committed();
 		return result;
 	}
 
-	close(): void | Promise<void> {
-		return this.inner.close();
+	transactionSync<T>(callback: () => T): T {
+		this.incarnation.alive();
+		const result = this.inner.transactionSync(() => {
+			this.incarnation.alive();
+			return callback();
+		});
+		this.incarnation.committed();
+		return result;
+	}
+
+	async close(): Promise<void> {
+		await this.inner.close();
 	}
 }
 

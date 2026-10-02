@@ -56,6 +56,22 @@ export class FakeDurableObjectStorage implements DurableObjectSqliteStorage {
 		},
 	};
 
+	async transaction<T>(closure: (txn?: unknown) => Promise<T>): Promise<T> {
+		const name = `do_tx_${this.depth++}`;
+		this.database.exec(`SAVEPOINT ${name}`);
+		try {
+			const result = await closure();
+			this.database.exec(`RELEASE ${name}`);
+			return result;
+		} catch (error) {
+			this.database.exec(`ROLLBACK TO ${name}`);
+			this.database.exec(`RELEASE ${name}`);
+			throw error;
+		} finally {
+			this.depth--;
+		}
+	}
+
 	transactionSync<T>(closure: () => T): T {
 		const name = `do_tx_${this.depth++}`;
 		this.database.exec(`SAVEPOINT ${name}`);

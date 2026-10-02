@@ -37,7 +37,7 @@ describe('Durable Object SQLite in workerd', () => {
 		const stub = namespace.get(namespace.newUniqueId());
 		await runInDurableObject(stub, async (_instance, state) => {
 			const db = doSqliteDatabase(state.storage);
-			db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+			await db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
 			const before = { ...db.rows };
 			db.prepare('INSERT INTO t (id, v) VALUES (?, ?), (?, ?)').run(1, 'a', 2, 'b');
 			expect(db.rows.rowsWritten - before.rowsWritten).toBeGreaterThanOrEqual(2);

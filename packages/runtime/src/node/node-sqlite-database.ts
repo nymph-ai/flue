@@ -12,10 +12,11 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
-import type { SqliteStatement, SqliteValue } from '@earendil-works/pi-durable/storage/sqlite';
+import type { SqliteExecutor, SqliteValue } from '@earendil-works/pi-durable/storage/sqlite';
 import type {
 	CountingSqliteDatabase,
 	SqliteRowCounters,
+	SqliteStatement,
 } from '../cloudflare/do-sqlite-database.ts';
 
 const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
@@ -30,6 +31,7 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 	/** Per-statement counters, once `traceStatements()` turned them on (diagnosis, tests). */
 	statements: Map<string, SqliteRowCounters> | undefined;
 	readonly #database: DatabaseSync;
+	readonly #cachedStatements = new Map<string, StatementSync>();
 	#closed = false;
 
 	constructor(database: DatabaseSync) {
@@ -42,12 +44,56 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 		return this.statements;
 	}
 
-	exec(sql: string): void {
+	private statement(sql: string): StatementSync {
+		let stmt = this.#cachedStatements.get(sql);
+		if (!stmt) {
+			stmt = this.#database.prepare(sql);
+			this.#cachedStatements.set(sql, stmt);
+		}
+		return stmt;
+	}
+
+	async exec(sql: string): Promise<void> {
 		this.#database.exec(sql);
 	}
 
+	async run(sql: string, ...params: SqliteValue[]): Promise<void> {
+		const stmt = this.statement(sql);
+		const changes = Number(stmt.run(...(params as SQLInputValue[])).changes);
+		this.rows.rowsWritten += changes;
+		if (this.statements) {
+			const counters = this.statements.get(sql) ?? { rowsRead: 0, rowsWritten: 0 };
+			counters.rowsWritten += changes;
+			this.statements.set(sql, counters);
+		}
+	}
+
+	async get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {
+		const stmt = this.statement(sql);
+		const row = stmt.get(...(params as SQLInputValue[])) as T | undefined;
+		this.rows.rowsRead += row === undefined ? 0 : 1;
+		if (this.statements) {
+			const counters = this.statements.get(sql) ?? { rowsRead: 0, rowsWritten: 0 };
+			counters.rowsRead += row === undefined ? 0 : 1;
+			this.statements.set(sql, counters);
+		}
+		return row;
+	}
+
+	async all<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T[]> {
+		const stmt = this.statement(sql);
+		const all = stmt.all(...(params as SQLInputValue[])) as T[];
+		this.rows.rowsRead += all.length;
+		if (this.statements) {
+			const counters = this.statements.get(sql) ?? { rowsRead: 0, rowsWritten: 0 };
+			counters.rowsRead += all.length;
+			this.statements.set(sql, counters);
+		}
+		return all;
+	}
+
 	prepare(sql: string): SqliteStatement {
-		const statement: StatementSync = this.#database.prepare(sql);
+		const statement: StatementSync = this.statement(sql);
 		const count = (read: number, written: number) => {
 			this.rows.rowsRead += read;
 			this.rows.rowsWritten += written;
@@ -74,17 +120,10 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 		};
 	}
 
-	transaction<T>(callback: () => T): T {
+	async transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T> {
 		this.#database.exec('BEGIN IMMEDIATE');
 		try {
-			const result = callback();
-			if (
-				result !== null &&
-				(typeof result === 'object' || typeof result === 'function') &&
-				typeof Reflect.get(result, 'then') === 'function'
-			) {
-				throw new TypeError('SQLite transaction callbacks must be synchronous');
-			}
+			const result = await callback(this);
 			this.#database.exec('COMMIT');
 			return result;
 		} catch (error) {
@@ -100,9 +139,29 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 		}
 	}
 
-	close(): void {
+	transactionSync<T>(callback: () => T): T {
+		this.#database.exec('BEGIN IMMEDIATE');
+		try {
+			const result = callback();
+			this.#database.exec('COMMIT');
+			return result;
+		} catch (error) {
+			try {
+				this.#database.exec('ROLLBACK');
+			} catch (rollbackError) {
+				throw new AggregateError(
+					[error, rollbackError],
+					'SQLite transaction failed and rollback failed',
+				);
+			}
+			throw error;
+		}
+	}
+
+	async close(): Promise<void> {
 		if (this.#closed) return;
 		this.#closed = true;
+		this.#cachedStatements.clear();
 		this.#database.close();
 	}
 }

@@ -51,6 +51,7 @@ import {
 	type SubmissionRecord,
 } from '@earendil-works/pi-durable';
 import type { SqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite';
+import type { CountingSqliteDatabase } from '../cloudflare/do-sqlite-database.ts';
 import { ulid } from 'ulidx';
 import type { ConversationStreamChunk } from '../conversation-public.ts';
 import type {
@@ -105,13 +106,16 @@ const SCHEMA = [
  * lookup reads every schema row — on each cold start and each scheduled wake
  * of a Durable Object (nymph-ai/nymphai #3868).
  */
-export function hasPiState(database: SqliteDatabase): boolean {
+export function hasPiState(database: SqliteDatabase | CountingSqliteDatabase): boolean {
 	try {
-		return (
-			database
-				.prepare('SELECT 1 AS found FROM durable_metadata WHERE singleton = 1')
-				.get<{ found: number }>() !== undefined
-		);
+		if ('prepare' in database && typeof (database as CountingSqliteDatabase).prepare === 'function') {
+			return (
+				(database as CountingSqliteDatabase)
+					.prepare('SELECT 1 AS found FROM durable_metadata WHERE singleton = 1')
+					.get<{ found: number }>() !== undefined
+			);
+		}
+		return false;
 	} catch {
 		return false;
 	}
@@ -160,7 +164,7 @@ function isPartial(
 }
 
 export interface PiConversationCacheOptions {
-	readonly database: SqliteDatabase;
+	readonly database: CountingSqliteDatabase;
 	/** Open the instance (attaching this cache) when a read finds Pi state but no cache. */
 	readonly open?: () => Promise<void>;
 	readonly now?: () => number;
@@ -168,7 +172,7 @@ export interface PiConversationCacheOptions {
 }
 
 export class PiConversationCache implements ConversationProjectionSource {
-	readonly #db: SqliteDatabase;
+	readonly #db: CountingSqliteDatabase;
 	readonly #options: PiConversationCacheOptions;
 	readonly #now: () => number;
 	#schema = false;
@@ -186,7 +190,7 @@ export class PiConversationCache implements ConversationProjectionSource {
 
 	#ensureSchema(): void {
 		if (this.#schema) return;
-		for (const statement of SCHEMA) this.#db.exec(statement);
+		for (const statement of SCHEMA) void this.#db.exec(statement);
 		this.#schema = true;
 	}
 
@@ -240,8 +244,8 @@ export class PiConversationCache implements ConversationProjectionSource {
 		const identity = ulid();
 		state.storage = identity;
 		const loaded: Loaded = { identity, row: 0, state, pages: 0, open: undefined };
-		this.#db.transaction(() => {
-			this.#db.exec('DELETE FROM flue_conversation_log');
+		this.#db.transactionSync(() => {
+			void this.#db.exec('DELETE FROM flue_conversation_log');
 			this.#checkpoint(loaded);
 		});
 		this.#loaded = loaded;
@@ -389,7 +393,7 @@ export class PiConversationCache implements ConversationProjectionSource {
 			loaded.pages += 1;
 			if (loaded.pages >= CHECKPOINT_EVERY && !loaded.open) this.#checkpoint(loaded);
 		};
-		if (loaded.pages + 1 >= CHECKPOINT_EVERY) this.#db.transaction(write);
+		if (loaded.pages + 1 >= CHECKPOINT_EVERY) this.#db.transactionSync(write);
 		else write();
 	}
 

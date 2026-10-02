@@ -22,11 +22,18 @@
 
 import type {
 	SqliteDatabase,
-	SqliteStatement,
+	SqliteExecutor,
 	SqliteValue,
 } from '@earendil-works/pi-durable/storage/sqlite';
 
 type DoSqlValue = ArrayBuffer | string | number | null;
+
+/** Synchronous statement helper retained for Flue internal tables. */
+export interface SqliteStatement {
+	run(...params: SqliteValue[]): void;
+	get<T extends object>(...params: SqliteValue[]): T | undefined;
+	all<T extends object>(...params: SqliteValue[]): T[];
+}
 
 /** What one `sql.exec` returns: its rows, and (on workerd) what it cost. */
 export interface DurableObjectSqlCursor {
@@ -40,7 +47,8 @@ export interface DurableObjectSqliteStorage {
 	readonly sql: {
 		exec(query: string, ...bindings: DoSqlValue[]): DurableObjectSqlCursor;
 	};
-	transactionSync<T>(closure: () => T): T;
+	transaction?<T>(closure: (txn?: unknown) => Promise<T>): Promise<T>;
+	transactionSync?<T>(closure: () => T): T;
 }
 
 /** Rows read and written through one database facade since it was created (or reset). */
@@ -52,6 +60,8 @@ export interface SqliteRowCounters {
 /** A database facade that counts the rows its statements read and write. */
 export interface CountingSqliteDatabase extends SqliteDatabase {
 	readonly rows: SqliteRowCounters;
+	prepare(sql: string): SqliteStatement;
+	transactionSync<T>(closure: () => T): T;
 }
 
 function toBinding(value: SqliteValue): DoSqlValue {
@@ -88,7 +98,7 @@ export class DoSqliteDatabase implements CountingSqliteDatabase {
 	}
 
 	/** Run one statement to completion and count what it cost. */
-	run(sql: string, params: readonly SqliteValue[]): Record<string, unknown>[] {
+	private rawRun(sql: string, params: readonly SqliteValue[]): Record<string, unknown>[] {
 		const cursor = this.storage.sql.exec(sql, ...params.map(toBinding));
 		const rows = cursor.toArray();
 		this.rows.rowsRead += cursor.rowsRead ?? 0;
@@ -96,40 +106,84 @@ export class DoSqliteDatabase implements CountingSqliteDatabase {
 		return rows;
 	}
 
-	exec(sql: string): void {
-		this.run(sql, []);
+	async exec(sql: string): Promise<void> {
+		this.rawRun(sql, []);
+	}
+
+	async run(sql: string, ...params: SqliteValue[]): Promise<void> {
+		this.rawRun(sql, params);
+	}
+
+	async get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {
+		const row = this.rawRun(sql, params)[0];
+		return row === undefined ? undefined : fromRow<T>(row);
+	}
+
+	async all<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T[]> {
+		return this.rawRun(sql, params).map((row) => fromRow<T>(row));
 	}
 
 	prepare(sql: string): SqliteStatement {
-		const run = (params: readonly SqliteValue[]) => this.run(sql, params);
 		return {
 			run: (...params) => {
-				run(params);
+				this.rawRun(sql, params);
 			},
 			get: <T extends object>(...params: SqliteValue[]) => {
-				const row = run(params)[0];
+				const row = this.rawRun(sql, params)[0];
 				return row === undefined ? undefined : fromRow<T>(row);
 			},
 			all: <T extends object>(...params: SqliteValue[]) =>
-				run(params).map((row) => fromRow<T>(row)),
+				this.rawRun(sql, params).map((row) => fromRow<T>(row)),
 		};
 	}
 
-	transaction<T>(callback: () => T): T {
-		return this.storage.transactionSync(() => {
-			const result = callback();
-			if (
-				result !== null &&
-				(typeof result === 'object' || typeof result === 'function') &&
-				typeof Reflect.get(result, 'then') === 'function'
-			) {
-				throw new TypeError('SQLite transaction callbacks must be synchronous');
-			}
+	async transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T> {
+		if (typeof this.storage.transaction === 'function') {
+			return await this.storage.transaction(async () => callback(this));
+		}
+		const savepoint = `do_tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+		this.storage.sql.exec(`SAVEPOINT ${savepoint}`);
+		try {
+			const result = await callback(this);
+			this.storage.sql.exec(`RELEASE SAVEPOINT ${savepoint}`);
 			return result;
-		});
+		} catch (error) {
+			try {
+				this.storage.sql.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+			} catch {}
+			throw error;
+		}
 	}
 
-	close(): void {}
+	transactionSync<T>(callback: () => T): T {
+		if (typeof this.storage.transactionSync === 'function') {
+			return this.storage.transactionSync(() => {
+				const result = callback();
+				if (
+					result !== null &&
+					(typeof result === 'object' || typeof result === 'function') &&
+					typeof Reflect.get(result, 'then') === 'function'
+				) {
+					throw new TypeError('SQLite transaction callbacks must be synchronous');
+				}
+				return result;
+			});
+		}
+		const savepoint = `do_tx_sync_${Date.now()}`;
+		this.storage.sql.exec(`SAVEPOINT ${savepoint}`);
+		try {
+			const result = callback();
+			this.storage.sql.exec(`RELEASE SAVEPOINT ${savepoint}`);
+			return result;
+		} catch (error) {
+			try {
+				this.storage.sql.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+			} catch {}
+			throw error;
+		}
+	}
+
+	async close(): Promise<void> {}
 }
 
 const databases = new WeakMap<DurableObjectSqliteStorage, DoSqliteDatabase>();
