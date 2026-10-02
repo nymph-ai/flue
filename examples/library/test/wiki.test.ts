@@ -5,6 +5,7 @@ vi.mock('cloudflare:workers', () => ({
 	DurableObject: class {},
 }));
 import { DatabaseSync } from 'node:sqlite';
+import app from '../src/app.ts';
 import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from '../src/wiki/okf.ts';
 import { createMcpRouter } from '../src/mcp/router.ts';
 import { TaskStore } from '../src/mcp/tasks.ts';
@@ -799,4 +800,237 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		// Verified fast read did not touch DO stub
 		expect(mockStub.listMcpEvents).not.toHaveBeenCalled();
 	});
+
+	it('handles CORS preflight (OPTIONS) and provides discovery manifests for OpenAI Plugins & Dots', async () => {
+		// 1. CORS Preflight OPTIONS /mcp
+		const resCors = await app.request('/mcp', {
+			method: 'OPTIONS',
+			headers: {
+				Origin: 'https://chatgpt.com',
+				'Access-Control-Request-Method': 'POST',
+				'Access-Control-Request-Headers': 'Content-Type, x-mcp-event-signature',
+			},
+		});
+		expect(resCors.status).toBe(204);
+		expect(resCors.headers.get('access-control-allow-origin')).toBe('*');
+		expect(resCors.headers.get('access-control-allow-methods')).toContain('POST');
+		expect(resCors.headers.get('access-control-allow-headers')).toContain('x-mcp-event-signature');
+
+		// 2. OpenAI Plugin Manifest: /.well-known/ai-plugin.json
+		const resPlugin = await app.request('/.well-known/ai-plugin.json');
+		expect(resPlugin.status).toBe(200);
+		const pluginJson = (await resPlugin.json()) as {
+			schema_version: string;
+			name_for_model: string;
+			api: { type: string; url: string };
+		};
+		expect(pluginJson.schema_version).toBe('v1');
+		expect(pluginJson.name_for_model).toBe('autonomous_knowledge_vault');
+		expect(pluginJson.api.type).toBe('openapi');
+		expect(pluginJson.api.url).toContain('/openapi.json');
+
+		// 3. MCP 2.0 Manifest: /.well-known/mcp.json
+		const resMcpManifest = await app.request('/.well-known/mcp.json');
+		expect(resMcpManifest.status).toBe(200);
+		const mcpManifestJson = (await resMcpManifest.json()) as {
+			protocolVersion: string;
+			capabilities: { events: { subscribe: boolean } };
+			endpoints: { rpc: string; tasks: string; results: string; events: string; deliveries: string };
+		};
+		expect(mcpManifestJson.protocolVersion).toBe('2026-07-28');
+		expect(mcpManifestJson.capabilities.events.subscribe).toBe(true);
+		expect(mcpManifestJson.endpoints.rpc).toContain('/mcp');
+
+		// 4. OpenAPI Specification: /openapi.json & /mcp/openapi.json
+		const resOpenApi = await app.request('/openapi.json');
+		expect(resOpenApi.status).toBe(200);
+		const openApiJson = (await resOpenApi.json()) as {
+			openapi: string;
+			paths: Record<string, unknown>;
+		};
+		expect(openApiJson.openapi).toBe('3.1.0');
+		expect(openApiJson.paths['/mcp']).toBeDefined();
+		expect(openApiJson.paths['/mcp/tasks/{id}']).toBeDefined();
+		expect(openApiJson.paths['/mcp/results/{id}']).toBeDefined();
+		expect(openApiJson.paths['/mcp/test-callback']).toBeDefined();
+
+		const resMcpOpenApi = await app.request('/mcp/openapi.json');
+		expect(resMcpOpenApi.status).toBe(200);
+	});
+
+	it('proves end-to-end conversation wake loop: subscribe -> submit_task -> idle -> background signed webhook wake -> fetch result -> acknowledge', async () => {
+		const originalFetch = globalThis.fetch;
+		vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+			const urlStr =
+				typeof input === 'string'
+					? input
+					: input instanceof URL
+						? input.toString()
+						: input.url;
+			if (
+				urlStr.startsWith('http://localhost') ||
+				urlStr.startsWith('https://library.nymphai.workers.dev')
+			) {
+				const req = input instanceof Request ? input : new Request(urlStr, init);
+				return app.fetch(req);
+			}
+			return originalFetch(input, init);
+		});
+
+		try {
+			// Clear test callback inbox
+			await app.request('/mcp/test-callback', { method: 'DELETE' });
+
+			const testSecret = 'dots_webhook_hmac_secret_super_secure_998';
+			const correlationId = 'dots-thread-wake-test-001';
+
+			// 1. OpenAI Dots registers webhook subscription with signed callback before going idle
+			const resSub = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'events/subscribe',
+					params: {
+						callbackUrl: `http://localhost/mcp/test-callback?secret=${testSecret}`,
+						secret: testSecret,
+						filter: { correlationId },
+					},
+				}),
+			});
+			expect(resSub.status).toBe(200);
+			const subJson = (await resSub.json()) as { result: { subscriptionId: string } };
+			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+
+			// 2. OpenAI Dots submits an asynchronous long-running task
+			const resSubmit = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 2,
+					method: 'tools/call',
+					params: {
+						name: 'submit_task',
+						arguments: {
+							task_type: 'curate',
+							correlation_id: correlationId,
+							payload: {
+								native_id: '887766',
+								title: 'Deterministic Wasm Sandbox Snapshotting in Edge Workers',
+								url: 'https://example.com/wasm-sandbox',
+								summary: 'Enables sub-millisecond cold starts using linear memory snapshotting.',
+								significance: 'Critical primitive for resilient agent memory state.',
+								curatorNotes: 'Evaluated by OpenAI Dots coworker.',
+								topics: ['Wasm', 'Sandboxing', 'Edge'],
+								concepts: ['[[Wasm Sandbox]]', '[[Linear Memory]]'],
+								significance_score: 0.98,
+							},
+						},
+					},
+				}),
+			});
+			expect(resSubmit.status).toBe(200);
+			const submitData = (await resSubmit.json()) as { result: { content: Array<{ text: string }> } };
+			const parsedTask = JSON.parse(submitData.result.content[0]!.text) as {
+				taskId: string;
+				status: string;
+				revision: number;
+			};
+			expect(parsedTask.taskId).toMatch(/^task_/);
+			expect(parsedTask.status).toBe('queued');
+			const taskId = parsedTask.taskId;
+
+			// 3. Dots conversation goes IDLE — wait for asynchronous background task execution & webhook delivery
+			await new Promise((resolve) => setTimeout(resolve, 80));
+
+			// 4. Verify the webhook receiver caught the wake callback with a verified HMAC signature
+			const resCallbacks = await app.request('/mcp/test-callback');
+			expect(resCallbacks.status).toBe(200);
+			const callbacksData = (await resCallbacks.json()) as {
+				total: number;
+				callbacks: Array<{
+					headers: Record<string, string>;
+					payload: { event: string; taskId: string; status: string; revision: number };
+					signatureValid: boolean;
+				}>;
+			};
+
+			expect(callbacksData.total).toBeGreaterThanOrEqual(1);
+			// Find the completion event callback
+			const completionWake = callbacksData.callbacks.find(
+				(c) => c.payload.taskId === taskId && c.payload.status === 'completed',
+			);
+			expect(completionWake).toBeDefined();
+			expect(completionWake?.signatureValid).toBe(true);
+			expect(completionWake?.headers['x-mcp-event-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+			expect(completionWake?.headers['x-mcp-task-id']).toBe(taskId);
+			expect(completionWake?.payload.revision).toBe(3);
+
+			// 5. Dots "wakes" up from idle and calls get_result(taskId) to retrieve completed artifacts
+			const resResult = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 3,
+					method: 'tools/call',
+					params: {
+						name: 'get_result',
+						arguments: { task_id: taskId },
+					},
+				}),
+			});
+			expect(resResult.status).toBe(200);
+			const resultData = (await resResult.json()) as { result: { content: Array<{ text: string }> } };
+			const parsedResult = JSON.parse(resultData.result.content[0]!.text) as {
+				taskId: string;
+				status: string;
+				artifacts: string[];
+				sources: Array<{ title: string }>;
+				acknowledged: boolean;
+			};
+			expect(parsedResult.taskId).toBe(taskId);
+			expect(parsedResult.status).toBe('completed');
+			expect(parsedResult.sources[0]?.title).toBe(
+				'Deterministic Wasm Sandbox Snapshotting in Edge Workers',
+			);
+			expect(parsedResult.artifacts).toContain('stories/hn-887766.md');
+			expect(parsedResult.acknowledged).toBe(false);
+
+			// 6. Dots acknowledges result processing
+			const resAck = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 4,
+					method: 'tools/call',
+					params: {
+						name: 'acknowledge_result',
+						arguments: {
+							task_id: taskId,
+							receipt: { threadId: correlationId, client: 'openai-dots' },
+						},
+					},
+				}),
+			});
+			expect(resAck.status).toBe(200);
+
+			// 7. Verify delivery audit trail
+			const resDeliveries = await app.request(`/mcp/deliveries/${taskId}`);
+			expect(resDeliveries.status).toBe(200);
+			const deliveriesData = (await resDeliveries.json()) as {
+				total: number;
+				deliveries: Array<{ status: string; statusCode: number }>;
+			};
+			expect(deliveriesData.total).toBeGreaterThanOrEqual(1);
+			expect(deliveriesData.deliveries[0]?.status).toBe('delivered');
+			expect(deliveriesData.deliveries[0]?.statusCode).toBe(200);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });
+

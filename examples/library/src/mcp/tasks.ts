@@ -51,6 +51,15 @@ export async function signPayload(secret: string, payload: string): Promise<stri
 	return `sha256=${hex}`;
 }
 
+export async function verifyPayloadSignature(
+	secret: string,
+	payload: string,
+	signatureHeader: string,
+): Promise<boolean> {
+	const expected = await signPayload(secret, payload);
+	return expected === signatureHeader;
+}
+
 export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();
 	private readonly results = new Map<string, TaskResult>();

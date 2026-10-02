@@ -7,9 +7,11 @@
  * - Stateless edge ingress with delegation to Durable Object SQLite backend.
  */
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
-import { getOrCreateTaskStore, TaskStore } from './tasks.ts';
+import { getOpenApiSpec } from './openapi.ts';
+import { getOrCreateTaskStore, TaskStore, verifyPayloadSignature } from './tasks.ts';
 import type {
 	DeliveryRecord,
 	SubscriptionRecord,
@@ -206,11 +208,44 @@ function toolResult(id: unknown, text: string, isError = false): Response {
 	});
 }
 
+const testCallbacks: Array<{
+	receivedAt: string;
+	headers: Record<string, string>;
+	payload: unknown;
+	signatureValid?: boolean;
+}> = [];
+
 export function createMcpRouter(
 	getVault: (env?: Record<string, unknown>) => LibraryVault = getOrCreateVault,
 	getTaskStore: (vaultFn?: () => LibraryVault) => TaskStore = getOrCreateTaskStore,
 ) {
 	const router = new Hono<{ Bindings: Record<string, unknown> }>();
+
+	router.use(
+		'*',
+		cors({
+			origin: '*',
+			allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+			allowHeaders: [
+				'Content-Type',
+				'Authorization',
+				'x-mcp-event-signature',
+				'x-mcp-event-id',
+				'x-mcp-task-id',
+				'x-mcp-revision',
+				'x-mcp-event-type',
+			],
+			exposeHeaders: [
+				'x-mcp-event-signature',
+				'x-mcp-event-id',
+				'x-mcp-task-id',
+				'x-mcp-revision',
+				'x-mcp-event-type',
+			],
+		}),
+	);
+
+	router.options('*', (c) => c.text('', 204));
 
 	const resolveTaskStore = () => getTaskStore(() => getVault());
 	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
@@ -284,6 +319,61 @@ export function createMcpRouter(
 		const store = resolveStore(c.env);
 		const deliveries = await store.getDeliveryRecords(c.req.param('taskId'));
 		return c.json({ total: deliveries.length, deliveries });
+	});
+
+	router.get('/openapi.json', (c) => {
+		const origin = new URL(c.req.url).origin;
+		return c.json(getOpenApiSpec(origin));
+	});
+
+	router.post('/test-callback', async (c) => {
+		const secret = c.req.query('secret');
+		const sigHeader = c.req.header('x-mcp-event-signature');
+		const rawText = await c.req.text();
+		let payload: unknown = null;
+		try {
+			payload = JSON.parse(rawText);
+		} catch {
+			payload = rawText;
+		}
+
+		let signatureValid: boolean | undefined = undefined;
+		if (secret && sigHeader) {
+			signatureValid = await verifyPayloadSignature(secret, rawText, sigHeader);
+		}
+
+		const headers: Record<string, string> = {};
+		for (const [k, v] of Object.entries(c.req.header())) {
+			if (typeof v === 'string') headers[k] = v;
+		}
+
+		const record = {
+			receivedAt: new Date().toISOString(),
+			headers,
+			payload,
+			signatureValid,
+		};
+		testCallbacks.push(record);
+
+		return c.json({
+			ok: true,
+			received: true,
+			signatureValid,
+			eventId: c.req.header('x-mcp-event-id'),
+			taskId: c.req.header('x-mcp-task-id'),
+		});
+	});
+
+	router.get('/test-callback', (c) => {
+		return c.json({
+			total: testCallbacks.length,
+			callbacks: testCallbacks,
+		});
+	});
+
+	router.delete('/test-callback', (c) => {
+		testCallbacks.length = 0;
+		return c.json({ cleared: true });
 	});
 
 	// POST /mcp — Unified JSON-RPC 2.0 Handler
