@@ -371,9 +371,12 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(evtListJson.result.events[0]?.name).toBe('task_changed');
 		expect(evtListJson.result.events[0]?.delivery).toEqual(['webhook']);
 		expect(evtListJson.result.events[0]?.inputSchema).toBeDefined();
+		expect((evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> }).properties?.callbackUrl).toBeUndefined();
+		expect((evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> }).properties?.cursor).toBeDefined();
 		expect(evtListJson.result.events[0]?.payloadSchema).toBeDefined();
+		expect((evtListJson.result.events[0]?.payloadSchema as { properties?: Record<string, unknown> }).properties?.cursor).toBeDefined();
 
-		// 4. POST /mcp events/subscribe (establishing scoped subscription before job)
+		// 4. POST /mcp events/subscribe (establishing scoped subscription with delivery object)
 		const resSub = await mcp.request('/', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
@@ -382,15 +385,30 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				id: 3,
 				method: 'events/subscribe',
 				params: {
-					callbackUrl: 'https://chatgpt.openai.com/api/mcp/callbacks/dot-123',
-					secret: 'dot_hmac_secret_key_abc123',
+					delivery: {
+						type: 'webhook',
+						url: 'https://chatgpt.openai.com/api/mcp/callbacks/dot-123',
+						secret: 'dot_hmac_secret_key_abc123',
+					},
 					filter: { correlationId: 'chatgpt-thread-456' },
 				},
 			}),
 		});
 		expect(resSub.status).toBe(200);
-		const subJson = (await resSub.json()) as { result: { subscriptionId: string } };
+		const subJson = (await resSub.json()) as {
+			result: {
+				subscriptionId: string;
+				cursor: string;
+				delivery: { type: string; url: string };
+				callbackUrl: string;
+			};
+		};
 		expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+		expect(subJson.result.cursor).toBeDefined();
+		expect(subJson.result.delivery.type).toBe('webhook');
+		expect(subJson.result.delivery.url).toBe(
+			'https://chatgpt.openai.com/api/mcp/callbacks/dot-123',
+		);
 
 		// 5. POST /mcp tools/call submit_task (asynchronous job submission)
 		const resSubmit = await mcp.request('/', {
@@ -754,8 +772,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			cancelMcpTask: vi.fn().mockResolvedValue(true),
 			acknowledgeMcpResult: vi.fn().mockResolvedValue(true),
 			subscribeMcp: vi.fn().mockResolvedValue({
-				subscription: { id: 'sub_mock_123' },
+				subscription: { id: 'sub_mock_123', callbackUrl: 'https://example.com/webhook' },
 				replayedEvents: [],
+				cursor: '0',
 			}),
 			unsubscribeMcp: vi.fn().mockResolvedValue(true),
 			listMcpEvents: vi.fn().mockResolvedValue([]),
@@ -934,15 +953,28 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 					id: 1,
 					method: 'events/subscribe',
 					params: {
-						callbackUrl: `http://localhost/mcp/test-callback?secret=${testSecret}`,
-						secret: testSecret,
+						delivery: {
+							type: 'webhook',
+							url: `http://localhost/mcp/test-callback?secret=${testSecret}`,
+							secret: testSecret,
+						},
 						filter: { correlationId },
 					},
 				}),
 			});
 			expect(resSub.status).toBe(200);
-			const subJson = (await resSub.json()) as { result: { subscriptionId: string } };
+			const subJson = (await resSub.json()) as {
+				result: {
+					subscriptionId: string;
+					cursor: string;
+					delivery: { type: string; url: string };
+					callbackUrl: string;
+				};
+			};
 			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+			expect(subJson.result.cursor).toBeDefined();
+			expect(subJson.result.delivery.type).toBe('webhook');
+			expect(subJson.result.delivery.url).toContain('/mcp/test-callback');
 
 			// 2. OpenAI Dots submits an asynchronous long-running task
 			const resSubmit = await app.request('/mcp', {
@@ -1007,7 +1039,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(completionWake?.signatureValid).toBe(true);
 			expect(completionWake?.headers['x-mcp-event-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
 			expect(completionWake?.headers['x-mcp-task-id']).toBe(taskId);
+			expect(completionWake?.headers['x-mcp-cursor']).toBe('3');
 			expect(completionWake?.payload.revision).toBe(3);
+			expect((completionWake?.payload as { cursor?: string }).cursor).toBe('3');
 
 			// 5. Dots "wakes" up from idle and calls get_result(taskId) to retrieve completed artifacts
 			const resResult = await app.request('/mcp', {

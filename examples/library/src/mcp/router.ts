@@ -145,21 +145,11 @@ export const EVENT_DEFINITIONS = [
 	{
 		name: 'task_changed',
 		description:
-			'Fired whenever an asynchronous task changes state (queued, running, completed, failed, input_required, cancelled). Delivers state revision, status, summary, and durable result reference.',
+			'Fired whenever an asynchronous task changes state (queued, running, completed, failed, input_required, cancelled). Delivers state revision, cursor, status, summary, and durable result reference.',
 		delivery: ['webhook'],
 		inputSchema: {
 			type: 'object',
 			properties: {
-				callbackUrl: {
-					type: 'string',
-					format: 'uri',
-					description: 'Webhook endpoint to which signed event notifications will be POSTed.',
-				},
-				secret: {
-					type: 'string',
-					description:
-						'Optional HMAC-SHA256 secret key used to compute x-mcp-event-signature header.',
-				},
 				filter: {
 					type: 'object',
 					properties: {
@@ -169,13 +159,18 @@ export const EVENT_DEFINITIONS = [
 							description: 'Filter notifications to a specific conversation or correlation ID.',
 						},
 					},
+					description: 'Optional filter criteria for events.',
 				},
-				fromRevision: {
-					type: 'integer',
-					description: 'Replay past matching events starting at this revision.',
+				taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
+				correlationId: {
+					type: 'string',
+					description: 'Filter notifications to a specific conversation or correlation ID.',
+				},
+				cursor: {
+					type: 'string',
+					description: 'Opaque cursor for event streaming and replay.',
 				},
 			},
-			required: ['callbackUrl'],
 		},
 		payloadSchema: {
 			type: 'object',
@@ -185,6 +180,7 @@ export const EVENT_DEFINITIONS = [
 				taskId: { type: 'string', description: 'Durable task ID.' },
 				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
 				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
 				status: {
 					type: 'string',
 					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
@@ -204,6 +200,7 @@ export const EVENT_DEFINITIONS = [
 				taskId: { type: 'string', description: 'Durable task ID.' },
 				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
 				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
 				status: {
 					type: 'string',
 					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
@@ -233,12 +230,14 @@ export interface McpTaskStore {
 		secret?: string;
 		filter?: { taskId?: string; correlationId?: string };
 		fromRevision?: number;
-	}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[] }>;
+		cursor?: string;
+	}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string }> | { subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string };
 	unsubscribe(subscriptionId: string): Promise<boolean> | boolean;
 	listEvents(filter?: {
 		taskId?: string;
 		correlationId?: string;
 		fromRevision?: number;
+		cursor?: string;
 	}): Promise<TaskChangedEvent[]> | TaskChangedEvent[];
 	getDeliveryRecords(taskId?: string): Promise<DeliveryRecord[]> | DeliveryRecord[];
 }
@@ -283,6 +282,7 @@ export function createMcpRouter(
 				'x-mcp-event-id',
 				'x-mcp-task-id',
 				'x-mcp-revision',
+				'x-mcp-cursor',
 				'x-mcp-event-type',
 			],
 			exposeHeaders: [
@@ -290,6 +290,7 @@ export function createMcpRouter(
 				'x-mcp-event-id',
 				'x-mcp-task-id',
 				'x-mcp-revision',
+				'x-mcp-cursor',
 				'x-mcp-event-type',
 			],
 		}),
@@ -532,23 +533,69 @@ export function createMcpRouter(
 		// 6. events/subscribe
 		if (method === 'events/subscribe') {
 			const params = body.params ?? {};
-			const callbackUrl = String(params.callbackUrl ?? params.callback_url ?? '');
+			const delivery = (params.delivery ?? {}) as Record<string, unknown>;
+			const callbackUrl = String(
+				delivery.url ??
+				delivery.callbackUrl ??
+				params.callbackUrl ??
+				params.callback_url ??
+				'',
+			);
 			if (!callbackUrl) {
-				return rpcError(id, -32602, 'events/subscribe requires a callbackUrl parameter');
+				return rpcError(id, -32602, 'events/subscribe requires a delivery.url or callbackUrl parameter');
 			}
-			const secret = params.secret ? String(params.secret) : undefined;
-			const filter = params.filter as { taskId?: string; correlationId?: string } | undefined;
-			const fromRevision = typeof params.fromRevision === 'number' ? params.fromRevision : undefined;
+			const secret = delivery.secret
+				? String(delivery.secret)
+				: params.secret
+					? String(params.secret)
+					: undefined;
 
-			const { subscription, replayedEvents } = await taskStore.subscribe({
+			const filterObj = (params.filter ?? {}) as Record<string, unknown>;
+			const taskId = filterObj.taskId
+				? String(filterObj.taskId)
+				: params.taskId
+					? String(params.taskId)
+					: undefined;
+			const correlationId = filterObj.correlationId
+				? String(filterObj.correlationId)
+				: params.correlationId
+					? String(params.correlationId)
+					: undefined;
+			const filter = taskId || correlationId ? { taskId, correlationId } : undefined;
+
+			const rawCursor = params.cursor ?? params.fromRevision ?? filterObj.cursor;
+			let fromRevision: number | undefined = undefined;
+			if (typeof rawCursor === 'number') {
+				fromRevision = rawCursor;
+			} else if (typeof rawCursor === 'string' && rawCursor.trim() !== '') {
+				const parsed = parseInt(rawCursor, 10);
+				if (!Number.isNaN(parsed)) {
+					fromRevision = parsed;
+				}
+			}
+
+			const cursorParam =
+				typeof rawCursor === 'string'
+					? rawCursor
+					: typeof rawCursor === 'number'
+						? String(rawCursor)
+						: undefined;
+
+			const { subscription, replayedEvents, cursor } = await taskStore.subscribe({
 				callbackUrl,
 				secret,
 				filter,
 				fromRevision,
+				cursor: cursorParam,
 			});
 
 			return rpcSuccess(id, {
 				subscriptionId: subscription.id,
+				cursor,
+				delivery: {
+					type: 'webhook',
+					url: subscription.callbackUrl,
+				},
 				callbackUrl: subscription.callbackUrl,
 				replayedEventsCount: replayedEvents.length,
 				filter: subscription.filter,

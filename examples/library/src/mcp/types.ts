@@ -50,6 +50,7 @@ export interface TaskChangedEvent {
 	taskId: string;
 	correlationId?: string;
 	revision: number;
+	cursor?: string;
 	status: TaskStatus;
 	summary: string;
 	resultReference?: string;

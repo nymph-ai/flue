@@ -377,7 +377,12 @@ export class TaskStore {
 		secret?: string;
 		filter?: { taskId?: string; correlationId?: string };
 		fromRevision?: number;
-	}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[] }> {
+		cursor?: string;
+	}): Promise<{
+		subscription: SubscriptionRecord;
+		replayedEvents: TaskChangedEvent[];
+		cursor: string;
+	}> {
 		const subId = `sub_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const now = new Date().toISOString();
 		const subscription: SubscriptionRecord = {
@@ -387,6 +392,14 @@ export class TaskStore {
 			filter: params.filter,
 			createdAt: now,
 		};
+
+		let fromRev = params.fromRevision;
+		if (fromRev === undefined && params.cursor !== undefined) {
+			const parsed = parseInt(String(params.cursor), 10);
+			if (!Number.isNaN(parsed)) {
+				fromRev = parsed;
+			}
+		}
 
 		let matching: TaskChangedEvent[] = [];
 
@@ -412,9 +425,9 @@ export class TaskStore {
 				query += ` AND correlation_id = ?`;
 				bindings.push(params.filter.correlationId);
 			}
-			if (typeof params.fromRevision === 'number') {
+			if (typeof fromRev === 'number') {
 				query += ` AND revision >= ?`;
-				bindings.push(params.fromRevision);
+				bindings.push(fromRev);
 			}
 			query += ` ORDER BY timestamp ASC`;
 			const rows = this.sql.exec(query, ...bindings).toArray();
@@ -424,6 +437,7 @@ export class TaskStore {
 				taskId: String(r.task_id),
 				correlationId: r.correlation_id ? String(r.correlation_id) : undefined,
 				revision: Number(r.revision),
+				cursor: String(r.revision),
 				status: r.status as TaskStatus,
 				summary: String(r.summary),
 				resultReference: r.result_reference ? String(r.result_reference) : undefined,
@@ -432,13 +446,18 @@ export class TaskStore {
 			}));
 		} else {
 			this.subscriptions.set(subId, subscription);
-			matching = this.events.filter((evt) => {
-				if (params.filter?.taskId && evt.taskId !== params.filter.taskId) return false;
-				if (params.filter?.correlationId && evt.correlationId !== params.filter.correlationId)
-					return false;
-				if (params.fromRevision !== undefined && evt.revision < params.fromRevision) return false;
-				return true;
-			});
+			matching = this.events
+				.filter((evt) => {
+					if (params.filter?.taskId && evt.taskId !== params.filter.taskId) return false;
+					if (params.filter?.correlationId && evt.correlationId !== params.filter.correlationId)
+						return false;
+					if (fromRev !== undefined && evt.revision < fromRev) return false;
+					return true;
+				})
+				.map((evt) => ({
+					...evt,
+					cursor: evt.cursor ?? String(evt.revision),
+				}));
 		}
 
 		for (const evt of matching) {
@@ -447,7 +466,40 @@ export class TaskStore {
 			else void p;
 		}
 
-		return { subscription, replayedEvents: matching };
+		let cursor = '0';
+		if (matching.length > 0) {
+			cursor = String(matching[matching.length - 1].revision);
+		} else {
+			cursor = String(this.getLatestRevision(params.filter));
+		}
+
+		return { subscription, replayedEvents: matching, cursor };
+	}
+
+	getLatestRevision(filter?: { taskId?: string; correlationId?: string }): number {
+		if (this.sql) {
+			let query = `SELECT MAX(revision) as max_rev FROM mcp_events WHERE 1=1`;
+			const bindings: unknown[] = [];
+			if (filter?.taskId) {
+				query += ` AND task_id = ?`;
+				bindings.push(filter.taskId);
+			}
+			if (filter?.correlationId) {
+				query += ` AND correlation_id = ?`;
+				bindings.push(filter.correlationId);
+			}
+			const rows = this.sql.exec(query, ...bindings).toArray();
+			const maxRev = rows[0]?.max_rev;
+			return typeof maxRev === 'number' ? maxRev : maxRev ? Number(maxRev) : 0;
+		}
+
+		let maxRev = 0;
+		for (const evt of this.events) {
+			if (filter?.taskId && evt.taskId !== filter.taskId) continue;
+			if (filter?.correlationId && evt.correlationId !== filter.correlationId) continue;
+			if (evt.revision > maxRev) maxRev = evt.revision;
+		}
+		return maxRev;
 	}
 
 	unsubscribe(subscriptionId: string): boolean {
@@ -466,7 +518,16 @@ export class TaskStore {
 		taskId?: string;
 		correlationId?: string;
 		fromRevision?: number;
+		cursor?: string;
 	}): TaskChangedEvent[] {
+		let fromRev = filter?.fromRevision;
+		if (fromRev === undefined && filter?.cursor !== undefined) {
+			const parsed = parseInt(String(filter.cursor), 10);
+			if (!Number.isNaN(parsed)) {
+				fromRev = parsed;
+			}
+		}
+
 		if (this.sql) {
 			let query = `SELECT * FROM mcp_events WHERE 1=1`;
 			const bindings: unknown[] = [];
@@ -478,9 +539,9 @@ export class TaskStore {
 				query += ` AND correlation_id = ?`;
 				bindings.push(filter.correlationId);
 			}
-			if (typeof filter?.fromRevision === 'number') {
+			if (typeof fromRev === 'number') {
 				query += ` AND revision >= ?`;
-				bindings.push(filter.fromRevision);
+				bindings.push(fromRev);
 			}
 			query += ` ORDER BY timestamp ASC`;
 			const rows = this.sql.exec(query, ...bindings).toArray();
@@ -490,6 +551,7 @@ export class TaskStore {
 				taskId: String(r.task_id),
 				correlationId: r.correlation_id ? String(r.correlation_id) : undefined,
 				revision: Number(r.revision),
+				cursor: String(r.revision),
 				status: r.status as TaskStatus,
 				summary: String(r.summary),
 				resultReference: r.result_reference ? String(r.result_reference) : undefined,
@@ -498,12 +560,17 @@ export class TaskStore {
 			}));
 		}
 
-		return this.events.filter((evt) => {
-			if (filter?.taskId && evt.taskId !== filter.taskId) return false;
-			if (filter?.correlationId && evt.correlationId !== filter.correlationId) return false;
-			if (filter?.fromRevision !== undefined && evt.revision < filter.fromRevision) return false;
-			return true;
-		});
+		return this.events
+			.filter((evt) => {
+				if (filter?.taskId && evt.taskId !== filter.taskId) return false;
+				if (filter?.correlationId && evt.correlationId !== filter.correlationId) return false;
+				if (fromRev !== undefined && evt.revision < fromRev) return false;
+				return true;
+			})
+			.map((evt) => ({
+				...evt,
+				cursor: evt.cursor ?? String(evt.revision),
+			}));
 	}
 
 	getDeliveryRecords(taskId?: string): DeliveryRecord[] {
@@ -535,6 +602,10 @@ export class TaskStore {
 	}
 
 	private recordEvent(event: TaskChangedEvent): void {
+		if (!event.cursor) {
+			event.cursor = String(event.revision);
+		}
+
 		if (this.sql) {
 			this.sql.exec(
 				`INSERT INTO mcp_events (event_id, task_id, correlation_id, event, revision, status, summary, result_reference, error, timestamp)
@@ -589,12 +660,17 @@ export class TaskStore {
 	}
 
 	private async deliverEvent(sub: SubscriptionRecord, event: TaskChangedEvent): Promise<void> {
-		const payloadString = JSON.stringify(event);
+		const eventWithCursor: TaskChangedEvent = {
+			...event,
+			cursor: event.cursor ?? String(event.revision),
+		};
+		const payloadString = JSON.stringify(eventWithCursor);
 		const headers: Record<string, string> = {
 			'content-type': 'application/json',
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),
+			'x-mcp-cursor': eventWithCursor.cursor,
 			'x-mcp-event-type': event.event,
 		};
 
@@ -1013,7 +1089,8 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 			secret?: string;
 			filter?: { taskId?: string; correlationId?: string };
 			fromRevision?: number;
-		}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[] }> {
+			cursor?: string;
+		}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string }> {
 			return this.getMcpStore().subscribe(params);
 		}
 
@@ -1025,6 +1102,7 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 			taskId?: string;
 			correlationId?: string;
 			fromRevision?: number;
+			cursor?: string;
 		}): Promise<TaskChangedEvent[]> {
 			return this.getMcpStore().listEvents(filter);
 		}
