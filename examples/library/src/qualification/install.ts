@@ -110,7 +110,7 @@ export function installQualification(app: Hono): void {
 		const from = c.req.query('from') ?? '-1';
 		const log = configuredStreamsLog(c.env as Vars);
 		if (!path || !log) return c.json({ error: 'path and streams required' }, 400);
-		const batch = await settled(() => log.read(path, from as never));
+		const batch = await settled<any>(() => log.read(path, from as never));
 		if ('error' in batch) return c.json({ path, ...batch });
 		return c.json({
 			path,
@@ -149,7 +149,7 @@ export function installQualification(app: Hono): void {
 		const streams = configuredStreams(c.env as Vars);
 		const url = c.req.query('url');
 		if (!streams?.fetch || !url) return c.json({ error: 'streams and url required' }, 400);
-		const response = await settled(() =>
+		const response = await settled<any>(() =>
 			(streams.fetch as NonNullable<typeof streams.fetch>)(url, { method: 'HEAD' }),
 		);
 		if ('error' in response) return c.json(response);

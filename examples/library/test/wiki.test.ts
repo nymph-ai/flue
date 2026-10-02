@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from '../src/wiki/okf.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
-import type { OKFConceptNote, OKFStoryNote } from '../wiki/types.ts';
+import type { OKFConceptNote, OKFStoryNote } from '../src/wiki/types.ts';
 
 describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 	it('formats an OKF story note with frontmatter and wikilinks', () => {
