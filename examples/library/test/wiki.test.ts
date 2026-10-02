@@ -3,6 +3,7 @@ import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, fo
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
 import type { OKFConceptNote, OKFStoryNote } from '../src/wiki/types.ts';
+import { curateStory, rebuildIndex, searchVault } from '../src/agent.ts';
 
 describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 	it('formats an OKF story note with frontmatter and wikilinks', () => {
@@ -59,7 +60,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			title: 'bpf_fault',
 			first_observed: '2026-10-02T07:17:09Z',
 			last_updated: '2026-10-02T07:17:09Z',
-			curator: 'librarian',
+			curator: 'curator',
 			tags: ['#ebpf', '#kernel'],
 			description: 'In-kernel page fault handler using eBPF.',
 			relatedStories: [{ id: 'hn-49930412', title: "It's the Kernel's Fault" }],
@@ -185,5 +186,67 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resZip.headers.get('content-type')).toBe('application/zip');
 		const zipBuffer = await resZip.arrayBuffer();
 		expect(zipBuffer.byteLength).toBeGreaterThan(100);
+	});
+
+	it('executes e2e curation workflow: ingest story -> agent tool -> vault persistence -> wiki API & zip', async () => {
+		// 1. Ingest: Hacker News sensory item
+		const sensoryObservation = {
+			id: 'hackernews:story:49930412',
+			native_id: '49930412',
+			title: "It's the Kernel's Fault: Custom Page Fault Handling with Bpf_fault",
+			url: 'https://dl.acm.org/doi/10.1145/3830418.3843896',
+			by: 'theanonymousone',
+			score: 142,
+		};
+
+		// 2. Curator agent invokes curate_story tool
+		const curationResult = (await curateStory.run({
+			data: {
+				native_id: sensoryObservation.native_id,
+				title: sensoryObservation.title,
+				url: sensoryObservation.url,
+				summary: 'Introduces bpf_fault, an eBPF extension enabling user-defined in-kernel page fault handlers.',
+				significance: 'Critical for sub-10ms Firecracker snapshot restoration without userfaultfd IPC overhead.',
+				curatorNotes: 'High-impact kernel primitive for hypervisors and agent runtimes.',
+				topics: ['Systems', 'Linux Kernel', 'eBPF'],
+				concepts: ['[[bpf_fault]]', '[[userfaultfd]]', '[[Demand Paging]]'],
+				significance_score: 0.94,
+				by: sensoryObservation.by,
+				score: sensoryObservation.score,
+			},
+		} as never)) as { output: { status: string; storyId: string; conceptsAdded: number; path: string } };
+
+		expect(curationResult.output.status).toBe('curated');
+		expect(curationResult.output.storyId).toBe('hn-49930412');
+		expect(curationResult.output.conceptsAdded).toBe(3);
+
+		// 3. Curator agent searches vault
+		const searchResult = (await searchVault.run({
+			data: { query: 'bpf_fault', type: 'all' },
+		} as never)) as { output: { totalMatches: number } };
+		expect(searchResult.output.totalMatches).toBeGreaterThan(0);
+
+		// 4. Curator agent rebuilds index
+		const rebuildResult = (await rebuildIndex.run({} as never)) as { output: { status: string } };
+		expect(rebuildResult.output.status).toBe('rebuilt');
+
+		// 5. Query Hono wiki router
+		const router = createWikiRouter();
+		const resIndex = await router.request('/index.md');
+		expect(resIndex.status).toBe(200);
+		const indexContent = await resIndex.text();
+		expect(indexContent).toContain("It's the Kernel's Fault");
+		expect(indexContent).toContain('[[bpf_fault]]');
+
+		const resConcept = await router.request('/concepts/bpf-fault');
+		expect(resConcept.status).toBe(200);
+		const conceptContent = await resConcept.text();
+		expect(conceptContent).toContain('bpf_fault');
+		expect(conceptContent).toContain("It's the Kernel's Fault");
+
+		const resZip = await router.request('/vault.zip');
+		expect(resZip.status).toBe(200);
+		const zipBuffer = await resZip.arrayBuffer();
+		expect(zipBuffer.byteLength).toBeGreaterThan(500);
 	});
 });
