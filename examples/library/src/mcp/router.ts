@@ -325,6 +325,9 @@ export function createMcpRouter(
 	router.get('/', (c) =>
 		c.json({
 			resultType: 'complete',
+			name: SERVER_INFO.name,
+			version: SERVER_INFO.version,
+			protocol: MCP_PROTOCOL_VERSION,
 			protocolVersion: MCP_PROTOCOL_VERSION,
 			supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
 			serverInfo: SERVER_INFO,
@@ -335,8 +338,10 @@ export function createMcpRouter(
 				resources: { subscribe: false, listChanged: false },
 				prompts: { listChanged: false },
 			},
-			tools: COMMAND_TOOLS,
-			events: EVENT_DEFINITIONS,
+			tools: COMMAND_TOOLS.map((t) => t.name),
+			events: EVENT_DEFINITIONS.map((e) => e.name),
+			toolDefinitions: COMMAND_TOOLS,
+			eventDefinitions: EVENT_DEFINITIONS,
 			endpoints: {
 				rpc: '/mcp',
 				tasks: '/mcp/tasks',
