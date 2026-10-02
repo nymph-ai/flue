@@ -43,7 +43,12 @@ import type {
 	ThinkingLevel,
 } from '../types.ts';
 import { CODEMODE_TOOL_NAME, createCodemodeToolRegistration } from '../codemode/tool.ts';
-import { parseModelSpecifier, thinkingLevelFor } from './config.ts';
+import {
+	compactionPolicyFor,
+	modelLimits,
+	parseModelSpecifier,
+	thinkingLevelFor,
+} from './config.ts';
 import { FlueProfile } from './docs.ts';
 import type { FlueLifecycle } from './hooks.ts';
 import {
@@ -425,6 +430,7 @@ export class RegistryBridge {
 		this.#current = render;
 
 		const model = render.model !== undefined ? parseModelSpecifier(render.model) : undefined;
+		const policy = compactionPolicyFor(render.compaction, modelLimits(this.#options.models, model));
 		const active = [
 			...this.baseToolNames(),
 			...render.tools.map((tool) => tool.name),
@@ -433,7 +439,7 @@ export class RegistryBridge {
 		];
 		this.#activeNames = active;
 		const thinkingLevel = thinkingLevelFor(render.thinkingLevel);
-		const fingerprint = JSON.stringify([model, thinkingLevel, active]);
+		const fingerprint = JSON.stringify([model, thinkingLevel, active, policy]);
 		for (const conversation of conversations) {
 			if (!options.force && this.#applied.get(conversation.id) === fingerprint) continue;
 			await conversation.configure(
@@ -441,6 +447,7 @@ export class RegistryBridge {
 					model: model ?? null,
 					thinkingLevel: thinkingLevel ?? null,
 					tools: active.map((name) => ({ name }) as unknown as ToolRegistration),
+					compaction: policy ?? null,
 				},
 				context,
 			);

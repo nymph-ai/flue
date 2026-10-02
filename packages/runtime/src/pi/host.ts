@@ -96,7 +96,7 @@ export interface FluePiHostOptions {
 	/** The instance sandbox: Flue's `grep`/`glob` run over it; `env` defaults to it. */
 	readonly sandbox?: Sandbox;
 	/** Pi execution environment for `read`/`write`/`edit`/`bash`. Default: `executionEnvFromSandbox(sandbox)`. */
-	readonly env?: ExecutionEnv;
+	readonly env?: ExecutionEnv | (() => ExecutionEnv | undefined);
 	readonly now?: () => number;
 	readonly onReport: (error: unknown) => void;
 	/** Arm a wake at `atMs` (DO alarm / Node timer). */
@@ -171,7 +171,7 @@ class PiHost implements FluePiHost {
 	readonly registry: Registry;
 	readonly #options: FluePiHostOptions;
 	readonly #bridge: RegistryBridge;
-	readonly #env: ExecutionEnv | undefined;
+	readonly #env: ExecutionEnv | (() => ExecutionEnv | undefined) | undefined;
 	readonly #now: () => number;
 	#harness: Harness | undefined;
 	#questionHandler: QuestionHandler | undefined;
@@ -182,7 +182,15 @@ class PiHost implements FluePiHost {
 		this.#now = options.now ?? Date.now;
 		this.#env =
 			options.env ??
-			(options.sandbox ? executionEnvFromSandbox(options.sandbox, options.sandbox.cwd) : undefined);
+			(options.sandbox
+				? () => {
+						try {
+							return executionEnvFromSandbox(options.sandbox!, options.sandbox!.cwd);
+						} catch {
+							return undefined;
+						}
+					}
+				: undefined);
 		this.registry = createRegistry();
 		const delegation = {
 			rosterFor: (...args: Parameters<RegistryBridge['rosterFor']>) =>
@@ -246,7 +254,11 @@ class PiHost implements FluePiHost {
 			{
 				models: this.#options.models,
 				registry: this.registry,
-				...(this.#env ? { env: () => this.#env } : {}),
+				...(this.#env
+					? {
+							env: () => (typeof this.#env === 'function' ? this.#env() : this.#env),
+						}
+					: {}),
 				now: this.#now,
 				onReport: this.#options.onReport,
 			},

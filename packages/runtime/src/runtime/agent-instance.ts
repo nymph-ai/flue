@@ -365,7 +365,7 @@ export class FlueAgentInstance {
 			storage: async () => storage,
 			onOpened: (harness, opened, openContext) => cache.attach(harness, opened, openContext),
 			sandbox: this.#sandboxProxy,
-			env: this.#envProxy,
+			env: () => (this.#sandbox.current ? this.#envProxy : undefined),
 			now: this.#now,
 			onReport: (error) => this.#report(error),
 			armWake: async (atMs, reason) => {

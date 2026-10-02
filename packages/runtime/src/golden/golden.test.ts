@@ -21,7 +21,7 @@
  * `KNOWN_DIFFERENCES` lists, per scenario, the content that changed on
  * purpose; each entry is a documented behaviour change.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentConversationSnapshot, ConversationStreamChunk } from '../conversation-public.ts';
 import { init } from '../index.ts';
 import { start } from '../node/index.ts';
@@ -189,6 +189,11 @@ async function readPi(agentName: string, id: string) {
 }
 
 describe('golden conversation wire: Pi host vs the legacy loop', () => {
+	afterEach(async () => {
+		const runtime = getFlueRuntime();
+		if (runtime) await runtime.stop().catch(() => {});
+	});
+
 	for (const scenario of GOLDEN_SCENARIOS) {
 		it(scenario.name, { timeout: 60_000 }, async () => {
 			const legacy = fixtureOf(scenario.name);
