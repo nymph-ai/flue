@@ -467,8 +467,9 @@ export class TaskStore {
 		}
 
 		let cursor = '0';
-		if (matching.length > 0) {
-			cursor = String(matching[matching.length - 1].revision);
+		const lastEvent = matching[matching.length - 1];
+		if (lastEvent) {
+			cursor = String(lastEvent.revision);
 		} else {
 			cursor = String(this.getLatestRevision(params.filter));
 		}
@@ -660,9 +661,10 @@ export class TaskStore {
 	}
 
 	private async deliverEvent(sub: SubscriptionRecord, event: TaskChangedEvent): Promise<void> {
+		const cursor = event.cursor ?? String(event.revision);
 		const eventWithCursor: TaskChangedEvent = {
 			...event,
-			cursor: event.cursor ?? String(event.revision),
+			cursor,
 		};
 		const payloadString = JSON.stringify(eventWithCursor);
 		const headers: Record<string, string> = {
@@ -670,7 +672,7 @@ export class TaskStore {
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),
-			'x-mcp-cursor': eventWithCursor.cursor,
+			'x-mcp-cursor': cursor,
 			'x-mcp-event-type': event.event,
 		};
 
