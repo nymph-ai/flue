@@ -26,6 +26,22 @@ export interface NodeSqliteDatabaseOptions {
 	readonly busyTimeoutMs?: number;
 }
 
+function statementChanges(sql: string, changes: number | bigint): number {
+	const trimmed = sql.trimStart().toUpperCase();
+	if (
+		trimmed.startsWith('CREATE') ||
+		trimmed.startsWith('DROP') ||
+		trimmed.startsWith('ALTER') ||
+		trimmed.startsWith('PRAGMA') ||
+		trimmed.startsWith('SELECT') ||
+		trimmed.startsWith('EXPLAIN') ||
+		trimmed.startsWith('VACUUM')
+	) {
+		return 0;
+	}
+	return Number(changes);
+}
+
 export class NodeSqliteDatabase implements CountingSqliteDatabase {
 	readonly rows: SqliteRowCounters = { rowsRead: 0, rowsWritten: 0 };
 	/** Per-statement counters, once `traceStatements()` turned them on (diagnosis, tests). */
@@ -59,7 +75,7 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 
 	async run(sql: string, ...params: SqliteValue[]): Promise<void> {
 		const stmt = this.statement(sql);
-		const changes = Number(stmt.run(...(params as SQLInputValue[])).changes);
+		const changes = statementChanges(sql, stmt.run(...(params as SQLInputValue[])).changes);
 		this.rows.rowsWritten += changes;
 		if (this.statements) {
 			const counters = this.statements.get(sql) ?? { rowsRead: 0, rowsWritten: 0 };
@@ -105,7 +121,7 @@ export class NodeSqliteDatabase implements CountingSqliteDatabase {
 		};
 		return {
 			run: (...params: SqliteValue[]) => {
-				count(0, Number(statement.run(...(params as SQLInputValue[])).changes));
+				count(0, statementChanges(sql, statement.run(...(params as SQLInputValue[])).changes));
 			},
 			get: <T extends object>(...params: SqliteValue[]) => {
 				const row = statement.get(...(params as SQLInputValue[])) as T | undefined;

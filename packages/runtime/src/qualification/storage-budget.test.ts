@@ -390,11 +390,9 @@ describe('storage budget: Flue over bare Pi Durable', () => {
 					await bob.instance.waitForIdle(context);
 				},
 			);
-			const idleStatements = alice.database.traceStatements();
 			flueRows['idle wake'] = await measure(alice.database, async () => {
 				await alice.instance.wake({ kind: 'live-tasks' });
 			});
-			console.log('[idle-wake-statements]', topStatements(idleStatements));
 
 			// A Code Mode approval parks a question (rule 9): ask and park, wait, answer, resume.
 			let parkedQuestion = '';

@@ -37,6 +37,7 @@ export class EntityWakeBook {
 
 	constructor(database: CountingSqliteDatabase) {
 		this.#db = database;
+		this.#ensure();
 	}
 
 	#ensure(): void {
