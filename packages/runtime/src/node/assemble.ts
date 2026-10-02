@@ -59,12 +59,7 @@ export async function connectPersistenceAdapter(
 		if (adapter.migrate) await adapter.migrate();
 		const stores = await adapter.connect();
 		if (!stores || typeof stores !== 'object') {
-			throw new Error(
-				'connect() must return { submissionStore, conversationStreamStore, attachmentStore }.',
-			);
-		}
-		if (!stores.submissionStore || typeof stores.submissionStore.getSubmission !== 'function') {
-			throw new Error('connect() must return a submissionStore.');
+			throw new Error('connect() must return { conversationStreamStore, attachmentStore }.');
 		}
 		if (
 			!stores.conversationStreamStore ||
@@ -126,7 +121,7 @@ export async function assembleNodeAgentRuntime(
 	const displacedAgents = getRegisteredFlueAgents();
 	registerFlueAgents(options.agents);
 
-	const { submissionStore, conversationStreamStore, attachmentStore } = options.stores;
+	const { conversationStreamStore, attachmentStore } = options.stores;
 	if (!conversationStreamStore || !attachmentStore) {
 		throw new Error('[flue] Persistence adapter did not provide conversation stores.');
 	}
@@ -140,7 +135,6 @@ export async function assembleNodeAgentRuntime(
 
 	const activityGate = createRuntimeActivityGate();
 	const coordinator = createNodeAgentCoordinator({
-		submissions: submissionStore,
 		agents,
 		createContext: ({ id, agentName, request, submissionId }) =>
 			createFlueContext({
@@ -166,19 +160,18 @@ export async function assembleNodeAgentRuntime(
 		createAgentAdmission: (agentName, instanceId) =>
 			coordinator.createAdmission(agentName, instanceId),
 		abortAgentInstance: (agentName, instanceId) => coordinator.abortInstance(agentName, instanceId),
-		conversationStreamStore,
-		attachmentStore,
+		conversationSource: (agentName, instanceId) =>
+			coordinator.conversationSource(agentName, instanceId),
+		readAttachment: (agentName, instanceId, attachmentId) =>
+			coordinator.readAttachment(agentName, instanceId, attachmentId),
+		instanceInfo: (agentName, instanceId) => coordinator.instanceInfo(agentName, instanceId),
+		pendingQuestions: (agentName, instanceId) =>
+			coordinator.pendingQuestions(agentName, instanceId),
+		answerQuestion: (agentName, instanceId, questionId, request) =>
+			coordinator.answerQuestion(agentName, instanceId, questionId, request),
 	};
 	configurationAdapters.set(runtimeConfiguration, options.adapter);
 	configureFlueRuntime(runtimeConfiguration);
-
-	// Reconcile work a previous process left interrupted (durable adapters
-	// persist across invocations by design; a fresh store is a no-op).
-	try {
-		await coordinator.reconcileSubmissions();
-	} catch (error) {
-		console.error('[flue] Startup submission reconciliation failed:', error);
-	}
 
 	let closing: Promise<void> | undefined;
 	return {

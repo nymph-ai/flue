@@ -74,29 +74,6 @@ const CONTAINER_STATE_POLL_MS = 5_000;
 /** How long a state probe may go unanswered before the container is presumed dead. */
 const CONTAINER_PROBE_SILENCE_MS = 10_000;
 
-interface DeathDetectorCadence {
-	statePollMs: number;
-	probeSilenceMs: number;
-}
-
-let cadence: DeathDetectorCadence = {
-	statePollMs: CONTAINER_STATE_POLL_MS,
-	probeSilenceMs: CONTAINER_PROBE_SILENCE_MS,
-};
-
-/**
- * Test seam: shrink the death-detector cadence so suites can drive the poller
- * with real timers in milliseconds. Call with no argument to restore the
- * production constants. Deliberately absent from the cloudflare barrel — the
- * cadence is not a public option.
- */
-export function setContainerDeathCadenceForTests(override?: DeathDetectorCadence): void {
-	cadence = override ?? {
-		statePollMs: CONTAINER_STATE_POLL_MS,
-		probeSilenceMs: CONTAINER_PROBE_SILENCE_MS,
-	};
-}
-
 /**
  * Await a sandbox call while watching for container death. The Cloudflare
  * Sandbox transport leaves in-flight calls pending forever when the container
@@ -121,7 +98,8 @@ function raceContainerDeath<T>(
 	operation: string,
 	rpc: Promise<T>,
 ): Promise<T> {
-	const { statePollMs, probeSilenceMs } = cadence;
+	const statePollMs = CONTAINER_STATE_POLL_MS;
+	const probeSilenceMs = CONTAINER_PROBE_SILENCE_MS;
 	return new Promise<T>((resolve, reject) => {
 		let settled = false;
 		let pollTimer: ReturnType<typeof setTimeout> | undefined;

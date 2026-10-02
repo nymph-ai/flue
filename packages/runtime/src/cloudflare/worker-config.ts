@@ -16,8 +16,18 @@ import {
 	InvalidRequestError,
 	SubmissionConflictError,
 } from '../errors.ts';
+import {
+	createEntityWakeRoute,
+	type EntityDoorbell,
+	ENTITY_WAKE_ROUTE_PATH,
+} from '../entity/webhook-route.ts';
 import type { DispatchInput, DispatchQueue } from '../runtime/dispatch-queue.ts';
 import type { CloudflareRuntime } from '../runtime/flue-app.ts';
+import {
+	configuredStreams,
+	streamsSubscriptions,
+	streamsWebhookKeys,
+} from '../runtime/streams-config.ts';
 import type { DispatchReceipt } from '../types.ts';
 import {
 	CLOUDFLARE_AGENT_INTERNAL_DISPATCH_PATH,
@@ -41,13 +51,33 @@ export interface CreateCloudflareWorkerConfigOptions {
 	agentIdentities: Record<string, CloudflareAgentIdentity>;
 	/** Route one request to the named instance of an agent DO binding. */
 	fetchAgent: (binding: unknown, instanceId: string, request: Request) => Promise<Response>;
+	/**
+	 * The named instance's Durable Object stub, for the `__flueWake` doorbell
+	 * RPC of entity wakes. Absent: the Worker serves no wake route.
+	 */
+	agentStub?: (
+		binding: unknown,
+		instanceId: string,
+	) => Promise<{ __flueWake(doorbell: EntityDoorbell): Promise<unknown> }>;
 }
 
 /** The Cloudflare-target seams the generated entry passes to `configureFlueRuntime`. */
 export type CloudflareWorkerConfig = Pick<
 	CloudflareRuntime,
 	'dispatchQueue' | 'routeAgentRequest' | 'instanceInfo'
->;
+> & {
+	/**
+	 * The Worker's entity wake route (`POST /__flue/streams/wake`), served
+	 * before the app when Electric streams are configured; `null` for every
+	 * other request. The first request also ensures the shared inbox
+	 * subscription, once per isolate.
+	 */
+	streamsWake(
+		request: Request,
+		env: unknown,
+		ctx?: { waitUntil?(promise: Promise<unknown>): void },
+	): Promise<Response | null>;
+};
 
 export function createCloudflareWorkerConfig(
 	options: CreateCloudflareWorkerConfigOptions,
@@ -125,7 +155,45 @@ export function createCloudflareWorkerConfig(
 		return { id: instanceId, ...(typeof info.uid === 'string' ? { uid: info.uid } : {}) };
 	};
 
-	return { dispatchQueue, routeAgentRequest, instanceInfo };
+	let inboxSubscription: Promise<unknown> | undefined;
+	let wakeRoute: { fetch(request: Request): Response | Promise<Response> } | undefined;
+	const streamsWake: CloudflareWorkerConfig['streamsWake'] = async (request, reqEnv, ctx) => {
+		const bindingEnv = (reqEnv ?? env) as Record<string, unknown>;
+		const streams = configuredStreams(bindingEnv);
+		const agentStub = options.agentStub;
+		if (!streams || !agentStub) return null;
+		const url = new URL(request.url);
+		if (!inboxSubscription) {
+			// One shared inbox subscription per deployment, delivering to this Worker.
+			const webhookUrl = streams.webhook?.url ?? `${url.origin}${ENTITY_WAKE_ROUTE_PATH}`;
+			const ensuring = streamsSubscriptions(streams, webhookUrl).ensureInbox();
+			inboxSubscription = ensuring;
+			ensuring.catch((error) => {
+				console.error('[flue] Could not ensure the entity inbox subscription:', error);
+				if (inboxSubscription === ensuring) inboxSubscription = undefined;
+			});
+			ctx?.waitUntil?.(ensuring.catch(() => {}));
+		}
+		if (url.pathname !== ENTITY_WAKE_ROUTE_PATH || request.method !== 'POST') return null;
+		wakeRoute ??= createEntityWakeRoute({
+			keys: streamsWebhookKeys(streams),
+			wake: async (entity, doorbell) => {
+				const binding = lookupBinding(entity.type, bindingEnv);
+				if (!binding) throw new Error(`[flue] Entity wake for unknown agent "${entity.type}".`);
+				return (await agentStub(binding, entity.id)).__flueWake(doorbell);
+			},
+			...(streams.fetch
+				? {
+						fetch: (input: string, init?: RequestInit) =>
+							(streams.fetch as NonNullable<typeof streams.fetch>)(input, init),
+					}
+				: {}),
+			onReport: (error) => console.error('[flue] Entity wake failed:', error),
+		});
+		return wakeRoute.fetch(request);
+	};
+
+	return { dispatchQueue, routeAgentRequest, instanceInfo, streamsWake };
 }
 
 /**

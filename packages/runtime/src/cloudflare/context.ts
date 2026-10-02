@@ -14,6 +14,11 @@ export interface CloudflareContext {
 		sql: SqlStorage;
 	};
 	durableObjectIdentity?: FlueDurableObjectIdentity;
+	/**
+	 * The Durable Object's own state (`this.ctx`), inside an agent instance.
+	 * Code Mode opens its runtime facet through it (`ctx.facets`, `ctx.exports`).
+	 */
+	durableObjectState?: DurableObjectState;
 }
 
 export interface FlueDurableObjectIdentity {
@@ -21,7 +26,7 @@ export interface FlueDurableObjectIdentity {
 	bindingName: string;
 	/** Durable Object class name, e.g. "FlueDraftWorkflow". */
 	className: string;
-	/** Instance name passed to idFromName/getAgentByName. */
+	/** Instance name passed to getByName/idFromName. */
 	name: string;
 	/** Durable Object id rendered by DurableObjectState.id.toString(). */
 	id: string;

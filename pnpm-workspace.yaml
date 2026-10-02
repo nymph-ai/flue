@@ -11,7 +11,7 @@ allowBuilds:
   # Required by Astro support in apps/www.
   sharp: true
   workerd: false
-minimumReleaseAge: 1440
+minimumReleaseAge: 0
 resolutionMode: highest
 minimumReleaseAgeExclude:
   # The internal registry gateway omits the "time" metadata field, so the
@@ -25,8 +25,8 @@ minimumReleaseAgeExclude:
   - workerd
   - miniflare
   - '@ai-sdk/*'
-  - '@earendil-works/pi-ai'
-  - '@earendil-works/pi-agent-core'
+  # Pi is pinned exactly (see overrides below); its release cadence is the gate.
+  - '@earendil-works/*'
   # Vendor SDKs pinned exactly by @earendil-works/pi-ai; the pi release
   # cadence is the effective gate for these.
   - '@anthropic-ai/sdk'
@@ -39,3 +39,20 @@ minimumReleaseAgeExclude:
   - protobufjs
   - react
   - react-dom
+overrides:
+  # Pi is pinned exactly at one release across the workspace (PI_UPGRADE_PLAN.md
+  # §7 step 1). Pi packages depend on each other with caret ranges, so every
+  # @earendil-works package is forced to the same version here.
+  '@earendil-works/chord': 1.0.0
+  '@earendil-works/pi-agent-core': 1.0.0
+  '@earendil-works/pi-ai': 1.0.0
+  '@earendil-works/pi-codemode': 1.0.0
+  '@earendil-works/pi-durable': 1.0.0
+  '@earendil-works/pi-telemetry': 1.0.0
+patchedDependencies:
+  # Runs pi-codemode's QuickJS VM without node:worker_threads: an injectable
+  # `spawn`, the VM half as `@earendil-works/pi-codemode/vm`, and node:fs /
+  # node:worker_threads imported only on first use. Shaped to go upstream
+  # (earendil-works/pi packages/codemode); Code Mode runs the VM in-process
+  # in the agent's Durable Object (packages/runtime/src/codemode/sandbox.ts).
+  '@earendil-works/pi-codemode@1.0.0': patches/@earendil-works__pi-codemode@1.0.0.patch

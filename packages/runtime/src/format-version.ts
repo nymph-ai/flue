@@ -16,9 +16,18 @@ import type { SqlStorage } from './sql-storage.ts';
  * Current format version of Flue's built-in persisted stores.
  *
  * Bump this when a persisted format changes incompatibly. Stores recorded
- * with another version are rejected and must be cleared.
+ * with an unknown or newer version are rejected and must be cleared.
+ *
+ * - 1: the pre-Pi runtime (submission rows, canonical conversation records).
+ * - 2: Pi Durable: every agent instance's state is Pi's own SQLite storage
+ *   in the instance; submissions are Pi records. A format-1 store stays readable: its conversation streams are
+ *   imported into Pi on each instance's first open, and SQL stores are
+ *   relabelled 2 as they migrate.
  */
-export const FLUE_FORMAT_VERSION = 1;
+export const FLUE_FORMAT_VERSION = 2;
+
+/** Versions this runtime reads: the current one, and format 1 for the one-time import. */
+const READABLE_FORMAT_VERSIONS: ReadonlySet<string> = new Set(['1', String(FLUE_FORMAT_VERSION)]);
 
 /**
  * Throw {@link PersistedFormatVersionError} unless the stored version matches
@@ -30,7 +39,7 @@ export const FLUE_FORMAT_VERSION = 1;
  * version marker is unrecognized.
  */
 export function assertSupportedFlueFormatVersion(storedVersion: string): void {
-	if (storedVersion === String(FLUE_FORMAT_VERSION)) return;
+	if (READABLE_FORMAT_VERSIONS.has(storedVersion)) return;
 	throw new PersistedFormatVersionError({
 		storedVersion,
 		supportedVersion: FLUE_FORMAT_VERSION,
@@ -49,6 +58,16 @@ export function migrateFlueSqlSchema(sql: SqlStorage, ensureCurrentSchema: () =>
 		.toArray()[0]?.value;
 	if (stored !== undefined && stored !== null) {
 		assertSupportedFlueFormatVersion(String(stored));
+		if (String(stored) !== String(FLUE_FORMAT_VERSION)) {
+			ensureCurrentSchema();
+			// Format 1 → 2 is additive: Pi logs are new streams; legacy streams
+			// stay where they are for the import. Relabel once the schema is in.
+			sql.exec(
+				`UPDATE flue_meta SET value = ? WHERE key = 'format_version'`,
+				String(FLUE_FORMAT_VERSION),
+			);
+			return;
+		}
 	} else {
 		const legacy = sql
 			.exec(`SELECT value FROM flue_meta WHERE key = 'schema_version'`)

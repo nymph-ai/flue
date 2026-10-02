@@ -1,0 +1,196 @@
+[
+	[
+		{
+			"kind": "root",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"affinityKey": "aff_01M3TCMNEJ6M9JVSMP7VHW89KT",
+			"createdAt": "2026-10-01T00:08:16.082Z",
+			"uid": "inst_01M3TCMNEJE1JD7C3GYWD4M0CT",
+			"v": 1,
+			"id": "record_conversation_created_conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"type": "conversation_created",
+			"timestamp": "2026-10-01T00:08:16.082Z"
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_dispatch_input_sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"type": "signal",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.085Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"messageId": "entry_dispatch_c3ViXzAxTTNUQ01ORUpXNVdXSzJKS0ZSWlNXNzZD",
+			"parentId": null,
+			"signalType": "monitor.alert",
+			"tagName": "alert",
+			"content": "Disk usage is at 95%.",
+			"attributes": {
+				"severity": "high"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNEP2JNDWTBZ13DC2Z56",
+			"type": "resource_snapshot",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.086Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"baseline": true,
+			"snapshot": {
+				"skills": [],
+				"tools": [],
+				"subagents": [],
+				"instructionsDigest": "d9b8e0250bc9ae0e"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNEPE7GRHAJJ535J9JXP",
+			"type": "agent_start_run",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.086Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND"
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNEQP8A7VHKXTGZ37XD4",
+			"type": "assistant_message_started",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.087Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"turnId": "turn_01M3TCMNEQ8WRZ0S6ATC7P1H3T",
+			"messageId": "entry_01M3TCMNEQHN475CET6XS4Q85R",
+			"parentId": "entry_dispatch_c3ViXzAxTTNUQ01ORUpXNVdXSzJKS0ZSWlNXNzZD",
+			"modelInfo": {
+				"api": "faux:1790813296080:dwlc7jr6grb",
+				"provider": "faux",
+				"model": "model"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNERN50KYT6KQNT52K0S",
+			"type": "assistant_text_started",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.088Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"turnId": "turn_01M3TCMNEQ8WRZ0S6ATC7P1H3T",
+			"messageId": "entry_01M3TCMNEQHN475CET6XS4Q85R",
+			"blockId": "block_01M3TCMNER842MVESYQTQBWN1W",
+			"blockIndex": 0
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNERFY0P8PH1YVQC5RDG",
+			"type": "assistant_text_delta",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.088Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"turnId": "turn_01M3TCMNEQ8WRZ0S6ATC7P1H3T",
+			"messageId": "entry_01M3TCMNEQHN475CET6XS4Q85R",
+			"blockId": "block_01M3TCMNER842MVESYQTQBWN1W",
+			"sequence": 0,
+			"delta": "Noted the alert."
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNESEJ28A2G6N8XDNTYA",
+			"type": "assistant_text_completed",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.089Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"turnId": "turn_01M3TCMNEQ8WRZ0S6ATC7P1H3T",
+			"messageId": "entry_01M3TCMNEQHN475CET6XS4Q85R",
+			"blockId": "block_01M3TCMNER842MVESYQTQBWN1W",
+			"deltaCount": 1
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNESJK41E22GQ8B2H29C",
+			"type": "assistant_message_completed",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.089Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"operationId": "op_01M3TCMNENT6C3CCZMX6N45WND",
+			"turnId": "turn_01M3TCMNEQ8WRZ0S6ATC7P1H3T",
+			"messageId": "entry_01M3TCMNEQHN475CET6XS4Q85R",
+			"stopReason": "stop",
+			"usage": {
+				"input": 402,
+				"output": 4,
+				"cacheRead": 0,
+				"cacheWrite": 402,
+				"totalTokens": 808,
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 0
+				}
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_dispatch-submission:sub_01M3TCMNEJW5WWK2JKFRZSW76C:settled",
+			"type": "submission_settled",
+			"conversationId": "conv_01M3TCMNEJB5DKHPJQH0TVBC5T",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.090Z",
+			"submissionId": "sub_01M3TCMNEJW5WWK2JKFRZSW76C",
+			"attemptId": "attempt_01M3TCMNEKY12JF0HSVTNDNCDF",
+			"outcome": "completed"
+		}
+	]
+]

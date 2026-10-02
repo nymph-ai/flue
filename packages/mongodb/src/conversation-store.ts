@@ -178,6 +178,7 @@ export class MongoConversationStreamStore implements ConversationStreamStore {
 		const batches = page.map((row) => ({
 			offset: formatOffset(Number(row.offset)),
 			records: JSON.parse(String(row.data)) as ConversationRecord[],
+			ordinal: Number(row.offset),
 		}));
 		return {
 			batches,

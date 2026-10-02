@@ -1,4 +1,3 @@
-import type { ConversationRecord } from '../conversation-records.ts';
 import { configureErrorRendering, InvalidRequestError } from '../errors.ts';
 import type {
 	Agent,
@@ -7,14 +6,14 @@ import type {
 	NamedAgentDispatchRequest,
 } from '../types.ts';
 import type { AttachedAgentSubmissionAdmission } from './agent-submissions.ts';
-import type { AttachmentStore } from './attachment-store.ts';
-import type { ConversationStreamStore } from './conversation-stream-store.ts';
+import type { ConversationProjectionSource } from './conversation-source.ts';
+import type { PendingQuestion } from '../pi/questions.ts';
+import type { AnswerRequest, AnswerResult } from './question-routes.ts';
 import { enqueueDispatch } from './dispatch.ts';
 import type { DispatchQueue } from './dispatch-queue.ts';
 import { normalizeMessageInput } from './message-input.ts';
 import { getRegisteredAgentIdentity } from './registration.ts';
 import type { RuntimeActivityGate } from './runtime-activity-gate.ts';
-import { agentStreamPath } from './stream-offsets.ts';
 
 interface RuntimeBase {
 	devMode?: boolean;
@@ -31,8 +30,31 @@ export interface NodeRuntime extends RuntimeBase {
 	 * settlement (the distinct aborted outcome) happens asynchronously.
 	 */
 	abortAgentInstance: (agentName: string, instanceId: string) => Promise<boolean>;
-	conversationStreamStore: ConversationStreamStore;
-	attachmentStore: AttachmentStore;
+	/** The public conversation of one instance (opening it resumes interrupted work). */
+	conversationSource: (
+		agentName: string,
+		instanceId: string,
+	) => Promise<ConversationProjectionSource>;
+	/** Serve one attachment's bytes. */
+	readAttachment: (
+		agentName: string,
+		instanceId: string,
+		attachmentId: string,
+	) => Promise<Response>;
+	/** Existence and uid of an instance, without creating it. */
+	instanceInfo: (
+		agentName: string,
+		instanceId: string,
+	) => Promise<{ exists: boolean; uid?: string }>;
+	/** The questions an instance waits on (rule 9). */
+	pendingQuestions: (agentName: string, instanceId: string) => Promise<PendingQuestion[]>;
+	/** Answer one of an instance's questions through its inbox. */
+	answerQuestion: (
+		agentName: string,
+		instanceId: string,
+		questionId: string,
+		request: AnswerRequest,
+	) => Promise<AnswerResult>;
 }
 
 export interface CloudflareRuntime extends RuntimeBase {
@@ -141,31 +163,8 @@ export async function getAgentInstance(
 		);
 	}
 	if (rt.target === 'cloudflare') return rt.instanceInfo(name, id);
-	return readInstanceInfoFromStream(rt.conversationStreamStore, name, id);
-}
-
-/**
- * Node lookup: the root `conversation_created` record is the first record of
- * the instance's stream, so existence and uid come from stream meta plus the
- * first batch.
- */
-export async function readInstanceInfoFromStream(
-	store: ConversationStreamStore,
-	agentName: string,
-	instanceId: string,
-): Promise<AgentInstanceInfo | null> {
-	const path = agentStreamPath(agentName, instanceId);
-	if ((await store.getMeta(path)) === null) return null;
-	const read = await store.read(path, { offset: '-1', limit: 1 });
-	for (const batch of read.batches) {
-		for (const record of batch.records as ConversationRecord[]) {
-			if (record.type === 'conversation_created' && record.kind === 'root') {
-				return { id: instanceId, ...(record.uid !== undefined ? { uid: record.uid } : {}) };
-			}
-		}
-	}
-	// Stream exists but the birth record has not landed (mid-materialization).
-	return { id: instanceId };
+	const info = await rt.instanceInfo(name, id);
+	return info.exists ? { id, ...(info.uid !== undefined ? { uid: info.uid } : {}) } : null;
 }
 
 function isAgentFunction(value: unknown): value is Agent {

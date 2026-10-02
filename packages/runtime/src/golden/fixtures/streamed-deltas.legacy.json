@@ -1,0 +1,353 @@
+{
+	"scenario": "streamed-deltas",
+	"replies": [
+		{
+			"ok": true,
+			"text": "The answer is forty-two, and this explanation streams in as many small deltas as it can.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"offset": "0000000000000000_0000000000000013",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNUzE2NU1EVlBYUDhFQU4xN05N",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+					"timestamp": "2026-10-01T00:06:04.324Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "What is the answer?",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMS77C7221Z15GXAV24K",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+					"turnId": "turn_01M3TCGMS6C9D8G68KTVTEDNTN",
+					"timestamp": "2026-10-01T00:06:04.327Z",
+					"parts": [
+						{
+							"type": "reasoning",
+							"text": "Let me think about the question carefully before answering.",
+							"state": "done"
+						},
+						{
+							"type": "text",
+							"text": "The answer is forty-two, and this explanation streams in as many small deltas as it can.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+					"timestamp": "2026-10-01T00:06:04.335Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMS15BDKX2Q6AYYPHHVZ"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMS15BDKX2Q6AYYPHHVZ"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNUzE2NU1EVlBYUDhFQU4xN05N",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+				"timestamp": "2026-10-01T00:06:04.324Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "What is the answer?",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+			"turnId": "turn_01M3TCGMS6C9D8G68KTVTEDNTN",
+			"timestamp": "2026-10-01T00:06:04.327Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "Let me t",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "hink abo",
+			"position": {
+				"batch": 7,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "ut the q",
+			"position": {
+				"batch": 7,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "uestion ",
+			"position": {
+				"batch": 7,
+				"index": 2
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "carefull",
+			"position": {
+				"batch": 7,
+				"index": 3
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "y before",
+			"position": {
+				"batch": 7,
+				"index": 4
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": " answeri",
+			"position": {
+				"batch": 7,
+				"index": 5
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "reasoning",
+			"delta": "ng.",
+			"position": {
+				"batch": 7,
+				"index": 6
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "The answ",
+			"position": {
+				"batch": 10,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "er is fo",
+			"position": {
+				"batch": 10,
+				"index": 1
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "rty-two,",
+			"position": {
+				"batch": 10,
+				"index": 2
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": " and thi",
+			"position": {
+				"batch": 10,
+				"index": 3
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "s explan",
+			"position": {
+				"batch": 10,
+				"index": 4
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "ation st",
+			"position": {
+				"batch": 10,
+				"index": 5
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "reams in",
+			"position": {
+				"batch": 10,
+				"index": 6
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": " as many",
+			"position": {
+				"batch": 10,
+				"index": 7
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": " small d",
+			"position": {
+				"batch": 10,
+				"index": 8
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": "eltas as",
+			"position": {
+				"batch": 10,
+				"index": 9
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"kind": "text",
+			"delta": " it can.",
+			"position": {
+				"batch": 10,
+				"index": 10
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"messageId": "entry_01M3TCGMS77C7221Z15GXAV24K",
+			"timestamp": "2026-10-01T00:06:04.334Z",
+			"position": {
+				"batch": 12,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMS1KM672DG02TG2P6NX",
+			"submissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMS165MDVPXP8EAN17NM",
+			"timestamp": "2026-10-01T00:06:04.335Z",
+			"position": {
+				"batch": 13,
+				"index": 0
+			}
+		}
+	]
+}

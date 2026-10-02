@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import { RESERVED_SIGNAL_TYPES } from './conversation-records.ts';
+import { RESERVED_SIGNAL_TYPES } from './legacy/conversation-records.ts';
 import type { FlueHarness, FlueLogger, PromptUsage } from './types.ts';
 
 /**

@@ -18,6 +18,12 @@
 export { runWithCloudflareContext } from './context.ts';
 export type { CreateFlueAgentClassOptions } from './flue-agent-class.ts';
 export { createFlueAgentClass } from './flue-agent-class.ts';
+export {
+	createFlueMcpAuthClass,
+	installCloudflareMcpOAuth,
+	MCP_AUTH_BINDING,
+	MCP_AUTH_CLASS_NAME,
+} from './mcp-auth.ts';
 export { installDefaultCloudflareTracing } from './tracing/index.ts';
 export type {
 	CloudflareAgentIdentity,

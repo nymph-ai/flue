@@ -1,7 +1,7 @@
 ---
 title: MCP
 description: Connect agents to remote MCP servers and mount their tools.
-lastReviewedAt: 2026-07-23
+lastReviewedAt: 2026-10-01
 ---
 
 [MCP](https://modelcontextprotocol.io) (Model Context Protocol) is an open standard for connecting AI agents to external services. Instead of writing a [tool](/docs/guide/tools/) for every Linear, Notion, or GitHub action your agent needs, connect to an MCP server and your agent gets access to its tools, remotely.
@@ -74,7 +74,7 @@ export function Assistant() {
 }
 ```
 
-Flue never stores or manages your tokens. It is your responsibility to own any OAuth flow, token storage, and refresh token logic.
+With a string or a function, Flue never stores or manages your tokens: the OAuth flow, token storage and refresh are yours. To have Flue run the flow instead, see [Let Flue run the OAuth flow](#let-flue-run-the-oauth-flow).
 
 To attach a server after the user authorizes it mid-conversation, declare the connection conditionally on a persistent flag:
 
@@ -95,6 +95,52 @@ useAgentStart(async () => {
 ```
 
 When your OAuth flow completes and the flag flips, the agent has the server's tools from its next message on. If several agents need to share one user's authorization, put the integration in your application: an application-owned integration service can itself be an MCP server that agents connect to.
+
+### Let Flue run the OAuth flow
+
+Instead of managing tokens yourself, pass `mcpOAuth(...)` as `auth`. Flue discovers the server's authorization server, registers a client (with a Client ID Metadata Document when you give one and the server supports it, dynamic registration otherwise), runs the authorization-code flow with PKCE, and refreshes tokens:
+
+```ts
+import { mcpOAuth, useMcpConnection } from '@flue/runtime';
+
+useMcpConnection({
+  name: 'linear',
+  url: 'https://mcp.linear.app/mcp',
+  auth: mcpOAuth({
+    principal: userId, // whose credentials these are
+    redirectUrl: 'https://your-app.example.com/__flue/mcp/oauth/callback',
+  }),
+});
+```
+
+Until the user has authorized, connecting fails with `McpAuthorizationRequiredError`; its `authorizationUrl` is where to send them. The authorization server redirects back to `/__flue/mcp/oauth/callback`, which Flue serves in front of your `app.ts`, checks the response's issuer, and stores the tokens. The next submission connects.
+
+Credentials are bound to one principal and one authorization server. On Cloudflare they live in the `FlueMcpAuth` Durable Object, which `@flue/vite` binds when an agent module calls `mcpOAuth(`; add a migration for it to your wrangler config:
+
+```jsonc title="wrangler.jsonc"
+"migrations": [{ "tag": "v2", "new_sqlite_classes": ["FlueMcpAuth"] }]
+```
+
+On Node, credentials are kept in memory; pass `setMcpOAuthBroker(createMcpOAuthBroker({ storage }))` to keep them in your own store.
+
+## Protocol and transports
+
+Flue speaks MCP over Streamable HTTP, in the revision each server speaks. A connection starts with `server/discover`: a server on the stateless 2026-07-28 revision answers it and the connection carries no session. Any other answer — a 2025 server's `Method not found` or `Server not initialized`, as most servers give today — gets the standard `initialize` handshake (2025-11-25 or 2025-06-18) and a session. What each server speaks is remembered in memory for the agent's lifetime, so a reconnect skips the probe; nothing is stored, and a cold start negotiates again. If a 2025 server forgets the session (HTTP 404), Flue initializes again once and resends the request.
+
+Either way an agent keeps no connection open between messages: Flue opens no server-to-client stream, and a server's tool list is re-read when its cache hint expires, or on the agent's next wake. A server that speaks none of these revisions is refused with `McpProtocolVersionError`, naming the server and what it offered. There is no stdio transport on any target, and the legacy HTTP+SSE transport is not supported either: run a local server behind Streamable HTTP.
+
+### When a server asks for input
+
+A 2026-07-28 server can answer a tool call with `input_required`: it needs something (a confirmation form, a sampling request, the client's roots) before it can finish, and it hands back opaque `requestState` to send with the answer. Flue turns that into a question to a person or another agent: an `input-requested` event on the agent's `flue/v1/<agent>/<id>/questions` stream (see [Answering approvals](/docs/guide/code-mode/#answering-approvals), which use the same channel). The tool call waits inside the agent's turn, durably — the agent may be evicted meanwhile — and once the answer arrives in the agent's inbox, Flue sends the call again on a fresh request with the answers as `inputResponses` and the server's `requestState` echoed byte for byte. The answer is keyed as the server keyed its input requests:
+
+```ts
+await client.answer(question.id, {
+  kind: 'mcp-input',
+  inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+});
+```
+
+Questions need the agent's entity streams (Electric). Without them, or when the question expires (`useQuestions({ timeoutMs })`), the call fails with `McpInputRequiredError`, whose message names what the server asked for.
 
 ## Specifying tools
 
@@ -155,6 +201,7 @@ This can also be helpful inside of a Node.js script, if you're ever using the No
 
 ## Next steps
 
+- [Code Mode](/docs/guide/code-mode/) — let the model call MCP servers from code, with approvals, instead of one tool call at a time.
 - [Tools](/docs/guide/tools/) — how tools work in Flue, including guards and conditional mounting.
 - [`useMcpConnection` reference](/docs/reference/agent-hooks-api/#usemcpconnection) — the hook's render contract and semantics.
 - [`McpConnectionDefinition`](/docs/reference/agent-api/#mcpconnectiondefinition) and [`createMcpConnection`](/docs/reference/agent-api/#createmcpconnection) — the definition fields and the adaptation contract.

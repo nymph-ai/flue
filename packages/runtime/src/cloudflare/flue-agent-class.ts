@@ -4,34 +4,49 @@
  * The generated Cloudflare entry point collapses to
  * `export const FlueTriageAgent = createFlueAgentClass({...})` for each agent.
  *
+ * The class is a plain `DurableObject` composed with the Agents SDK's
+ * `Lifecycle` (`agents/lifecycle`). It does not extend `Agent`: `Agent`
+ * installs State, WebSockets, Scheduler, Queue, Tasks, MCP and dynamic agents
+ * on every object and migrates their tables on every new one, and Flue uses
+ * none of them. Lifecycle supplies named-object identity (`lifecycle.name`),
+ * startup (capabilities, then an extension's `onStart`, once per in-memory
+ * lifetime) and request dispatch through capabilities. An extension adds the
+ * capabilities it wants with `this.lifecycle.use(...)` in its constructor.
+ *
+ * Flue owns the object's alarm (`agent-coordinator.ts`): Lifecycle's job
+ * queue costs several rows written per wake where Flue's alarm costs one
+ * `setAlarm` or nothing, and the queue would overwrite or delete an alarm it
+ * does not own. So capabilities that ride the job queue (`Scheduler`,
+ * `Queue`, `Tasks`) are not supported here; `State` and `WebSockets` are.
+ *
  * Semantics:
- * - `runtime.prepare(...)` runs BEFORE `super(ctx, env)` so the coordinator's
- *   stores exist before the Agents SDK constructor can schedule work, then
- *   `runtime.attach(this, prepared)` binds the coordinator to the instance.
- * - `onStart` / `onRequest` / `onFiberRecovered` / the
- *   `__flueWakeAgentSubmissions` schedule target delegate to the shared
- *   Cloudflare agent runtime; `onStart`/`onFiberRecovered` forward to an
- *   inherited implementation when the (possibly extended) base defines one.
+ * - `fetch` / `alarm` / the `__flueWake` doorbell RPC are the object's entry
+ *   boundaries. Each establishes the instance context (#437) and starts the
+ *   Lifecycle before it dispatches.
+ * - `onRequest` serves Flue's routes; `alarm` is Flue's wake.
  * - The module's `extend({ base, wrap })` export is resolved via
  *   `resolveCloudflareExtension`: `base` reshapes the superclass, `wrap`
  *   wraps the final class, and the wrapped class is what gets exported.
  */
-import type { CloudflareAgentRuntime } from './agent-coordinator.ts';
+import type { CloudflareAgentRuntime, LifecycleLike } from './agent-coordinator.ts';
 import { type ExtensionClass, resolveCloudflareExtension } from './extension.ts';
 
 type CloudflareAgentInstance = Parameters<CloudflareAgentRuntime['attach']>[0];
-type CloudflareAgentStorage = Parameters<CloudflareAgentRuntime['prepare']>[0]['storage'];
 
-interface DurableObjectStateLike {
-	readonly storage: CloudflareAgentStorage;
+interface LifecycleClass {
+	install(host: object): LifecycleLike & {
+		fetch(request: Request): Promise<Response>;
+	};
 }
 
 export interface CreateFlueAgentClassOptions {
+	/** `DurableObject` from `cloudflare:workers`. */
+	readonly DurableObject: abstract new (ctx: any, env: any) => object;
 	/**
-	 * The Cloudflare Agents SDK `Agent` class (the generated entry imports it
-	 * from the user's `agents` package; `@flue/runtime` does not depend on it).
+	 * The Agents SDK `Lifecycle` (the generated entry imports it from the
+	 * user's `agents/lifecycle`; `@flue/runtime` does not depend on `agents`).
 	 */
-	readonly AgentBase: ExtensionClass<any>;
+	readonly Lifecycle: LifecycleClass;
 	/** The shared per-Worker Cloudflare agent runtime (`createCloudflareAgentRuntime`). */
 	readonly runtime: CloudflareAgentRuntime;
 	/** Generated Durable Object class name, e.g. `FlueTriageAgent`. */
@@ -50,42 +65,47 @@ export interface CreateFlueAgentClassOptions {
  * agent module.
  */
 export function createFlueAgentClass(options: CreateFlueAgentClassOptions): ExtensionClass<any> {
-	const { AgentBase, runtime, className, agentName, extension } = options;
+	const { DurableObject, Lifecycle, runtime, className, agentName, extension } = options;
 	const resolved = resolveCloudflareExtension(
 		extension === undefined ? {} : { cloudflare: extension },
 		agentName,
 		'Agent',
 	);
-	const Base = resolved.base(AgentBase);
+
+	/**
+	 * What an extension's `base` receives: the Durable Object with its
+	 * Lifecycle already constructed, so a subclass constructor can install
+	 * capabilities before startup.
+	 */
+	class FlueDurableObject extends DurableObject {
+		readonly lifecycle = Lifecycle.install(this);
+
+		/** The name the object was addressed by (`getByName`). */
+		get name(): string {
+			return this.lifecycle.name;
+		}
+	}
+
+	const Base = resolved.base(FlueDurableObject);
 
 	class FlueGeneratedAgent extends Base {
-		constructor(ctx: DurableObjectStateLike, env: unknown) {
-			// prepare() must run before super(): the Agents SDK constructor can
-			// synchronously schedule callbacks that reach the coordinator's
-			// stores, so they are created from ctx.storage first (statements
-			// before super() are legal while `this` stays untouched).
-			const prepared = runtime.prepare({ storage: ctx.storage, className, agentName });
+		constructor(ctx: unknown, env: unknown) {
 			super(ctx, env);
-			runtime.attach(this as unknown as CloudflareAgentInstance, prepared);
+			runtime.attach(this as unknown as CloudflareAgentInstance, { className, agentName });
 		}
 
-		onStart(props?: Record<string, unknown>) {
-			return runtime.onStart(this as unknown as CloudflareAgentInstance, () =>
-				typeof super.onStart === 'function' ? super.onStart(props) : undefined,
+		fetch(request: Request) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, () =>
+				this.lifecycle.fetch(request),
 			);
 		}
 
-		/**
-		 * Durable schedule target that owns submission supervision: armed at
-		 * zero delay by admission/abort/recovery/fiber-settle boundaries and
-		 * at 30s as the heartbeat while unsettled work exists. Dispatched
-		 * from the Durable Object's alarm invocation as one bounded,
-		 * storage-only pass that reconciles, enforces deadlines, and starts
-		 * attempt fibers detached — the fibers outlive the invocation on the
-		 * SDK's runFiber keepAlive/recovery machinery.
-		 */
-		__flueWakeAgentSubmissions() {
-			return runtime.drainSubmissions(this as unknown as CloudflareAgentInstance);
+		/** Flue's wake (`agent-coordinator.ts`); the alarm is Flue's, not Lifecycle's job queue. */
+		alarm() {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.onAlarm(this as unknown as CloudflareAgentInstance);
+			});
 		}
 
 		onRequest(request: Request) {
@@ -93,21 +113,18 @@ export function createFlueAgentClass(options: CreateFlueAgentClassOptions): Exte
 		}
 
 		/**
-		 * The Agents SDK alarm handler dispatches `schedule`/`scheduleEvery`/
-		 * `queue` callbacks to methods on this class — including
-		 * extension-authored ones — so it is a real Durable Object entry
-		 * boundary and must establish the instance context (#437).
+		 * The doorbell RPC from the Worker's Electric wake route
+		 * (`entity/webhook-route.ts`): `stream` — the instance's inbox, or a
+		 * stream it observes — holds events through `head`. Records the
+		 * high-water mark and, when that leaves the stream behind, the alarm in
+		 * one synchronous turn, and returns; the alarm pumps
+		 * (docs/cloudflare-native.md rules 3–4).
 		 */
-		alarm(...args: unknown[]) {
-			return runtime.onAlarm(this as unknown as CloudflareAgentInstance, () =>
-				typeof super.alarm === 'function' ? super.alarm(...args) : undefined,
-			);
-		}
-
-		onFiberRecovered(ctx: { readonly name?: string; readonly snapshot?: Record<string, unknown> }) {
-			return runtime.onFiberRecovered(this as unknown as CloudflareAgentInstance, ctx, () =>
-				typeof super.onFiberRecovered === 'function' ? super.onFiberRecovered(ctx) : undefined,
-			);
+		__flueWake(doorbell: Parameters<CloudflareAgentRuntime['wake']>[1]) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.wake(this as unknown as CloudflareAgentInstance, doorbell);
+			});
 		}
 	}
 

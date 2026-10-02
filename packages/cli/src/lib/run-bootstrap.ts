@@ -24,7 +24,6 @@ import type { Agent, DeliveredMessage } from '@flue/runtime';
 import {
 	AGENT_IDENTITY_PATTERN,
 	type AssembledNodeAgentRuntime,
-	agentStreamPath,
 	assembleNodeAgentRuntime,
 	type ConversationStreamChunk,
 	connectPersistenceAdapter,
@@ -271,7 +270,6 @@ export async function createFlueRunSession(
 				submit: (conversationId, message, submitOptions = {}) =>
 					submitAndSettle({
 						coordinator: runtime.coordinator,
-						conversationStreamStore: runtime.conversationStreamStore,
 						identity,
 						conversationId,
 						message,
@@ -324,9 +322,6 @@ export async function createFlueRunSession(
 
 interface SubmitAndSettleOptions extends FlueRunSubmitOptions {
 	coordinator: AssembledNodeAgentRuntime['coordinator'];
-	conversationStreamStore: NonNullable<
-		Awaited<ReturnType<PersistenceAdapter['connect']>>['conversationStreamStore']
-	>;
 	identity: string;
 	conversationId: string;
 	message: DeliveredMessage;
@@ -339,7 +334,7 @@ interface SubmitAndSettleOptions extends FlueRunSubmitOptions {
  * This is `invokeDirectAttached` semantics without HTTP.
  */
 async function submitAndSettle(options: SubmitAndSettleOptions): Promise<FlueRunOutcome> {
-	const { coordinator, conversationStreamStore, identity, conversationId, message } = options;
+	const { coordinator, identity, conversationId, message } = options;
 	throwIfAborted(options.signal);
 
 	const admit = coordinator.createAdmission(identity, conversationId);
@@ -347,7 +342,7 @@ async function submitAndSettle(options: SubmitAndSettleOptions): Promise<FlueRun
 		...(options.initialData !== undefined ? { initialData: options.initialData } : {}),
 		...(options.uid !== undefined ? { uid: options.uid } : {}),
 	});
-	const streamPath = agentStreamPath(identity, conversationId);
+	const source = await coordinator.conversationSource(identity, conversationId);
 
 	let abortRequested = false;
 	const requestAbort = () => {
@@ -364,15 +359,13 @@ async function submitAndSettle(options: SubmitAndSettleOptions): Promise<FlueRun
 
 	try {
 		const settlement = await observeSubmissionSettlement({
-			store: conversationStreamStore,
-			path: streamPath,
+			source,
 			submissionId: receipt.submissionId,
 			offset: receipt.offset,
 			...(options.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
 		});
 		const reply = await readSubmissionReply({
-			store: conversationStreamStore,
-			path: streamPath,
+			source,
 			submissionId: receipt.submissionId,
 		});
 

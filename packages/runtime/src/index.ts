@@ -60,6 +60,22 @@ export type {
 } from './execution-interceptor.ts';
 export { useAgentFinish } from './hooks/use-agent-finish.ts';
 export { useAgentStart } from './hooks/use-agent-start.ts';
+export type { CodemodeMethod } from './codemode/tool.ts';
+export { type UseCodeModeOptions, useCodeMode } from './hooks/use-code-mode.ts';
+export {
+	type QuestionResponder,
+	type UseQuestionsOptions,
+	useQuestions,
+} from './hooks/use-questions.ts';
+export type {
+	CodemodeApprovalQuestion,
+	CodemodePendingAction,
+	FlueAnswer,
+	FlueQuestion,
+	McpInputQuestion,
+} from './questions.ts';
+export { QuestionCancelledError, QuestionTimeoutError } from './questions.ts';
+export type { InputAnsweredEvent, InputRequestedEvent } from './entity/questions.ts';
 export { useDataWriter } from './hooks/use-data-writer.ts';
 export { useDelivery } from './hooks/use-delivery.ts';
 export { useDispatchMessage } from './hooks/use-dispatch-message.ts';
@@ -80,9 +96,23 @@ export type {
 	McpAuth,
 	McpConnection,
 	McpConnectionDefinition,
+	McpOAuth,
 	McpToolAnnotations,
 	McpTransport,
 } from './mcp.ts';
+export { McpInputRequiredError, McpProtocolVersionError, mcpToolName } from './mcp.ts';
+export {
+	createMcpOAuthBroker,
+	MCP_OAUTH_CALLBACK_PATH,
+	McpAuthorizationRequiredError,
+	type McpOAuthBroker,
+	type McpOAuthCallback,
+	type McpOAuthOutcome,
+	type McpOAuthRequest,
+	type McpOAuthStorage,
+	mcpOAuth,
+	setMcpOAuthBroker,
+} from './mcp-oauth.ts';
 export { createMcpConnection } from './mcp.ts';
 export type {
 	AgentAppendMessage,
@@ -101,6 +131,14 @@ export { createChannelRouter } from './runtime/channel-routes.ts';
 export { type FlueEventSubscriber, observe } from './runtime/events.ts';
 export { type AgentInstanceInfo, dispatch, getAgentInstance } from './runtime/flue-app.ts';
 export { isDynamicModel, setProvider } from './runtime/providers.ts';
+// Where agent instances' entity streams (inboxes, published events) live: an
+// Electric (Durable Streams) server. Pi's own state stays in each instance.
+export {
+	type ElectricStreamsConfig,
+	electricStreams,
+	type FlueStreamsConfig,
+	setStreams,
+} from './runtime/streams-config.ts';
 export type { AgentIdentityBinding } from './runtime/registration.ts';
 export { __flueBindAgentModule } from './runtime/registration.ts';
 export {

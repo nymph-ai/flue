@@ -57,6 +57,7 @@ import {
 	scanAgents,
 } from './agent-scan.ts';
 import { cloudflareAgentsResolverPlugin } from './cloudflare-agents-resolver.ts';
+import { scanCloudflareFeatures } from './cloudflare-codemode.ts';
 import { generateCloudflareEntry } from './cloudflare-entry.ts';
 import {
 	cloudflareOrderingError,
@@ -182,6 +183,10 @@ interface FluePluginState {
 	isPreview: boolean;
 	/** Whether the config hook took the Cloudflare path (sibling detected). */
 	cloudflarePrepared: boolean;
+	/** Whether a module under the source root calls `useCodeMode()` (Cloudflare: the entry imports QuickJS). */
+	codeMode: boolean;
+	/** Whether a module under the source root calls `mcpOAuth()` (Cloudflare: binds the FlueMcpAuth Durable Object). */
+	mcpOAuth: boolean;
 	/** Serializes and coalesces watcher-driven re-scans. */
 	watchQueue: WatchQueue;
 	resolved: FlueResolvedProjectInfo | undefined;
@@ -204,6 +209,8 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		target: 'node',
 		isPreview: false,
 		cloudflarePrepared: false,
+		codeMode: false,
+		mcpOAuth: false,
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
@@ -226,6 +233,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				name: agent.bindingName,
 				class_name: agent.className,
 			}));
+		},
+		get mcpOAuth() {
+			return state.mcpOAuth;
 		},
 		customizerInvoked: false,
 	};
@@ -350,6 +360,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					throw cloudflareOrderingError();
 				}
 				if (project.db) throw dbOnCloudflareError();
+				const features = await scanCloudflareFeatures(project.sourceRoot);
+				state.codeMode = features.codeMode;
+				state.mcpOAuth = features.mcpOAuth;
 				state.cloudflarePrepared = true;
 				workerConfigSource.configReady = true;
 				// The dependency resolver stays inert (root unset): the Worker
@@ -373,7 +386,6 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			if (project.providers?.includes('cloudflare')) {
 				throw cloudflareProviderOnNodeError();
 			}
-
 			resolverState.root = root;
 			resolverState.external = !isBuild;
 			resolverState.importers = isBuild ? undefined : [bootstrap.server];
@@ -554,6 +566,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					agents: state.agents,
 					providers: state.project.providers,
 					tracing: state.project.tracing,
+					codeMode: state.codeMode,
 				});
 			}
 			return undefined;

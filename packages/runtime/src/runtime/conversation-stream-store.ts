@@ -1,10 +1,10 @@
 import { clampLimit } from '../adapter-helpers.ts';
 import type { AgentSubmissionStore } from '../agent-execution-store.ts';
-import type { ConversationRecord } from '../conversation-records.ts';
+import type { ConversationRecord } from '../legacy/conversation-records.ts';
 import { ConversationStreamStoreError } from '../errors.ts';
 import { migrateFlueSqlSchema } from '../format-version.ts';
 import { parseSessionStorageKey } from '../session-identity.ts';
-import type { SqlStorage } from '../sql-storage.ts';
+import { type SqlStorage, sqlTableExists } from '../sql-storage.ts';
 import { generateIncarnationId } from './ids.ts';
 import { DEFAULT_READ_LIMIT, formatOffset, MAX_READ_LIMIT, parseOffset } from './stream-offsets.ts';
 
@@ -22,8 +22,23 @@ export interface ConversationProducerClaim {
 }
 
 export interface ConversationStreamBatch {
+	/**
+	 * The batch's offset: an opaque token, unique within the stream and
+	 * strictly increasing in byte-wise lexicographic order across appends
+	 * (Durable Streams PROTOCOL §8). The runtime only echoes, compares for
+	 * equality, and orders offsets (`compareOffsets`); it never parses them.
+	 */
 	offset: string;
 	records: ConversationRecord[];
+	/**
+	 * Strictly increasing integer position of the batch within the stream,
+	 * stamped onto projected chunks as `position.batch` (the SDK's dedup
+	 * key). Every first-party store supplies it. It is optional only for
+	 * adapters written before it existed: for those, the runtime falls back
+	 * to decoding the legacy `formatOffset` shape and fails loudly for any
+	 * other offset format.
+	 */
+	ordinal?: number;
 }
 
 export interface ConversationStreamReadResult {
@@ -429,9 +444,10 @@ export class InMemoryConversationStreamStore implements ConversationStreamStore 
 		const limit = clampLimit(options?.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
 		const page = stream.batches.slice(startAfter + 1, startAfter + 1 + limit);
 		return {
-			batches: page.map((batch) => ({
+			batches: page.map((batch, index) => ({
 				offset: batch.offset,
 				records: JSON.parse(batch.data) as ConversationRecord[],
+				ordinal: startAfter + 1 + index,
 			})),
 			nextOffset: page.at(-1)?.offset ?? formatOffset(startAfter),
 			upToDate: startAfter + page.length >= head,
@@ -555,18 +571,36 @@ export class InMemoryConversationStreamStore implements ConversationStreamStore 
 // Bespoke (not built on `defineSqlConversationStreamStore`): Cloudflare Durable
 // Object SQLite requires synchronous `transactionSync`, so this store cannot use
 // the async SQL builder and keeps its own synchronous fence implementation.
+//
+// The tables are created by the first write. On Cloudflare this store only
+// holds pre-Pi conversations for their one-time import, so a new agent
+// instance reads it (`getMeta`) and never writes it: reads of a store that was
+// never written find nothing and create nothing (nymph-ai/nymphai #3868).
 export class SqliteConversationStreamStore implements ConversationStreamStore {
 	private listeners = new StreamListenerRegistry();
+	#ready = false;
 
 	constructor(
 		private sql: SqlStorage,
 		private runTransaction: <T>(closure: () => T) => T,
-	) {
-		ensureSqlConversationStreamTables(sql);
+	) {}
+
+	/** The tables, behind the format-version fence; once per store. */
+	#schema(): void {
+		if (this.#ready) return;
+		ensureSqlConversationStreamTables(this.sql);
+		this.#ready = true;
+	}
+
+	/** Whether the tables exist (then fenced like a write), without creating them. */
+	#exists(): boolean {
+		if (!this.#ready && sqlTableExists(this.sql, 'flue_conversation_streams')) this.#schema();
+		return this.#ready;
 	}
 
 	async createStream(path: string, identity: ConversationStreamIdentity): Promise<void> {
 		const data = JSON.stringify(identity);
+		this.#schema();
 		this.runTransaction(() => {
 			const existing = this.sql
 				.exec('SELECT identity_json FROM flue_conversation_streams WHERE path = ?', path)
@@ -586,6 +620,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 	}
 
 	async acquireProducer(path: string, producerId: string): Promise<ConversationProducerClaim> {
+		this.#schema();
 		return this.runTransaction(() => {
 			const row = this.sql
 				.exec(
@@ -619,6 +654,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 	}): Promise<{ offset: string }> {
 		if (input.records.length === 0)
 			this.fail('append', input.path, 'A canonical batch cannot be empty.');
+		this.#schema();
 		const data = JSON.stringify(input.records);
 		if (data.length > MAX_BATCH_DATA_LENGTH) {
 			this.fail('append', input.path, oversizedBatchReason(data.length, input.records));
@@ -730,6 +766,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 			records: JSON.parse(
 				this.materializeBatchData('read', path, row.seq as number, row.data as string),
 			) as ConversationRecord[],
+			ordinal: row.seq as number,
 		}));
 		return {
 			batches,
@@ -798,6 +835,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 	}
 
 	async getMeta(path: string): Promise<ConversationStreamMeta | null> {
+		if (!this.#exists()) return null;
 		const row = this.sql
 			.exec(
 				`SELECT identity_json, next_offset, producer_id, producer_epoch, next_producer_sequence, incarnation
@@ -821,6 +859,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 	}
 
 	async putFoldCheckpoint(path: string, checkpoint: ConversationFoldCheckpoint): Promise<void> {
+		this.#schema();
 		// One transaction replaces chunks and head row together, so a reader
 		// (or a crash) never observes a half-written checkpoint: the head row
 		// is the commit point, exactly like a spilled batch's row.
@@ -865,6 +904,7 @@ export class SqliteConversationStreamStore implements ConversationStreamStore {
 		path: string,
 		options?: { atOrBefore?: string },
 	): Promise<ConversationFoldCheckpoint | null> {
+		if (!this.#exists()) return null;
 		return this.runTransaction(() => {
 			const row = this.sql
 				.exec(

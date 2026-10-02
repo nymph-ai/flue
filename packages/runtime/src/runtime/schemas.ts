@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import { RESERVED_SIGNAL_TYPES } from '../conversation-records.ts';
+import { RESERVED_SIGNAL_TYPES } from '../legacy/conversation-records.ts';
 import { DOCUMENT_MIME_TYPES } from '../document-attachments.ts';
 import { InvalidRequestError } from '../errors.ts';
 import type { DeliveredMessage } from '../types.ts';

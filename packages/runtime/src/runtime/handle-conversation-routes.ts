@@ -1,12 +1,14 @@
-import { getConversationFoldHost } from '../conversation-fold-host.ts';
-import {
-	type AgentConversationSnapshot,
-	type ConversationStreamCheckpointChunk,
-	projectAgentConversationSnapshot,
-	projectLiveMessageTargets,
+/**
+ * The agent conversation read routes (`history` and `updates` views, HEAD,
+ * attachment bytes) over a {@link ConversationProjectionSource}: the Pi
+ * projection cached over Pi storage (`pi/conversation-cache.ts`), or a
+ * pre-upgrade record stream (`legacy/conversation-source.ts`). The wire is
+ * the one `@flue/sdk` speaks, unchanged.
+ */
+import type {
+	AgentConversationSnapshot,
+	ConversationStreamCheckpointChunk,
 } from '../conversation-public.ts';
-import { loadReducedConversationPrefix } from '../conversation-reader.ts';
-import type { ReducedInstanceState } from '../conversation-reducer.ts';
 import {
 	AttachmentNotFoundError,
 	HistoryCursorNotFoundError,
@@ -15,6 +17,8 @@ import {
 	StreamOffsetGoneError,
 	toHttpResponse,
 } from '../errors.ts';
+import { legacyConversationSource } from '../legacy/conversation-source.ts';
+import { compareOffsets, isResumeOffset } from '../streams/offset.ts';
 import type { AttachmentStore } from './attachment-store.ts';
 import {
 	applyHistoryWindow,
@@ -23,16 +27,12 @@ import {
 	parseResetWindow,
 	type ResetWindow,
 } from './conversation-history-window.ts';
-import {
-	LONG_POLL_TIMEOUT_MS,
-	projectConversationRead,
-	waitForConversationData,
-} from './conversation-observer.ts';
 import type {
-	ConversationStreamReadResult,
-	ConversationStreamStore,
-} from './conversation-stream-store.ts';
-import { parseOffset } from './stream-offsets.ts';
+	ConversationProjectionSource,
+	ConversationRead,
+	ResetWindowProjector,
+} from './conversation-source.ts';
+import type { ConversationStreamStore } from './conversation-stream-store.ts';
 
 const SECURITY_HEADERS = {
 	'X-Content-Type-Options': 'nosniff',
@@ -40,15 +40,30 @@ const SECURITY_HEADERS = {
 };
 const SSE_HEARTBEAT_MS = 15_000;
 
-export async function handleAgentConversationRead(options: {
-	store: ConversationStreamStore;
-	path: string;
-	request: Request;
-}): Promise<Response> {
+/** The attachment scope every Pi-era attachment of an instance is stored under. */
+export const ATTACHMENT_CONVERSATION_SCOPE = 'root';
+
+/** A projection source, or (pre-upgrade streams) a record store and its path. */
+export type ConversationReadTarget =
+	| { readonly source: ConversationProjectionSource }
+	| { readonly store: ConversationStreamStore; readonly path: string };
+
+function sourceOf(target: ConversationReadTarget): ConversationProjectionSource {
+	return 'source' in target ? target.source : legacyConversationSource(target.store, target.path);
+}
+
+function pathOf(target: ConversationReadTarget): string {
+	return 'path' in target ? target.path : 'conversation';
+}
+
+export async function handleAgentConversationRead(
+	options: ConversationReadTarget & { readonly request: Request },
+): Promise<Response> {
 	const url = new URL(options.request.url);
 	const view = url.searchParams.get('view') ?? 'history';
-	if (view === 'history') return historyResponse(options);
-	if (view === 'updates') return updatesResponse(options);
+	const source = sourceOf(options);
+	if (view === 'history') return historyResponse(source, pathOf(options), options.request);
+	if (view === 'updates') return updatesResponse(source, pathOf(options), options.request);
 	return errorResponse(
 		new InvalidRequestError({ reason: 'Invalid agent conversation view. Use history or updates.' }),
 	);
@@ -56,33 +71,22 @@ export async function handleAgentConversationRead(options: {
 
 /**
  * Serves the bytes of one attachment referenced by the default conversation.
- *
- * Resolves the agent instance's default conversation id and scopes the lookup to
- * it, so attachments belonging to task/action child conversations are never
- * served through the public route. The byte content is immutable (digest-keyed),
- * hence the long-lived private cache. The route is mounted on every agent
- * router; auth composes at the mount in `app.ts` like every other agent route.
+ * Attachments of task/action child conversations are never served here. The
+ * byte content is immutable (digest-keyed), hence the long-lived private
+ * cache.
  */
 export async function handleAgentAttachmentRead(options: {
-	conversationStore: ConversationStreamStore;
+	source: ConversationProjectionSource;
 	attachmentStore: AttachmentStore;
-	path: string;
+	/** The attachment store key of the instance (`agentStreamPath`). */
+	streamPath: string;
 	attachmentId: string;
 }): Promise<Response> {
-	const meta = await options.conversationStore.getMeta(options.path);
-	if (!meta) return errorResponse(new StreamNotFoundError({ path: options.path }));
-	// Resolving the default conversation id requires the reduced state — served
-	// from the shared fold host, so a byte read folds only batches appended
-	// since the instance's last read or write.
-	const state = await getConversationFoldHost(
-		options.conversationStore,
-		options.path,
-	).getStateAtHead();
-	const snapshot = projectAgentConversationSnapshot(state);
-	if (!snapshot) return errorResponse(new StreamNotFoundError({ path: options.path }));
+	const head = await options.source.head();
+	if (!head.snapshot) return errorResponse(new StreamNotFoundError({ path: options.streamPath }));
 	const stored = await options.attachmentStore.get({
-		streamPath: options.path,
-		conversationId: snapshot.conversationId,
+		streamPath: options.streamPath,
+		conversationId: ATTACHMENT_CONVERSATION_SCOPE,
 		attachmentId: options.attachmentId,
 	});
 	if (!stored)
@@ -95,8 +99,7 @@ export async function handleAgentAttachmentRead(options: {
 			'cache-control': 'private, max-age=31536000, immutable',
 			// The mime type is uploader-controlled, so a malicious "image" could be
 			// served as text/html. `sandbox` neutralizes script/HTML execution on
-			// direct navigation (treating it as an opaque origin) without affecting
-			// <img>/<a> sub-resource loads.
+			// direct navigation without affecting <img>/<a> sub-resource loads.
 			'content-security-policy': 'sandbox',
 			...SECURITY_HEADERS,
 		},
@@ -104,11 +107,15 @@ export async function handleAgentAttachmentRead(options: {
 }
 
 export async function handleAgentConversationHead(
-	store: ConversationStreamStore,
-	path: string,
+	target: ConversationProjectionSource | ConversationStreamStore,
+	path?: string,
 ): Promise<Response> {
-	const meta = await store.getMeta(path);
-	if (!meta) return headError(new StreamNotFoundError({ path }));
+	const source =
+		'meta' in target && typeof target.meta === 'function'
+			? (target as ConversationProjectionSource)
+			: legacyConversationSource(target as ConversationStreamStore, path ?? '');
+	const meta = await source.meta();
+	if (!meta) return headError(new StreamNotFoundError({ path: path ?? 'conversation' }));
 	return new Response(null, {
 		headers: {
 			'content-type': 'application/json',
@@ -120,12 +127,12 @@ export async function handleAgentConversationHead(
 	});
 }
 
-async function historyResponse(options: {
-	store: ConversationStreamStore;
-	path: string;
-	request: Request;
-}): Promise<Response> {
-	const url = new URL(options.request.url);
+async function historyResponse(
+	source: ConversationProjectionSource,
+	path: string,
+	request: Request,
+): Promise<Response> {
+	const url = new URL(request.url);
 	if (
 		url.searchParams.has('offset') ||
 		url.searchParams.has('tail') ||
@@ -139,22 +146,19 @@ async function historyResponse(options: {
 	}
 	const window = parseHistoryWindow(url);
 	if (window instanceof InvalidRequestError) return errorResponse(window);
-	const meta = await options.store.getMeta(options.path);
-	if (!meta) return errorResponse(new StreamNotFoundError({ path: options.path }));
-	const state = await getConversationFoldHost(options.store, options.path).getStateAtHead();
-	const snapshot = projectAgentConversationSnapshot(state);
-	if (!snapshot) return errorResponse(new StreamNotFoundError({ path: options.path }));
-	// Bounded reads slice the fully projected snapshot: the reduced state is
-	// resident in the fold host either way, so the saving is serialization,
-	// transfer, and client-side work — not server-side folding.
+	const meta = await source.meta();
+	if (!meta) return errorResponse(new StreamNotFoundError({ path }));
+	const head = await source.head();
+	const snapshot = head.snapshot ? { ...head.snapshot, offset: head.offset } : undefined;
+	if (!snapshot) return errorResponse(new StreamNotFoundError({ path }));
 	let windowed: ReturnType<typeof applyHistoryWindow>;
 	try {
 		windowed =
 			window.kind === 'full'
 				? snapshot
 				: applyHistoryWindow(snapshot, window, {
-						incarnation: meta.incarnation,
-						liveTargets: projectLiveMessageTargets(state),
+						incarnation: head.incarnation,
+						liveTargets: head.liveTargets,
 					});
 	} catch (error) {
 		if (error instanceof HistoryCursorNotFoundError) return errorResponse(error);
@@ -167,24 +171,26 @@ async function historyResponse(options: {
 		});
 	}
 	// The projection is meta-free; the route stamps the stream's generation
-	// identity so `observe()` can detect a reset-and-regrown stream mid-follow
-	// (via the stream-checkpoint chunk) against the generation it hydrated from.
-	return Response.json({ ...windowed, incarnation: meta.incarnation } satisfies typeof snapshot, {
-		headers: {
-			'cache-control': 'no-store',
-			'Stream-Next-Offset': snapshot.offset,
-			'Stream-Up-To-Date': 'true',
-			...SECURITY_HEADERS,
+	// identity so `observe()` can detect a reset-and-regrown stream mid-follow.
+	return Response.json(
+		{ ...windowed, incarnation: head.incarnation } satisfies AgentConversationSnapshot,
+		{
+			headers: {
+				'cache-control': 'no-store',
+				'Stream-Next-Offset': snapshot.offset,
+				'Stream-Up-To-Date': 'true',
+				...SECURITY_HEADERS,
+			},
 		},
-	});
+	);
 }
 
-async function updatesResponse(options: {
-	store: ConversationStreamStore;
-	path: string;
-	request: Request;
-}): Promise<Response> {
-	const url = new URL(options.request.url);
+async function updatesResponse(
+	source: ConversationProjectionSource,
+	path: string,
+	request: Request,
+): Promise<Response> {
+	const url = new URL(request.url);
 	if (url.searchParams.has('tail')) {
 		return errorResponse(new InvalidRequestError({ reason: 'Update streams do not accept tail.' }));
 	}
@@ -194,107 +200,54 @@ async function updatesResponse(options: {
 	if (live instanceof Response) return live;
 	const resetWindow = parseResetWindow(url);
 	if (resetWindow instanceof InvalidRequestError) return errorResponse(resetWindow);
-	const meta = await options.store.getMeta(options.path);
-	if (!meta) return errorResponse(new StreamNotFoundError({ path: options.path }));
+	const meta = await source.meta();
+	if (!meta) return errorResponse(new StreamNotFoundError({ path }));
 	// Reads start strictly after the requested offset, so equal-to-head is a
 	// legal empty wait; strictly beyond the head is a resume checkpoint that
-	// no longer exists (e.g. the store was reset and regrown shorter). Fail
-	// loud with a structured 416 before any response commits — this guard
-	// covers the plain, long-poll, and SSE paths, and without it the
-	// store-level invariant throw would surface as a silently-retried 500
-	// (or, on SSE, after the 200 already streamed). Compare numerically:
-	// the offset format check above does not require fixed-width padding.
-	if (parseOffset(offset) > parseOffset(meta.nextOffset)) {
-		return errorResponse(
-			new StreamOffsetGoneError({ path: options.path, offset, nextOffset: meta.nextOffset }),
-		);
+	// no longer exists (a store reset and regrown shorter): a structured 416,
+	// before any response commits. Offsets are opaque and ordered
+	// lexicographically (PROTOCOL §8).
+	if (compareOffsets(offset, meta.nextOffset) > 0) {
+		return errorResponse(new StreamOffsetGoneError({ path, offset, nextOffset: meta.nextOffset }));
 	}
 	// Every wire response leads with a stream-checkpoint chunk carrying the
-	// stream's generation identity. Riding an ordinary data frame is
-	// deliberate: the durable-stream client verifiably strips response headers
-	// and unknown control-frame fields before they reach SDK code, so an
-	// in-band chunk is the only channel a client can see.
+	// stream's generation identity, in-band, where the SDK can see it.
 	const checkpoint: ConversationStreamCheckpointChunk = {
 		type: 'stream-checkpoint',
 		incarnation: meta.incarnation,
 	};
 	const windowReset = resetWindowProjector(resetWindow, meta.incarnation);
 	if (live === 'sse') {
-		return sseResponse(
-			options.store,
-			options.path,
-			offset,
-			checkpoint,
-			options.request.signal,
-			windowReset,
-		);
+		return sseResponse(source, offset, checkpoint, request.signal, windowReset);
 	}
-	const state = await stateAtOffset(options.store, options.path, offset);
-	let read = await options.store.read(options.path, { offset });
-	if (live === 'long-poll' && read.batches.length === 0) {
-		const waited = await waitForConversationData(
-			options.store,
-			options.path,
-			offset,
-			options.request.signal,
-		);
-		if (waited === 'aborted') return new Response(null, { status: 499, headers: SECURITY_HEADERS });
-		read = waited;
-	}
-	const projected = projectConversationRead(state, read, windowReset);
-	return dsJsonResponse([checkpoint, ...projected.items], read, projected.offset);
+	const read = await source.read(offset, {
+		...(live === 'long-poll' ? { live: 'long-poll' as const } : {}),
+		signal: request.signal,
+		...(windowReset ? { resetWindow: windowReset } : {}),
+	});
+	if (read === 'aborted') return new Response(null, { status: 499, headers: SECURITY_HEADERS });
+	return dsJsonResponse([checkpoint, ...read.chunks], read);
 }
 
 /**
  * A bounded observation's updates stream (`from` / `limit`) receives
  * `conversation-reset` snapshots cut to its window server-side, so a reset
- * (compaction, a retried response) does not re-send the whole transcript.
- * Without bounds, resets pass through whole — the unchanged wire shape.
+ * does not re-send the whole transcript.
  */
 function resetWindowProjector(
 	window: ResetWindow,
 	incarnation: string,
-):
-	| ((
-			snapshot: AgentConversationSnapshot,
-			state: ReducedInstanceState,
-	  ) => AgentConversationSnapshot)
-	| undefined {
+): ResetWindowProjector | undefined {
 	if (!window.from && window.limit === undefined) return undefined;
-	return (snapshot, state) =>
-		applyResetWindow(snapshot, window, {
-			incarnation,
-			liveTargets: projectLiveMessageTargets(state),
-		});
+	return (snapshot, liveTargets) =>
+		applyResetWindow(snapshot, window, { incarnation, liveTargets });
 }
 
-/**
- * Reduced state at a reader's resume offset. The shared fold host serves the
- * head directly — the overwhelmingly common case: clients resume from a
- * history response's or admission receipt's `Stream-Next-Offset`. A lagging
- * offset (older than the head) rebuilds its prefix by replay, exactly as
- * before. Compared numerically: the wire offset format does not require
- * fixed-width padding.
- */
-async function stateAtOffset(
-	store: ConversationStreamStore,
-	path: string,
-	offset: string,
-): Promise<ReducedInstanceState> {
-	const state = await getConversationFoldHost(store, path).getStateAtHead();
-	if (parseOffset(state.recordsThroughOffset) === parseOffset(offset)) return state;
-	return loadReducedConversationPrefix({ store, path, offset });
-}
-
-function dsJsonResponse(
-	items: unknown[],
-	read: ConversationStreamReadResult,
-	offset: string,
-): Response {
+function dsJsonResponse(items: unknown[], read: ConversationRead): Response {
 	return Response.json(items, {
 		headers: {
 			'cache-control': 'no-store',
-			'Stream-Next-Offset': offset,
+			'Stream-Next-Offset': read.nextOffset,
 			...(read.upToDate ? { 'Stream-Up-To-Date': 'true' } : {}),
 			...SECURITY_HEADERS,
 		},
@@ -302,54 +255,44 @@ function dsJsonResponse(
 }
 
 function sseResponse(
-	store: ConversationStreamStore,
-	path: string,
+	source: ConversationProjectionSource,
 	offset: string,
 	checkpoint: ConversationStreamCheckpointChunk,
 	signal: AbortSignal,
-	windowReset: Parameters<typeof projectConversationRead>[2],
+	windowReset: ResetWindowProjector | undefined,
 ): Response {
 	const encoder = new TextEncoder();
 	let active = true;
-	let unsubscribe = () => {};
 	let heartbeat: ReturnType<typeof setInterval> | undefined;
+	const stop = new AbortController();
+	const onAbort = () => {
+		active = false;
+		stop.abort();
+	};
 	const body = new ReadableStream<Uint8Array>({
 		async start(controller) {
-			// One checkpoint per SSE connection, as the first data frame. The DS
-			// client buffers data frames until the first control frame, so this
-			// rides ahead of (or together with) the first read cycle's items —
-			// and every DS-internal reconnect is a fresh server connection,
-			// which re-delivers it.
+			// One checkpoint per SSE connection, as the first data frame; every
+			// reconnect is a fresh server connection, which re-delivers it.
 			controller.enqueue(encoder.encode(`event: data\ndata:${JSON.stringify([checkpoint])}\n\n`));
-			let state = await stateAtOffset(store, path, offset);
-			let currentOffset = offset;
-			let wake: (() => void) | undefined;
-			// A notification can fire while the loop is suspended in store.read
-			// (whose result was snapshotted before the concurrent append), when
-			// no wake is armed. The pending flag keeps it from being dropped —
-			// without it the loop would sleep the full long-poll window.
-			let pending = false;
-			unsubscribe = store.subscribe(path, () => {
-				pending = true;
-				wake?.();
-			});
 			heartbeat = setInterval(() => {
 				if (active) controller.enqueue(encoder.encode(': heartbeat\n\n'));
 			}, SSE_HEARTBEAT_MS);
-			const onAbort = () => {
-				active = false;
-				wake?.();
-			};
-			signal.addEventListener('abort', onAbort, { once: true });
+			if (signal.aborted) onAbort();
+			else signal.addEventListener('abort', onAbort, { once: true });
+			let currentOffset = offset;
+			let first = true;
 			try {
 				while (active) {
-					pending = false;
-					const read = await store.read(path, { offset: currentOffset });
-					const projected = projectConversationRead(state, read, windowReset);
-					state = projected.state;
-					if (projected.items.length > 0) {
+					const read = await source.read(currentOffset, {
+						...(first ? {} : { live: 'long-poll' as const }),
+						signal: stop.signal,
+						...(windowReset ? { resetWindow: windowReset } : {}),
+					});
+					first = false;
+					if (read === 'aborted' || !active) break;
+					if (read.chunks.length > 0) {
 						controller.enqueue(
-							encoder.encode(`event: data\ndata:${JSON.stringify(projected.items)}\n\n`),
+							encoder.encode(`event: data\ndata:${JSON.stringify(read.chunks)}\n\n`),
 						);
 					}
 					currentOffset = read.nextOffset;
@@ -358,26 +301,20 @@ function sseResponse(
 						...(read.upToDate ? { upToDate: true } : {}),
 					};
 					controller.enqueue(encoder.encode(`event: control\ndata:${JSON.stringify(control)}\n\n`));
-					if (!read.upToDate) continue;
-					if (pending) continue;
-					await new Promise<void>((resolve) => {
-						wake = resolve;
-						setTimeout(resolve, LONG_POLL_TIMEOUT_MS);
-						if (pending || !active) resolve();
-					});
-					wake = undefined;
 				}
+			} catch (error) {
+				if (active) controller.error(error);
+				return;
 			} finally {
 				active = false;
-				unsubscribe();
 				if (heartbeat) clearInterval(heartbeat);
 				signal.removeEventListener('abort', onAbort);
-				controller.close();
 			}
+			controller.close();
 		},
 		cancel() {
 			active = false;
-			unsubscribe();
+			stop.abort();
 			if (heartbeat) clearInterval(heartbeat);
 		},
 	});
@@ -396,7 +333,7 @@ function singleOffset(url: URL): string | Response {
 		return errorResponse(new InvalidRequestError({ reason: 'Exactly one offset is required.' }));
 	}
 	const offset = offsets[0] as string;
-	if (offset !== '-1' && !/^\d+_\d+$/.test(offset)) {
+	if (!isResumeOffset(offset)) {
 		return errorResponse(new InvalidRequestError({ reason: 'Invalid offset format.' }));
 	}
 	return offset;

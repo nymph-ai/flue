@@ -100,7 +100,7 @@ export type {
 	AttachmentRef,
 	ConversationRecord,
 	SubmissionSettledRecord,
-} from './conversation-records.ts';
+} from './legacy/conversation-records.ts';
 export type {
 	AttachmentStore,
 	GetAttachmentInput,

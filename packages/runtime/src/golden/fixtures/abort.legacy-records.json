@@ -1,0 +1,294 @@
+[
+	[
+		{
+			"kind": "root",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"affinityKey": "aff_01M3TCMND2A352GMH8N17VMZ2N",
+			"createdAt": "2026-10-01T00:08:16.034Z",
+			"uid": "inst_01M3TCMND28BMGM9NHYWEVZDNR",
+			"v": 1,
+			"id": "record_conversation_created_conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"type": "conversation_created",
+			"timestamp": "2026-10-01T00:08:16.034Z"
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_dispatch_input_sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"type": "user_message",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.037Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"messageId": "entry_dispatch_c3ViXzAxTTNUQ01ORDFZMVdCSDNGUEZINVM2RzdD",
+			"parentId": null,
+			"content": [
+				{
+					"type": "text",
+					"text": "Block please."
+				}
+			]
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMND6W2AA2JHAX943E3MZ",
+			"type": "resource_snapshot",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.038Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"baseline": true,
+			"snapshot": {
+				"skills": [],
+				"tools": [
+					{
+						"name": "block",
+						"description": "Blocks until the run is aborted."
+					}
+				],
+				"subagents": [],
+				"instructionsDigest": "1d2f8b339de22bbe"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMND690EBHY064C8E0AT5",
+			"type": "agent_start_run",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.038Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640"
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMND7VXEBSXNVAMGY7EJC",
+			"type": "assistant_message_started",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.039Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMND6CYX46K72FH48MJXY",
+			"messageId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"parentId": "entry_dispatch_c3ViXzAxTTNUQ01ORDFZMVdCSDNGUEZINVM2RzdD",
+			"modelInfo": {
+				"api": "faux:1790813296031:zax66jspxlf",
+				"provider": "faux",
+				"model": "model"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMND7KG9Y9895W835GBK3",
+			"type": "assistant_tool_call",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.039Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMND6CYX46K72FH48MJXY",
+			"messageId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"blockId": "block_01M3TCMND784EGCCGDGN5XFRCB",
+			"blockIndex": 0,
+			"toolCallId": "call_block",
+			"name": "block",
+			"arguments": {}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMND8P56VTA7K2XQWD3JC",
+			"type": "assistant_message_completed",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.040Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMND6CYX46K72FH48MJXY",
+			"messageId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"stopReason": "toolUse",
+			"usage": {
+				"input": 422,
+				"output": 2,
+				"cacheRead": 0,
+				"cacheWrite": 422,
+				"totalTokens": 846,
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 0
+				}
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_tool_outcome_ZW50cnlfMDFNM1RDTU5ENzM0UTk4MldQUENNQ0FNUTU_Y2FsbF9ibG9jaw",
+			"type": "tool_outcome",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.042Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMND6CYX46K72FH48MJXY",
+			"assistantMessageId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"toolCallId": "call_block",
+			"toolName": "block",
+			"isError": true,
+			"content": [
+				{
+					"type": "text",
+					"text": "This operation was aborted"
+				}
+			],
+			"durationMs": 2
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_tool_results_committed_ZW50cnlfMDFNM1RDTU5ENzM0UTk4MldQUENNQ0FNUTU",
+			"type": "tool_results_committed",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.043Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMND6CYX46K72FH48MJXY",
+			"assistantMessageId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"parentId": "entry_01M3TCMND734Q982WPPCMCAMQ5",
+			"outcomeIds": [
+				"record_tool_outcome_ZW50cnlfMDFNM1RDTU5ENzM0UTk4MldQUENNQ0FNUTU_Y2FsbF9ibG9jaw"
+			]
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNDDJ6MQ4J8JGZ59RJ1N",
+			"type": "assistant_message_started",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.045Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMNDD7FRMDX5YX1M0FTP5",
+			"messageId": "entry_01M3TCMNDDK1FSPEQDFNKS04BM",
+			"parentId": "entry_tool_result_ZW50cnlfMDFNM1RDTU5ENzM0UTk4MldQUENNQ0FNUTU_Y2FsbF9ibG9jaw",
+			"modelInfo": {
+				"api": "faux:1790813296031:zax66jspxlf",
+				"provider": "faux",
+				"model": "model",
+				"thinkingLevel": "medium"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_01M3TCMNDET89Z31JEM1B8H8GH",
+			"type": "assistant_message_completed",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.046Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"operationId": "op_01M3TCMND5GZ83SM2FT89QT640",
+			"turnId": "turn_01M3TCMNDD7FRMDX5YX1M0FTP5",
+			"messageId": "entry_01M3TCMNDDK1FSPEQDFNKS04BM",
+			"stopReason": "error",
+			"usage": {
+				"input": 0,
+				"output": 0,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 0,
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 0
+				}
+			},
+			"error": "This operation was aborted"
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_submission_aborted_sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"type": "signal",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.050Z",
+			"messageId": "entry_submission_aborted_sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"parentId": "entry_01M3TCMNDDK1FSPEQDFNKS04BM",
+			"signalType": "submission_aborted",
+			"content": "Submission was aborted.",
+			"attributes": {
+				"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+				"kind": "dispatch",
+				"reason": "aborted"
+			}
+		}
+	],
+	[
+		{
+			"v": 1,
+			"id": "record_dispatch-submission:sub_01M3TCMND1Y1WBH3FPFH5S6G7C:settled",
+			"type": "submission_settled",
+			"conversationId": "conv_01M3TCMND2N5XWRM2M0F3FM74D",
+			"harness": "default",
+			"session": "default",
+			"timestamp": "2026-10-01T00:08:16.051Z",
+			"submissionId": "sub_01M3TCMND1Y1WBH3FPFH5S6G7C",
+			"attemptId": "attempt_01M3TCMND3EBH6EGPSXFRGK14Y",
+			"outcome": "aborted",
+			"error": {
+				"name": "FlueError",
+				"message": "Submission was aborted.",
+				"type": "submission_aborted",
+				"details": "The operation was stopped before it produced a completed response."
+			}
+		}
+	]
+]

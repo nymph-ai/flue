@@ -11,11 +11,14 @@ export default defineConfig({
 		'src/telemetry/index.ts',
 		'src/cloudflare/index.ts',
 		'src/cloudflare/internal.ts',
+		'src/cloudflare/codemode.ts',
 		'src/cloudflare/workers-ai-provider.ts',
+		'src/qualification/index.ts',
 		'src/node/index.ts',
 		'src/test-utils/define-store-contract-tests.ts',
 		'src/test-utils/define-attachment-store-contract-tests.ts',
 		'src/test-utils/define-conversation-stream-store-contract-tests.ts',
+		'src/test-utils/define-durable-stream-log-contract-tests.ts',
 	],
 	format: ['esm'],
 	dts: true,
@@ -25,5 +28,7 @@ export default defineConfig({
 	// marking the specifier external keeps any import in the emitted
 	// bundle so workerd can resolve it at runtime (rather than having
 	// rolldown fail to find a package on disk at build time).
-	deps: { neverBundle: ['cloudflare:workers', 'vitest'] },
+	// `quickjs-wasi/quickjs.wasm?module` (`src/cloudflare/codemode.ts`) is a
+	// compiled wasm module the app's Worker build imports.
+	deps: { neverBundle: ['cloudflare:workers', 'vitest', 'quickjs-wasi/quickjs.wasm?module'] },
 });

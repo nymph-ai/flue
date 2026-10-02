@@ -29,7 +29,7 @@ export { createSqlConversationStores } from './cloudflare/agent-execution-store.
 // Overflow classifier, exposed for application regression tripwires that
 // assert the 413→overflow chain against the installed runtime (#468). Not an
 // authoring API: agent code never classifies its own failures.
-export { isAssistantContextOverflow } from './compaction.ts';
+export { isAssistantContextOverflow } from './overflow.ts';
 // Conversation wire types projected onto the HTTP `history`/`updates` views.
 // Exposed here only so the SDK can pin its public projection types to the
 // runtime's emitted shapes via a compile-time assignability test.
@@ -38,12 +38,39 @@ export type {
 	ConversationStreamChunk,
 	ConversationStreamWireChunk,
 } from './conversation-public.ts';
+export type { ConversationProjectionSource } from './runtime/conversation-source.ts';
 export { configureErrorRendering, RuntimeUnavailableError, toHttpResponse } from './errors.ts';
 export type { InstrumentationOwner } from './instrumentation.ts';
 export { createInstrumentationOwner, runWithInstrumentationOwner } from './instrumentation.ts';
 // Coordinator-facing MCP shapes: the per-instance connection resolvers the
 // Node and Cloudflare coordinators inject into submission contexts.
 export type { McpConnectionDefinition, McpConnectionResolver } from './mcp.ts';
+export { handleMcpOAuthCallback, MCP_OAUTH_CALLBACK_PATH } from './mcp-oauth.ts';
+// The question seam (approvals and MCP input requests, docs/cloudflare-native.md
+// rule 9): the lane that publishes questions as entity events installs its
+// handler here and continues parked Code Mode executions.
+export { resumeCodemodeQuestion } from './codemode/tool.ts';
+export {
+	type CodemodeApprovalQuestion,
+	type CodemodePendingAction,
+	type FlueAnswer,
+	type FlueQuestion,
+	type McpInputQuestion,
+	type QuestionCall,
+	type QuestionHandler,
+	QuestionParkedError,
+	QuestionsNotWiredError,
+	setQuestionHandler,
+} from './questions.ts';
+export {
+	appendAnswer,
+	inputAnsweredEvent,
+	parseFlueAnswer,
+	parseInputAnswered,
+	parseInputRequested,
+	summarizeQuestion,
+} from './entity/questions.ts';
+export { questionsPath } from './entity/paths.ts';
 export { createNodeAgentCoordinator, createNodeDispatchQueue } from './node/agent-coordinator.ts';
 // The shared Node runtime assembly `start()` and the CLI's `flue run` build
 // on: registration → persistence validation → coordinator → runtime seed.
@@ -119,9 +146,6 @@ export {
 } from './runtime/registration.ts';
 export type { RuntimeActivityGate, RuntimeActivityLease } from './runtime/runtime-activity-gate.ts';
 export { createRuntimeActivityGate } from './runtime/runtime-activity-gate.ts';
-// Divergence repair for the settlement cache (ledger restored from backup):
-// re-derives terminal rows from the streams' settle records.
-export { rebuildSettledSubmissionRows } from './runtime/settlement-rebuild.ts';
 // Storage path of an agent instance's canonical conversation stream — the
 // durable-storage contract callers pair with the observation helpers above.
 export { agentStreamPath } from './runtime/stream-offsets.ts';

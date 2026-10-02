@@ -51,7 +51,6 @@ import { getAgentInstance, getFlueRuntime } from './runtime/flue-app.ts';
 import { generateInstanceId } from './runtime/ids.ts';
 import { normalizeMessageInput } from './runtime/message-input.ts';
 import { getRegisteredAgentIdentity } from './runtime/registration.ts';
-import { agentStreamPath } from './runtime/stream-offsets.ts';
 import type { Agent, AgentDispatchRequest, DispatchReceipt } from './types.ts';
 
 export interface InitOptions {
@@ -357,20 +356,21 @@ function nodeSettlementTransport(
 	agentName: string,
 	instanceId: string,
 ): SettlementTransport {
-	const path = agentStreamPath(agentName, instanceId);
 	return {
 		requestAbort: () => node.abortAgentInstance(agentName, instanceId),
-		observe: (target) =>
+		observe: async (target) =>
 			observeSubmissionSettlement({
-				store: node.conversationStreamStore,
-				path,
+				source: await node.conversationSource(agentName, instanceId),
 				submissionId: target.submissionId,
 				offset: target.offset,
 				...(target.onEvent !== undefined ? { onEvent: target.onEvent } : {}),
 				...(target.signal !== undefined ? { signal: target.signal } : {}),
 			}),
-		readReply: (submissionId) =>
-			readSubmissionReply({ store: node.conversationStreamStore, path, submissionId }),
+		readReply: async (submissionId) =>
+			readSubmissionReply({
+				source: await node.conversationSource(agentName, instanceId),
+				submissionId,
+			}),
 	};
 }
 
@@ -406,7 +406,8 @@ function cloudflareSettlementTransport(
 	const throwIfInstanceMissing = async (response: Response): Promise<void> => {
 		if (response.status !== 404) return;
 		const body = (await response.json().catch(() => undefined)) as
-			{ error?: { type?: string } } | undefined;
+			| { error?: { type?: string } }
+			| undefined;
 		if (body?.error?.type === 'stream_not_found') {
 			throw new AgentInstanceNotFoundError({ id: instanceId });
 		}

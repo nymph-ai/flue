@@ -1,0 +1,270 @@
+{
+	"scenario": "join-steer",
+	"replies": [
+		{
+			"ok": true,
+			"text": "Both handled.",
+			"data": {},
+			"metadata": null
+		},
+		{
+			"ok": true,
+			"text": "Both handled.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"offset": "0000000000000000_0000000000000017",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMTVYNkY3QlA4VEI1TTVQVzZT",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+					"timestamp": "2026-10-01T00:06:04.585Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "First message.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+					"turnId": "turn_01M3TCGN1A7H0B9HKCAVW09D64",
+					"timestamp": "2026-10-01T00:06:04.586Z",
+					"parts": [
+						{
+							"type": "dynamic-tool",
+							"toolName": "wait_gate",
+							"toolCallId": "call_gate",
+							"state": "output-available",
+							"input": {},
+							"output": "gate open",
+							"durationMs": 2
+						},
+						{
+							"type": "text",
+							"text": "Both handled.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMUMySFBGRTU3RVRaMVJSUktB",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN1C2HPFE57ETZ1RRRKA",
+					"turnId": "turn_01M3TCGN1A7H0B9HKCAVW09D64",
+					"timestamp": "2026-10-01T00:06:04.590Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Second message.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGN1C2HPFE57ETZ1RRRKA",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+					"timestamp": "2026-10-01T00:06:04.596Z"
+				},
+				{
+					"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+					"timestamp": "2026-10-01T00:06:04.597Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGN169PMYVSXZ0HS7HTVE"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGN169PMYVSXZ0HS7HTVE"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMTVYNkY3QlA4VEI1TTVQVzZT",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+				"timestamp": "2026-10-01T00:06:04.585Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "First message.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+			"turnId": "turn_01M3TCGN1A7H0B9HKCAVW09D64",
+			"timestamp": "2026-10-01T00:06:04.586Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-input",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"toolCallId": "call_gate",
+			"toolName": "wait_gate",
+			"input": {},
+			"timestamp": "2026-10-01T00:06:04.587Z",
+			"position": {
+				"batch": 5,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"timestamp": "2026-10-01T00:06:04.587Z",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "tool-output",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"toolCallId": "call_gate",
+			"output": "gate open",
+			"durationMs": 2,
+			"timestamp": "2026-10-01T00:06:04.589Z",
+			"position": {
+				"batch": 8,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMUMySFBGRTU3RVRaMVJSUktB",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGN1C2HPFE57ETZ1RRRKA",
+				"turnId": "turn_01M3TCGN1A7H0B9HKCAVW09D64",
+				"timestamp": "2026-10-01T00:06:04.590Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Second message.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 9,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+			"turnId": "turn_01M3TCGN1GPJ74F6RKGM04C4TF",
+			"timestamp": "2026-10-01T00:06:04.593Z",
+			"position": {
+				"batch": 11,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"kind": "text",
+			"delta": "Both handled.",
+			"position": {
+				"batch": 13,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"messageId": "entry_01M3TCGN1A27YHYMHYGZ5ZJ0H0",
+			"timestamp": "2026-10-01T00:06:04.595Z",
+			"position": {
+				"batch": 15,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"submissionId": "sub_01M3TCGN1C2HPFE57ETZ1RRRKA",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+			"timestamp": "2026-10-01T00:06:04.596Z",
+			"position": {
+				"batch": 16,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGN16P0QFF12G96N52NKV",
+			"submissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGN15X6F7BP8TB5M5PW6S",
+			"timestamp": "2026-10-01T00:06:04.597Z",
+			"position": {
+				"batch": 17,
+				"index": 0
+			}
+		}
+	]
+}

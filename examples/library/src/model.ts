@@ -1,0 +1,27 @@
+/**
+ * Which model the library runs, chosen by the deployment's `LIBRARY_MODEL`
+ * var: `scripted` (the default — a deterministic provider over pi-ai's faux
+ * model, for reproducible qualification runs) or `live` (the real model
+ * `LIVE_MODEL`, Muse Spark 1.3 Contributor on Meta's Model API).
+ */
+import { env } from 'cloudflare:workers';
+import { typesafeProvider } from '@earendil-works/pi-ai/providers/typesafe';
+import { setProvider } from '@flue/runtime';
+import { SCRIPTED_MODEL, SCRIPTED_PROVIDER, scriptedProvider } from './scripted.ts';
+
+const vars = env as unknown as Record<string, string | undefined>;
+
+setProvider(scriptedProvider({ tokensPerSecond: Number(vars.SCRIPTED_TOKENS_PER_SECOND ?? '50') }));
+// TypeSafe's Jev, for Code Mode's models.classify() (TYPESAFE_API_KEY).
+setProvider(typesafeProvider());
+
+export function libraryModel(): string {
+	const mode = vars.LIBRARY_MODEL;
+	if (mode === 'live') return liveModel();
+	return `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
+}
+
+/** The real model, keyed by the `META_API_KEY` secret. */
+export function liveModel(): string {
+	return vars.LIVE_MODEL ?? 'meta/muse-spark-1.3-contributor';
+}

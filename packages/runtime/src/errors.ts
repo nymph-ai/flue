@@ -1162,31 +1162,11 @@ function isFlueError(value: unknown): value is FlueError {
 }
 
 /**
- * Wrapped failures are precisely the ones worth diagnosing, so both log
- * formatting and message flattening walk the full `cause` chain — bounded so
- * a pathological (or cyclic) chain can never wedge the renderer.
+ * Wrapped failures are precisely the ones worth diagnosing, so log
+ * formatting walks the full `cause` chain — bounded so a pathological (or
+ * cyclic) chain can never wedge the renderer.
  */
 const CAUSE_CHAIN_DEPTH_LIMIT = 8;
-
-/**
- * Flatten an error's message chain into a single string:
- * `msg (caused by: msg2 (caused by: msg3))`. For errors whose only surviving
- * field is `message` — most importantly errors thrown out of a Cloudflare
- * Durable Object, which workerd tunnels to the calling Worker message-only
- * (no stack, no `cause`, no class identity). Putting the chain *in* the
- * message is the only way the far side ever sees it.
- */
-export function describeErrorChain(err: unknown): string {
-	return describeChainLevel(err, 1, new Set([err]));
-}
-
-function describeChainLevel(err: unknown, depth: number, seen: Set<unknown>): string {
-	const message = err instanceof Error ? err.message : String(err);
-	if (!(err instanceof Error) || err.cause === undefined) return message;
-	if (depth >= CAUSE_CHAIN_DEPTH_LIMIT || seen.has(err.cause)) return message;
-	seen.add(err.cause);
-	return `${message} (caused by: ${describeChainLevel(err.cause, depth + 1, seen)})`;
-}
 
 function formatForLog(prefix: string, err: unknown): string {
 	const lines: string[] = [];
@@ -1246,17 +1226,6 @@ function appendCauseChain(
 		}
 		appendCauseChain(lines, cause, `${indent}  `, depth + 1, seen);
 	}
-}
-
-/**
- * Render one error the way the renderer's log path does — `[flue]` prefix,
- * full prose, complete cause chain with stacks. Exported for sites that must
- * log a full-fidelity error themselves because no renderer will ever hold it
- * (a Durable Object constructor failure crosses the workerd tunnel
- * message-only, and alarm-driven wakes have no HTTP render at all).
- */
-export function formatErrorForLog(err: unknown): string {
-	return formatForLog('[flue]', err);
 }
 
 const flueLog = {

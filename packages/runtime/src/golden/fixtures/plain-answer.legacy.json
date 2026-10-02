@@ -1,0 +1,150 @@
+{
+	"scenario": "plain-answer",
+	"replies": [
+		{
+			"ok": true,
+			"text": "Hello there.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"offset": "0000000000000000_0000000000000009",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dNUFJEOFJUMFpDSFZOQldCV0dS",
+					"role": "user",
+					"purpose": "user",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+					"timestamp": "2026-10-01T00:06:04.293Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Hi",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGMREX7WVH2NHZ3G2AQYN",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+					"turnId": "turn_01M3TCGMRBG85VXXGWZ9Z01BNK",
+					"timestamp": "2026-10-01T00:06:04.302Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Hello there.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+					"timestamp": "2026-10-01T00:06:04.310Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGMPSX3THKRPVEPDYEHGB"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGMPSX3THKRPVEPDYEHGB"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dNUFJEOFJUMFpDSFZOQldCV0dS",
+				"role": "user",
+				"purpose": "user",
+				"display": "visible",
+				"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+				"timestamp": "2026-10-01T00:06:04.293Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Hi",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"messageId": "entry_01M3TCGMREX7WVH2NHZ3G2AQYN",
+			"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+			"turnId": "turn_01M3TCGMRBG85VXXGWZ9Z01BNK",
+			"timestamp": "2026-10-01T00:06:04.302Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"messageId": "entry_01M3TCGMREX7WVH2NHZ3G2AQYN",
+			"kind": "text",
+			"delta": "Hello there.",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"messageId": "entry_01M3TCGMREX7WVH2NHZ3G2AQYN",
+			"timestamp": "2026-10-01T00:06:04.307Z",
+			"position": {
+				"batch": 8,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGMPW4YKXMF5JVDHTEYPV",
+			"submissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGMPRD8RT0ZCHVNBWBWGR",
+			"timestamp": "2026-10-01T00:06:04.310Z",
+			"position": {
+				"batch": 9,
+				"index": 0
+			}
+		}
+	]
+}

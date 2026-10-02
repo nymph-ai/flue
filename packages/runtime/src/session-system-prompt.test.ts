@@ -6,7 +6,13 @@
  * re-materialize it (regression: `rebuildCanonicalContext` once discarded it,
  * and the first real request went out with `systemPrompt: ""`).
  */
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
+import {
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxToolCall,
+	type Message,
+} from '@earendil-works/pi-ai';
 import { expect, it } from 'vitest';
 import { init, instrument, useModel, usePersistentState, useSandbox } from './index.ts';
 import { local, sqlite, start } from './node/index.ts';
@@ -238,11 +244,29 @@ it('keeps the configured prompt after an overflow compaction', async () => {
 	const faux = fauxProvider({
 		models: [{ id: 'model', contextWindow: 32_768, maxTokens: 4_096 }],
 	});
-	faux.setResponses([
-		fauxAssistantMessage([fauxText('First response.')], { stopReason: 'stop' }),
-		fauxAssistantMessage([fauxText('Completed response.')], { stopReason: 'stop' }),
-		fauxAssistantMessage([fauxText('Conversation summary.')], { stopReason: 'stop' }),
-	]);
+	// Routed on the request: Pi compacts the overflowing context before it asks
+	// for the response (the legacy loop asked first).
+	let answers = 0;
+	faux.setResponses(
+		Array.from({ length: 8 }, () => (context: { messages: Message[] }) => {
+			const last = context.messages.at(-1);
+			const content = last?.role === 'user' ? last.content : undefined;
+			const text =
+				typeof content === 'string'
+					? content
+					: (content ?? []).map((part) => ('text' in part ? part.text : '')).join('');
+			if (/summar/i.test(text)) {
+				return fauxAssistantMessage([fauxText('Conversation summary.')], { stopReason: 'stop' });
+			}
+			answers += 1;
+			return fauxAssistantMessage(
+				[fauxText(answers === 1 ? 'First response.' : 'Completed response.')],
+				{
+					stopReason: 'stop',
+				},
+			);
+		}),
+	);
 	const { observations, dispose } = recordingObservations();
 	const runtime = await start({
 		agents: [CompactAgent],

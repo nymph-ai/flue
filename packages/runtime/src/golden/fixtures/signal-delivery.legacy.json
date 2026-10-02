@@ -1,0 +1,162 @@
+{
+	"scenario": "signal-delivery",
+	"replies": [
+		{
+			"ok": true,
+			"text": "Noted the alert.",
+			"data": {},
+			"metadata": null
+		}
+	],
+	"history": {
+		"status": 200,
+		"body": {
+			"v": 1,
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"offset": "0000000000000000_0000000000000009",
+			"messages": [
+				{
+					"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMVdBV1BTUDZIRU04RzRXQzBX",
+					"role": "system",
+					"purpose": "dispatch",
+					"display": "diagnostic",
+					"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+					"signal": {
+						"tagName": "alert",
+						"attributes": {
+							"severity": "high"
+						}
+					},
+					"timestamp": "2026-10-01T00:06:04.607Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Disk usage is at 95%.",
+							"state": "done"
+						}
+					]
+				},
+				{
+					"id": "entry_01M3TCGN21ZW7AA0J2ERD70Z8P",
+					"role": "assistant",
+					"purpose": "assistant",
+					"display": "visible",
+					"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+					"turnId": "turn_01M3TCGN21YD5GK820VZCFMNSJ",
+					"timestamp": "2026-10-01T00:06:04.609Z",
+					"parts": [
+						{
+							"type": "text",
+							"text": "Noted the alert.",
+							"state": "done"
+						}
+					]
+				}
+			],
+			"settlements": [
+				{
+					"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+					"outcome": "completed",
+					"answeredBySubmissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+					"timestamp": "2026-10-01T00:06:04.612Z"
+				}
+			],
+			"incarnation": "inc_01M3TCGN1W9R10HF30KEZ9RCME"
+		}
+	},
+	"updates": [
+		{
+			"type": "stream-checkpoint",
+			"incarnation": "inc_01M3TCGN1W9R10HF30KEZ9RCME"
+		},
+		{
+			"type": "conversation-reset",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"snapshot": {
+				"v": 1,
+				"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+				"offset": "0000000000000000_0000000000000000",
+				"messages": [],
+				"settlements": []
+			},
+			"position": {
+				"batch": 0,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-appended",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"message": {
+				"id": "entry_dispatch_c3ViXzAxTTNUQ0dOMVdBV1BTUDZIRU04RzRXQzBX",
+				"role": "system",
+				"purpose": "dispatch",
+				"display": "diagnostic",
+				"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+				"signal": {
+					"tagName": "alert",
+					"attributes": {
+						"severity": "high"
+					}
+				},
+				"timestamp": "2026-10-01T00:06:04.607Z",
+				"parts": [
+					{
+						"type": "text",
+						"text": "Disk usage is at 95%.",
+						"state": "done"
+					}
+				]
+			},
+			"position": {
+				"batch": 1,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-started",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"messageId": "entry_01M3TCGN21ZW7AA0J2ERD70Z8P",
+			"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+			"turnId": "turn_01M3TCGN21YD5GK820VZCFMNSJ",
+			"timestamp": "2026-10-01T00:06:04.609Z",
+			"position": {
+				"batch": 4,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-delta",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"messageId": "entry_01M3TCGN21ZW7AA0J2ERD70Z8P",
+			"kind": "text",
+			"delta": "Noted the alert.",
+			"position": {
+				"batch": 6,
+				"index": 0
+			}
+		},
+		{
+			"type": "message-completed",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"messageId": "entry_01M3TCGN21ZW7AA0J2ERD70Z8P",
+			"timestamp": "2026-10-01T00:06:04.611Z",
+			"position": {
+				"batch": 8,
+				"index": 0
+			}
+		},
+		{
+			"type": "submission-settled",
+			"conversationId": "conv_01M3TCGN1X3WJC26FRHCV40P07",
+			"submissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+			"outcome": "completed",
+			"answeredBySubmissionId": "sub_01M3TCGN1WAWPSP6HEM8G4WC0W",
+			"timestamp": "2026-10-01T00:06:04.612Z",
+			"position": {
+				"batch": 9,
+				"index": 0
+			}
+		}
+	]
+}

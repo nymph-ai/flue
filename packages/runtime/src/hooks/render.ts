@@ -11,6 +11,8 @@ import type {
 	SubagentDefinition,
 } from '../types.ts';
 import { type RenderFrame, type RenderStateContext, renderWithFrame } from './frame.ts';
+import { type CodeModeDeclaration, readCodeModeDeclaration } from './use-code-mode.ts';
+import { type QuestionsDeclaration, readQuestionsDeclaration } from './use-questions.ts';
 
 /**
  * The props the runtime passes to the root agent function. On a bare render
@@ -81,7 +83,14 @@ export interface AgentRenderStructure {
 export function renderAgentFunctionWithStructure(
 	agent: AgentFunction<AgentProps>,
 	state?: RenderStateContext,
-): { config: AgentRuntimeConfig; structure: AgentRenderStructure } {
+): {
+	config: AgentRuntimeConfig;
+	structure: AgentRenderStructure;
+	/** The render's `useCodeMode()` declaration, read by the Pi registry bridge. */
+	codeMode?: CodeModeDeclaration;
+	/** The render's `useQuestions()` declaration, read by the entity question handler. */
+	questions?: QuestionsDeclaration;
+} {
 	const props = agentPropsFor(state);
 	const { result, frame } = renderWithFrame(() => agent(props), state);
 	assertAgentInstruction(result);
@@ -98,7 +107,11 @@ export function renderAgentFunctionWithStructure(
 	}
 	const instructions = composeAgentDocument(result, frame);
 	const tools = frame.tools;
+	const codeMode = readCodeModeDeclaration(frame);
+	const questions = readQuestionsDeclaration(frame);
 	return {
+		...(codeMode !== undefined ? { codeMode } : {}),
+		...(questions !== undefined ? { questions } : {}),
 		config: {
 			...(frame.model !== undefined ? { model: frame.model } : {}),
 			...(instructions !== undefined ? { instructions } : {}),

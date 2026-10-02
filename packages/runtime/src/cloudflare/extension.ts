@@ -3,34 +3,27 @@ import type { DurableObject } from 'cloudflare:workers';
 const CLOUDFLARE_EXTENSION = Symbol.for('@flue/runtime/cloudflare-extension');
 
 /**
- * Minimal structural view of the Cloudflare Agents SDK `Agent` base class
- * that Flue passes to `extend()` callbacks. `@flue/runtime` does not depend
- * on the `agents` package, so this models the documented extension surface
- * (state, lifecycle, scheduling, queueing) instead of importing the real
- * class. Pass an explicit `TBase` to `extend()` to type against a richer
- * class shape.
+ * Minimal structural view of the class Flue passes to `extend()` callbacks:
+ * a `DurableObject` composed with the Cloudflare Agents SDK `Lifecycle`
+ * (`agents/lifecycle`). An extension installs SDK capabilities that do not
+ * use the alarm (`State` from `agents/state`, `WebSockets` from
+ * `agents/websockets`) with `this.lifecycle.use(...)` in its constructor.
+ * Capabilities that ride Lifecycle's job queue (`Scheduler`, `Queue`,
+ * `Tasks`) are not supported: Flue owns the object's alarm. `@flue/runtime`
+ * does not depend on the `agents` package, so this models only that surface;
+ * pass an explicit `TBase` to `extend()` to type against a richer class shape.
  */
-export interface CloudflareAgentLike<State = Record<string, unknown>> {
-	state: State;
-	setState(state: State): void;
-	onStart(props?: Record<string, unknown>): Promise<void> | void;
-	schedule<T = string>(
-		when: Date | string | number,
-		callback: keyof this,
-		payload?: T,
-		options?: { retry?: unknown; idempotent?: boolean },
-	): Promise<unknown>;
-	scheduleEvery<T = string>(
-		intervalSeconds: number,
-		callback: keyof this,
-		payload?: T,
-		options?: { retry?: unknown },
-	): Promise<unknown>;
-	queue<T = unknown>(
-		callback: keyof this,
-		payload: T,
-		options?: { retry?: unknown },
-	): Promise<string>;
+export interface CloudflareAgentLike {
+	/** The name the object was addressed by. */
+	readonly name: string;
+	readonly lifecycle: {
+		readonly name: string;
+		/** Add a capability; only before startup, so call it from a constructor. */
+		use(capability: object): unknown;
+		start(): Promise<void>;
+	};
+	/** Runs once per in-memory lifetime, after capabilities start and before work is handled. */
+	onStart?(props?: Record<string, unknown>): Promise<void> | void;
 }
 
 export type ExtensionClass<TInstance extends object = CloudflareAgentLike> = new (
@@ -39,8 +32,8 @@ export type ExtensionClass<TInstance extends object = CloudflareAgentLike> = new
 
 /**
  * The class shape Flue hands to `base` and `wrap`: every class the generated
- * Cloudflare entry passes in extends the Agents SDK `Agent`, which is a real,
- * branded `DurableObject`. The `cloudflare:workers` import is type-only, so
+ * Cloudflare entry passes in is a real, branded `DurableObject` with an
+ * Agents SDK `Lifecycle`. The `cloudflare:workers` import is type-only, so
  * this module's runtime graph stays free of that virtual module; consumers of
  * `@flue/runtime/cloudflare` are expected to have Cloudflare's workers types
  * configured (any Wrangler project does).
