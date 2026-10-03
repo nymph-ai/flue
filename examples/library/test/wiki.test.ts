@@ -1182,6 +1182,73 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(deliveriesData.total).toBeGreaterThanOrEqual(1);
 			expect(deliveriesData.deliveries[0]?.status).toBe('delivered');
 			expect(deliveriesData.deliveries[0]?.statusCode).toBe(200);
+
+			// 8. Verify audit logs
+			const resAudit = await app.request('/mcp/audit-logs');
+			expect(resAudit.status).toBe(200);
+			const auditData = (await resAudit.json()) as {
+				total: number;
+				logs: Array<{ category: string; details: any }>;
+			};
+			expect(auditData.total).toBeGreaterThanOrEqual(1);
+			const categories = auditData.logs.map((l) => l.category);
+			expect(categories).toContain('events/subscribe:received');
+			expect(categories).toContain('events/subscribe:success');
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('handles OpenAI Standard Webhooks whsec_ URL-safe secrets and challenge verification', async () => {
+		const originalFetch = globalThis.fetch;
+		vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+			const urlStr =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (
+				urlStr.startsWith('http://localhost') ||
+				urlStr.startsWith('https://library.nymphai.workers.dev')
+			) {
+				const req = input instanceof Request ? input : new Request(urlStr, init);
+				return app.fetch(req);
+			}
+			return originalFetch(input, init);
+		});
+
+		try {
+			await app.request('/mcp/test-callback', { method: 'DELETE' });
+
+			// Standard OpenAI whsec_ secret with URL-safe base64 (- and _) and unpadded
+			const urlSafeSecret = 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-1_abc99';
+			const resSub = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 10,
+					method: 'events/subscribe',
+					params: {
+						delivery: {
+							type: 'webhook',
+							url: `http://localhost/mcp/test-callback?secret=${urlSafeSecret}`,
+							secret: urlSafeSecret,
+						},
+						filter: { taskId: 'task-test-urlsafe' },
+					},
+				}),
+			});
+			expect(resSub.status).toBe(200);
+			const subJson = (await resSub.json()) as any;
+			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+
+			const resInbox = await app.request('/mcp/test-callback');
+			const inbox = (await resInbox.json()) as {
+				callbacks: Array<{ headers: Record<string, string>; payload: any }>;
+			};
+			const chg = inbox.callbacks.find((c) => c.payload?.type === 'verification');
+			expect(chg).toBeDefined();
+			expect(chg?.headers['x-mcp-subscription-id']).toBe(subJson.result.subscriptionId);
+			expect(chg?.headers['mcp-method']).toBe('events/subscribe');
+			expect(chg?.headers['webhook-signature']).toMatch(/^v1,/);
 		} finally {
 			vi.unstubAllGlobals();
 		}

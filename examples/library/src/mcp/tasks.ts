@@ -36,21 +36,40 @@ export interface TaskStoreOptions {
 	ctx?: DurableObjectStateLike;
 }
 
-function decodeWebhookSecret(secret: string): Uint8Array {
-	if (secret.startsWith('whsec_')) {
-		try {
-			const b64 = secret.slice('whsec_'.length);
-			const binary = atob(b64);
-			const bytes = new Uint8Array(binary.length);
-			for (let i = 0; i < binary.length; i++) {
-				bytes[i] = binary.charCodeAt(i);
-			}
-			return bytes;
-		} catch {
-			return new TextEncoder().encode(secret);
-		}
+export function decodeWebhookSecret(secret: string): Uint8Array {
+	let raw = secret;
+	if (raw.startsWith('whsec_')) {
+		raw = raw.slice('whsec_'.length);
 	}
-	return new TextEncoder().encode(secret);
+	try {
+		let b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+		while (b64.length % 4 !== 0) {
+			b64 += '=';
+		}
+		const binary = atob(b64);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) {
+			bytes[i] = binary.charCodeAt(i);
+		}
+		return bytes;
+	} catch {
+		return new TextEncoder().encode(secret);
+	}
+}
+
+export async function deriveSubscriptionId(
+	callbackUrl: string,
+	eventName = 'task_changed',
+	filter?: { taskId?: string; correlationId?: string },
+): Promise<string> {
+	const filterKey = `${filter?.taskId ?? ''}:${filter?.correlationId ?? ''}`;
+	const key = `${eventName}:${callbackUrl}:${filterKey}`;
+	const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+	const hex = Array.from(new Uint8Array(hashBuffer))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.slice(0, 16)
+		.join('');
+	return `sub_${hex}`;
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {
@@ -134,6 +153,12 @@ export class TaskStore {
 	private readonly subscriptions = new Map<string, SubscriptionRecord>();
 	private readonly events: TaskChangedEvent[] = [];
 	private readonly deliveryRecords: DeliveryRecord[] = [];
+	private readonly auditLogs: Array<{
+		id: string;
+		category: string;
+		details: unknown;
+		timestamp: string;
+	}> = [];
 	private readonly vaultFiles = new Map<string, string>();
 	private readonly getVault: () => LibraryVault;
 	private readonly sql?: SqlStorageLike;
@@ -151,6 +176,15 @@ export class TaskStore {
 	private initSchema(): void {
 		if (!this.sql) return;
 		try {
+			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_audit_logs (
+				id TEXT PRIMARY KEY,
+				category TEXT NOT NULL,
+				details TEXT NOT NULL,
+				timestamp TEXT NOT NULL
+			)`);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_mcp_audit_logs_timestamp ON mcp_audit_logs(timestamp)`,
+			);
 			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_tasks (
 				id TEXT PRIMARY KEY,
 				correlation_id TEXT,
@@ -238,6 +272,48 @@ export class TaskStore {
 		} catch (error) {
 			console.error('[flue:mcp] failed to initialize SQLite schema', error);
 		}
+	}
+
+	logAudit(category: string, details: Record<string, unknown>): void {
+		const id = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+		const timestamp = new Date().toISOString();
+		if (this.sql) {
+			try {
+				this.sql.exec(
+					`INSERT INTO mcp_audit_logs (id, category, details, timestamp) VALUES (?, ?, ?, ?)`,
+					id,
+					category,
+					JSON.stringify(details),
+					timestamp,
+				);
+			} catch (e) {
+				console.error('Failed to write audit log to sqlite:', e);
+			}
+		} else {
+			this.auditLogs.unshift({ id, category, details, timestamp });
+			if (this.auditLogs.length > 200) this.auditLogs.pop();
+		}
+	}
+
+	getAuditLogs(
+		limit = 50,
+	): Array<{ id: string; category: string; details: unknown; timestamp: string }> {
+		if (this.sql) {
+			try {
+				const rows = this.sql
+					.exec(`SELECT * FROM mcp_audit_logs ORDER BY timestamp DESC LIMIT ?`, limit)
+					.toArray();
+				return rows.map((r) => ({
+					id: String(r.id),
+					category: String(r.category),
+					details: r.details ? JSON.parse(String(r.details)) : null,
+					timestamp: String(r.timestamp),
+				}));
+			} catch {
+				return [];
+			}
+		}
+		return this.auditLogs.slice(0, limit);
 	}
 
 	saveNote(path: string, content: string): void {
@@ -866,11 +942,13 @@ export class TaskStore {
 			'webhook-id': event.eventId,
 			'webhook-timestamp': timestampSeconds,
 			'x-mcp-subscription-id': sub.id,
+			'X-MCP-Subscription-Id': sub.id,
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),
 			'x-mcp-cursor': cursor,
 			'x-mcp-event-type': event.event,
+			'user-agent': 'NymphAI-Knowledge-Vault/2.0 (MCP 2026-07-28)',
 		};
 
 		if (sub.secret) {
@@ -890,6 +968,14 @@ export class TaskStore {
 		const deliveryId = `del_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const now = new Date().toISOString();
 
+		this.logAudit('mcp:deliverEvent:attempt', {
+			deliveryId,
+			subId: sub.id,
+			callbackUrl: sub.callbackUrl,
+			eventId: event.eventId,
+			taskId: event.taskId,
+		});
+
 		try {
 			console.log(
 				`[mcp:deliverEvent] Delivering event ${event.eventId} (status=${event.status}) to ${sub.callbackUrl}`,
@@ -900,6 +986,16 @@ export class TaskStore {
 				body: payloadString,
 			});
 			console.log(`[mcp:deliverEvent] Delivery ${deliveryId} response: status=${res.status}`);
+
+			this.logAudit('mcp:deliverEvent:response', {
+				deliveryId,
+				subId: sub.id,
+				callbackUrl: sub.callbackUrl,
+				eventId: event.eventId,
+				taskId: event.taskId,
+				status: res.status,
+				ok: res.ok,
+			});
 
 			if (this.sql) {
 				this.sql.exec(
@@ -930,6 +1026,14 @@ export class TaskStore {
 			}
 		} catch (err) {
 			const errMsg = err instanceof Error ? err.message : String(err);
+			this.logAudit('mcp:deliverEvent:error', {
+				deliveryId,
+				subId: sub.id,
+				callbackUrl: sub.callbackUrl,
+				eventId: event.eventId,
+				taskId: event.taskId,
+				error: errMsg,
+			});
 			if (this.sql) {
 				this.sql.exec(
 					`INSERT INTO mcp_deliveries (id, event_id, task_id, revision, subscription_id, status, error, attempt, timestamp)
@@ -1318,6 +1422,7 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 			filter?: { taskId?: string; correlationId?: string };
 			fromRevision?: number;
 			cursor?: string;
+			subscriptionId?: string;
 		}): Promise<{
 			subscription: SubscriptionRecord;
 			replayedEvents: TaskChangedEvent[];
@@ -1349,6 +1454,16 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 
 		async listMcpNotes(prefix?: string): Promise<string[]> {
 			return this.getMcpStore().listNotes(prefix);
+		}
+
+		async logMcpAudit(category: string, details: Record<string, unknown>): Promise<void> {
+			this.getMcpStore().logAudit(category, details);
+		}
+
+		async getMcpAuditLogs(
+			limit?: number,
+		): Promise<Array<{ id: string; category: string; details: unknown; timestamp: string }>> {
+			return this.getMcpStore().getAuditLogs(limit);
 		}
 	} as unknown as TBase;
 }

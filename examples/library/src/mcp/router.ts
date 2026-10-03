@@ -13,6 +13,7 @@ import { LibraryVault } from '../wiki/storage.ts';
 import { getOpenApiSpec } from './openapi.ts';
 import {
 	constantTimeEqual,
+	deriveSubscriptionId,
 	getOrCreateTaskStore,
 	signPayload,
 	signStandardWebhook,
@@ -248,6 +249,7 @@ export interface McpTaskStore {
 		filter?: { taskId?: string; correlationId?: string };
 		fromRevision?: number;
 		cursor?: string;
+		subscriptionId?: string;
 	}):
 		| Promise<{
 				subscription: SubscriptionRecord;
@@ -265,6 +267,12 @@ export interface McpTaskStore {
 	getDeliveryRecords(taskId?: string): Promise<DeliveryRecord[]> | DeliveryRecord[];
 	getNote?(path: string): Promise<string | null> | string | null;
 	listNotes?(prefix?: string): Promise<string[]> | string[];
+	logAudit?(category: string, details: Record<string, unknown>): Promise<void> | void;
+	getAuditLogs?(
+		limit?: number,
+	):
+		| Promise<Array<{ id: string; category: string; details: unknown; timestamp: string }>>
+		| Array<{ id: string; category: string; details: unknown; timestamp: string }>;
 }
 
 function rpcSuccess(id: unknown, result: unknown): Response {
@@ -342,6 +350,8 @@ export function createMcpRouter(
 				getDeliveryRecords: (taskId) => stub.getMcpDeliveries(taskId),
 				getNote: (path) => stub.getMcpNote(path),
 				listNotes: (prefix) => stub.listMcpNotes(prefix),
+				logAudit: (category, details) => stub.logMcpAudit(category, details),
+				getAuditLogs: (limit) => stub.getMcpAuditLogs(limit),
 			};
 		}
 		return resolveTaskStore();
@@ -413,6 +423,13 @@ export function createMcpRouter(
 		return c.json(getOpenApiSpec(origin));
 	});
 
+	router.get('/audit-logs', async (c) => {
+		const store = resolveStore(c.env);
+		const limit = Number(c.req.query('limit')) || 50;
+		const logs = store.getAuditLogs ? await store.getAuditLogs(limit) : [];
+		return c.json({ total: logs.length, logs });
+	});
+
 	const handleTestCallback = async (c: any) => {
 		const secret = c.req.query('secret');
 		const sigHeader = c.req.header('x-mcp-event-signature');
@@ -477,17 +494,22 @@ export function createMcpRouter(
 	router.post('/test-callback', handleTestCallback);
 	router.post('/mcp/test-callback', handleTestCallback);
 
-	router.get('/test-callback', (c) => {
+	const getTestCallback = (c: any) => {
 		return c.json({
 			total: testCallbacks.length,
 			callbacks: testCallbacks,
 		});
-	});
+	};
 
-	router.delete('/test-callback', (c) => {
+	const deleteTestCallback = (c: any) => {
 		testCallbacks.length = 0;
 		return c.json({ cleared: true });
-	});
+	};
+
+	router.get('/test-callback', getTestCallback);
+	router.get('/mcp/test-callback', getTestCallback);
+	router.delete('/test-callback', deleteTestCallback);
+	router.delete('/mcp/test-callback', deleteTestCallback);
 
 	// POST /mcp — Unified JSON-RPC 2.0 Handler
 	router.post('/', async (c) => {
@@ -637,6 +659,22 @@ export function createMcpRouter(
 						? String(rawCursor)
 						: undefined;
 
+			const subId =
+				params.subscriptionId ??
+				params.subscription_id ??
+				(await deriveSubscriptionId(callbackUrl, 'task_changed', filter));
+
+			if (taskStore.logAudit) {
+				await taskStore.logAudit('events/subscribe:received', {
+					subId,
+					callbackUrl,
+					secretPresent: Boolean(secret),
+					filter,
+					cursor: cursorParam,
+					rawParams: params,
+				});
+			}
+
 			// If secret is present, perform the standard callback verification challenge
 			if (secret && !params.skipVerification) {
 				const challenge = `chg_${crypto.randomUUID().replace(/-/g, '')}`;
@@ -651,8 +689,13 @@ export function createMcpRouter(
 					'content-type': 'application/json',
 					'webhook-id': chgId,
 					'webhook-timestamp': chgTimestamp,
+					'x-mcp-subscription-id': subId,
+					'X-MCP-Subscription-Id': subId,
 					'x-mcp-event-id': chgId,
 					'x-mcp-event-type': 'verification',
+					'mcp-method': 'events/subscribe',
+					'Mcp-Method': 'events/subscribe',
+					'user-agent': 'NymphAI-Knowledge-Vault/2.0 (MCP 2026-07-28)',
 				};
 
 				try {
@@ -665,6 +708,16 @@ export function createMcpRouter(
 					chgHeaders['x-mcp-event-signature'] = await signPayload(secret, challengePayload);
 				} catch (signErr) {
 					console.error('[mcp:events/subscribe] Failed to sign verification challenge:', signErr);
+				}
+
+				if (taskStore.logAudit) {
+					await taskStore.logAudit('events/subscribe:challenge_attempt', {
+						subId,
+						callbackUrl,
+						chgId,
+						challenge,
+						headers: chgHeaders,
+					});
 				}
 
 				try {
@@ -700,7 +753,24 @@ export function createMcpRouter(
 						`[mcp:events/subscribe] Challenge response HTTP ${chgRes.status}: body=${chgText}`,
 					);
 
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_response', {
+							subId,
+							callbackUrl,
+							status: chgRes.status,
+							body: chgText,
+						});
+					}
+
 					if (!chgRes.ok) {
+						if (taskStore.logAudit) {
+							await taskStore.logAudit('events/subscribe:challenge_failed', {
+								subId,
+								callbackUrl,
+								status: chgRes.status,
+								body: chgText,
+							});
+						}
 						return rpcError(
 							id,
 							-32015,
@@ -723,6 +793,14 @@ export function createMcpRouter(
 						console.warn(
 							`[mcp:events/subscribe] Challenge echo mismatch: expected=${challenge}, got=${echoed}`,
 						);
+						if (taskStore.logAudit) {
+							await taskStore.logAudit('events/subscribe:challenge_mismatch', {
+								subId,
+								callbackUrl,
+								expected: challenge,
+								received: echoed,
+							});
+						}
 						return rpcError(id, -32015, 'Callback verification failed: challenge_failed', {
 							reason: 'challenge_failed',
 							expected: challenge,
@@ -730,11 +808,24 @@ export function createMcpRouter(
 						});
 					}
 					console.log('[mcp:events/subscribe] Callback verification succeeded');
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_success', {
+							subId,
+							callbackUrl,
+						});
+					}
 				} catch (fetchErr) {
 					console.error(
 						`[mcp:events/subscribe] Network error during callback verification for ${callbackUrl}:`,
 						fetchErr,
 					);
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_network_error', {
+							subId,
+							callbackUrl,
+							error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+						});
+					}
 					return rpcError(
 						id,
 						-32015,
@@ -745,12 +836,22 @@ export function createMcpRouter(
 			}
 
 			const { subscription, replayedEvents, cursor } = await taskStore.subscribe({
+				subscriptionId: subId,
 				callbackUrl,
 				secret,
 				filter,
 				fromRevision,
 				cursor: cursorParam,
 			});
+
+			if (taskStore.logAudit) {
+				await taskStore.logAudit('events/subscribe:success', {
+					subId: subscription.id,
+					callbackUrl: subscription.callbackUrl,
+					cursor,
+					replayedCount: replayedEvents.length,
+				});
+			}
 
 			return rpcSuccess(id, {
 				subscriptionId: subscription.id,
