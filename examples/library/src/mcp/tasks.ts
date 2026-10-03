@@ -942,7 +942,6 @@ export class TaskStore {
 			'webhook-id': event.eventId,
 			'webhook-timestamp': timestampSeconds,
 			'x-mcp-subscription-id': sub.id,
-			'X-MCP-Subscription-Id': sub.id,
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),

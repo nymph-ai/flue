@@ -690,11 +690,9 @@ export function createMcpRouter(
 					'webhook-id': chgId,
 					'webhook-timestamp': chgTimestamp,
 					'x-mcp-subscription-id': subId,
-					'X-MCP-Subscription-Id': subId,
 					'x-mcp-event-id': chgId,
 					'x-mcp-event-type': 'verification',
 					'mcp-method': 'events/subscribe',
-					'Mcp-Method': 'events/subscribe',
 					'user-agent': 'NymphAI-Knowledge-Vault/2.0 (MCP 2026-07-28)',
 				};
 
