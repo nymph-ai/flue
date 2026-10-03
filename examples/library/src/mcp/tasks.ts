@@ -5,6 +5,7 @@
  * Backed by Cloudflare Durable Object SQLite (ctx.storage.sql) with in-memory fallback.
  */
 import { liveModel } from '../model.ts';
+import { slugify } from '../wiki/okf.ts';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
 import type { OKFStoryNote } from '../wiki/types.ts';
@@ -66,14 +67,12 @@ export class TaskStore {
 	private readonly subscriptions = new Map<string, SubscriptionRecord>();
 	private readonly events: TaskChangedEvent[] = [];
 	private readonly deliveryRecords: DeliveryRecord[] = [];
+	private readonly vaultFiles = new Map<string, string>();
 	private readonly getVault: () => LibraryVault;
 	private readonly sql?: SqlStorageLike;
 	private readonly ctx?: DurableObjectStateLike;
 
-	constructor(
-		getVault: () => LibraryVault = getOrCreateVault,
-		options?: TaskStoreOptions,
-	) {
+	constructor(getVault: () => LibraryVault = getOrCreateVault, options?: TaskStoreOptions) {
 		this.getVault = getVault;
 		this.sql = options?.sql;
 		this.ctx = options?.ctx;
@@ -145,9 +144,21 @@ export class TaskStore {
 				attempt INTEGER NOT NULL DEFAULT 1,
 				timestamp TEXT NOT NULL
 			)`);
-			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_events_task ON mcp_events(task_id, revision)`);
-			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_events_correlation ON mcp_events(correlation_id)`);
-			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_deliveries_task ON mcp_deliveries(task_id)`);
+			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_vault_files (
+				path TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_mcp_events_task ON mcp_events(task_id, revision)`,
+			);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_mcp_events_correlation ON mcp_events(correlation_id)`,
+			);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_mcp_deliveries_task ON mcp_deliveries(task_id)`,
+			);
+			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_vault_files_path ON mcp_vault_files(path)`);
 
 			// Resume any pending or interrupted tasks from prior boot
 			const pending = this.sql
@@ -160,6 +171,105 @@ export class TaskStore {
 		} catch (error) {
 			console.error('[flue:mcp] failed to initialize SQLite schema', error);
 		}
+	}
+
+	saveNote(path: string, content: string): void {
+		const cleanPath = path.replace(/^\/+/, '');
+		const now = new Date().toISOString();
+		if (this.sql) {
+			this.sql.exec(
+				`INSERT INTO mcp_vault_files (path, content, updated_at)
+				 VALUES (?, ?, ?)
+				 ON CONFLICT(path) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+				cleanPath,
+				content,
+				now,
+			);
+		} else {
+			this.vaultFiles.set(cleanPath, content);
+		}
+	}
+
+	getNote(path: string): string | null {
+		const cleanPath = path.replace(/^\/+/, '');
+		if (this.sql) {
+			const rows = this.sql
+				.exec(`SELECT content FROM mcp_vault_files WHERE path = ?`, cleanPath)
+				.toArray();
+			const content = rows[0]?.content;
+			if (content !== undefined && content !== null) {
+				return String(content);
+			}
+
+			// Fallback: check mcp_results table for matching artifact
+			const resultRows = this.sql
+				.exec(`SELECT content, artifacts FROM mcp_results WHERE artifacts LIKE ?`, `%${cleanPath}%`)
+				.toArray();
+			for (const r of resultRows) {
+				try {
+					const artifacts = JSON.parse(String(r.artifacts)) as string[];
+					if (Array.isArray(artifacts) && artifacts.includes(cleanPath)) {
+						return String(r.content ?? '');
+					}
+				} catch {
+					// continue
+				}
+			}
+			return null;
+		}
+
+		if (this.vaultFiles.has(cleanPath)) {
+			return this.vaultFiles.get(cleanPath)!;
+		}
+
+		for (const r of this.results.values()) {
+			if (r.artifacts.includes(cleanPath)) {
+				return r.content;
+			}
+		}
+
+		return null;
+	}
+
+	listNotes(prefix = ''): string[] {
+		const paths = new Set<string>();
+		if (this.sql) {
+			let query = `SELECT path FROM mcp_vault_files`;
+			const bindings: unknown[] = [];
+			if (prefix) {
+				query += ` WHERE path LIKE ?`;
+				bindings.push(`${prefix}%`);
+			}
+			const rows = this.sql.exec(query, ...bindings).toArray();
+			for (const r of rows) {
+				if (r.path) paths.add(String(r.path));
+			}
+
+			// Also collect artifacts from mcp_results
+			const resultRows = this.sql.exec(`SELECT artifacts FROM mcp_results`).toArray();
+			for (const r of resultRows) {
+				try {
+					const artifacts = JSON.parse(String(r.artifacts)) as string[];
+					if (Array.isArray(artifacts)) {
+						for (const a of artifacts) {
+							if (a.startsWith(prefix)) paths.add(a);
+						}
+					}
+				} catch {
+					// continue
+				}
+			}
+		} else {
+			for (const p of this.vaultFiles.keys()) {
+				if (p.startsWith(prefix)) paths.add(p);
+			}
+			for (const r of this.results.values()) {
+				for (const a of r.artifacts) {
+					if (a.startsWith(prefix)) paths.add(a);
+				}
+			}
+		}
+		return Array.from(paths).sort();
 	}
 
 	private scheduleExecution(taskId: string): void {
@@ -347,7 +457,9 @@ export class TaskStore {
 	 */
 	acknowledgeResult(taskId: string, receipt?: unknown): boolean {
 		if (this.sql) {
-			const rows = this.sql.exec(`SELECT task_id FROM mcp_results WHERE task_id = ?`, taskId).toArray();
+			const rows = this.sql
+				.exec(`SELECT task_id FROM mcp_results WHERE task_id = ?`, taskId)
+				.toArray();
 			if (!rows[0]) return false;
 			const now = new Date().toISOString();
 			const rcpt = JSON.stringify(receipt ?? { clientAcknowledged: true });
@@ -591,7 +703,8 @@ export class TaskStore {
 				revision: Number(r.revision),
 				subscriptionId: String(r.subscription_id),
 				status: r.status as 'delivered' | 'failed',
-				statusCode: r.status_code !== null && r.status_code !== undefined ? Number(r.status_code) : undefined,
+				statusCode:
+					r.status_code !== null && r.status_code !== undefined ? Number(r.status_code) : undefined,
 				error: r.error ? String(r.error) : undefined,
 				attempt: Number(r.attempt ?? 1),
 				timestamp: String(r.timestamp),
@@ -651,8 +764,7 @@ export class TaskStore {
 			// Dispatch to all active subscriptions matching filter
 			for (const sub of this.subscriptions.values()) {
 				if (sub.filter?.taskId && sub.filter.taskId !== event.taskId) continue;
-				if (sub.filter?.correlationId && sub.filter.correlationId !== event.correlationId)
-					continue;
+				if (sub.filter?.correlationId && sub.filter.correlationId !== event.correlationId) continue;
 				const p = this.deliverEvent(sub, event);
 				if (this.ctx?.waitUntil) this.ctx.waitUntil(p);
 				else void p;
@@ -836,6 +948,21 @@ export class TaskStore {
 
 				const path = await vault.saveStoryNote(story);
 				const content = (await vault.getNote(path)) ?? '';
+				this.saveNote(path, content);
+
+				for (const concept of story.concepts) {
+					const conceptTitle = concept.replace(/^\[\[/, '').replace(/\]\]$/, '').trim();
+					const slug = slugify(conceptTitle);
+					const cPath = `concepts/${slug}.md`;
+					const cContent = (await vault.getNote(cPath)) ?? '';
+					if (cContent) {
+						this.saveNote(cPath, cContent);
+					}
+				}
+				const idxContent = (await vault.getNote('index.md')) ?? '';
+				if (idxContent) {
+					this.saveNote('index.md', idxContent);
+				}
 
 				const result: TaskResult = {
 					taskId,
@@ -1054,10 +1181,10 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 			if (!this.mcpTaskStore) {
 				const ctx = this.ctx ?? (this as any).ctx;
 				const env = this.env ?? (this as any).env;
-				this.mcpTaskStore = new TaskStore(
-					() => getOrCreateVault(env),
-					{ sql: ctx?.storage?.sql, ctx },
-				);
+				this.mcpTaskStore = new TaskStore(() => getOrCreateVault(env), {
+					sql: ctx?.storage?.sql,
+					ctx,
+				});
 			}
 			return this.mcpTaskStore;
 		}
@@ -1092,7 +1219,11 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 			filter?: { taskId?: string; correlationId?: string };
 			fromRevision?: number;
 			cursor?: string;
-		}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string }> {
+		}): Promise<{
+			subscription: SubscriptionRecord;
+			replayedEvents: TaskChangedEvent[];
+			cursor: string;
+		}> {
 			return this.getMcpStore().subscribe(params);
 		}
 
@@ -1111,6 +1242,14 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 
 		async getMcpDeliveries(taskId?: string): Promise<DeliveryRecord[]> {
 			return this.getMcpStore().getDeliveryRecords(taskId);
+		}
+
+		async getMcpNote(path: string): Promise<string | null> {
+			return this.getMcpStore().getNote(path);
+		}
+
+		async listMcpNotes(prefix?: string): Promise<string[]> {
+			return this.getMcpStore().listNotes(prefix);
 		}
 	} as unknown as TBase;
 }

@@ -6,7 +6,14 @@ vi.mock('cloudflare:workers', () => ({
 }));
 import { DatabaseSync } from 'node:sqlite';
 import app from '../src/app.ts';
-import { extractWikilinks, formatConceptNote, formatIndexMOC, formatLogEntry, formatStoryNote, slugify } from '../src/wiki/okf.ts';
+import {
+	extractWikilinks,
+	formatConceptNote,
+	formatIndexMOC,
+	formatLogEntry,
+	formatStoryNote,
+	slugify,
+} from '../src/wiki/okf.ts';
 import { createMcpRouter } from '../src/mcp/router.ts';
 import { TaskStore } from '../src/mcp/tasks.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
@@ -79,7 +86,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const note = formatConceptNote(concept);
 		expect(note).toContain('type: concept');
 		expect(note).toContain('title: "bpf_fault"');
-		expect(note).toContain('[[hn-49930412|It\'s the Kernel\'s Fault]]');
+		expect(note).toContain("[[hn-49930412|It's the Kernel's Fault]]");
 		expect(note).toContain('[[userfaultfd]]');
 
 		const moc = formatIndexMOC([], [concept]);
@@ -198,8 +205,10 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				native_id: sensoryObservation.native_id,
 				title: sensoryObservation.title,
 				url: sensoryObservation.url,
-				summary: 'Introduces bpf_fault, an eBPF extension enabling user-defined in-kernel page fault handlers.',
-				significance: 'Critical for sub-10ms Firecracker snapshot restoration without userfaultfd IPC overhead.',
+				summary:
+					'Introduces bpf_fault, an eBPF extension enabling user-defined in-kernel page fault handlers.',
+				significance:
+					'Critical for sub-10ms Firecracker snapshot restoration without userfaultfd IPC overhead.',
 				curatorNotes: 'High-impact kernel primitive for hypervisors and agent runtimes.',
 				topics: ['Systems', 'Linux Kernel', 'eBPF'],
 				concepts: ['[[bpf_fault]]', '[[userfaultfd]]', '[[Demand Paging]]'],
@@ -207,7 +216,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				by: sensoryObservation.by,
 				score: sensoryObservation.score,
 			},
-		} as never)) as { output: { status: string; storyId: string; conceptsAdded: number; path: string } };
+		} as never)) as {
+			output: { status: string; storyId: string; conceptsAdded: number; path: string };
+		};
 
 		expect(curationResult.output.status).toBe('curated');
 		expect(curationResult.output.storyId).toBe('hn-49930412');
@@ -322,7 +333,12 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				supportedVersions: string[];
 				capabilities: { events: { subscribe: boolean } };
 				tools: Array<{ name: string }>;
-				events: Array<{ name: string; delivery: string[]; inputSchema: object; payloadSchema: object }>;
+				events: Array<{
+					name: string;
+					delivery: string[];
+					inputSchema: object;
+					payloadSchema: object;
+				}>;
 			};
 		};
 		expect(discoverJson.result.resultType).toBe('complete');
@@ -371,10 +387,19 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(evtListJson.result.events[0]?.name).toBe('task_changed');
 		expect(evtListJson.result.events[0]?.delivery).toEqual(['webhook']);
 		expect(evtListJson.result.events[0]?.inputSchema).toBeDefined();
-		expect((evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> }).properties?.callbackUrl).toBeUndefined();
-		expect((evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> }).properties?.cursor).toBeDefined();
+		expect(
+			(evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> })
+				.properties?.callbackUrl,
+		).toBeUndefined();
+		expect(
+			(evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> })
+				.properties?.cursor,
+		).toBeDefined();
 		expect(evtListJson.result.events[0]?.payloadSchema).toBeDefined();
-		expect((evtListJson.result.events[0]?.payloadSchema as { properties?: Record<string, unknown> }).properties?.cursor).toBeDefined();
+		expect(
+			(evtListJson.result.events[0]?.payloadSchema as { properties?: Record<string, unknown> })
+				.properties?.cursor,
+		).toBeDefined();
 
 		// 4. POST /mcp events/subscribe (establishing scoped subscription with delivery object)
 		const resSub = await mcp.request('/', {
@@ -466,7 +491,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			}),
 		});
 		expect(resGetTask.status).toBe(200);
-		const taskDataJson = (await resGetTask.json()) as { result: { content: Array<{ text: string }> } };
+		const taskDataJson = (await resGetTask.json()) as {
+			result: { content: Array<{ text: string }> };
+		};
 		const taskData = JSON.parse(taskDataJson.result.content[0]!.text) as {
 			id: string;
 			status: string;
@@ -587,7 +614,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			}),
 		});
 		expect(resReplaySub.status).toBe(200);
-		const replaySubJson = (await resReplaySub.json()) as { result: { replayedEventsCount: number } };
+		const replaySubJson = (await resReplaySub.json()) as {
+			result: { replayedEventsCount: number };
+		};
 		expect(replaySubJson.result.replayedEventsCount).toBeGreaterThan(0);
 	});
 
@@ -669,6 +698,11 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(result?.status).toBe('completed');
 		expect(result?.artifacts).toContain('stories/hn-4999901.md');
 		expect(result?.acknowledged).toBe(false);
+
+		// Verify vault note was persisted in mcp_vault_files table in SQLite and accessible via getNote
+		expect(store.getNote('stories/hn-4999901.md')).toContain('Zero-Copy IO');
+		expect(store.getNote('concepts/io-uring.md')).not.toBeNull();
+		expect(store.listNotes('stories/')).toContain('stories/hn-4999901.md');
 
 		const resultRows = db
 			.prepare('SELECT * FROM mcp_results WHERE task_id = ?')
@@ -779,6 +813,10 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			unsubscribeMcp: vi.fn().mockResolvedValue(true),
 			listMcpEvents: vi.fn().mockResolvedValue([]),
 			getMcpDeliveries: vi.fn().mockResolvedValue([]),
+			getMcpNote: vi
+				.fn()
+				.mockImplementation((p: string) => (p.includes('mock') ? '# Mock Note Content' : null)),
+			listMcpNotes: vi.fn().mockResolvedValue(['stories/hn-mock.md']),
 		};
 
 		const envWithDO = {
@@ -837,7 +875,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resGetTask.status).toBe(200);
 		expect(mockStub.getMcpTask).toHaveBeenCalledWith('task_mock_123');
 
-		// 3. Fast read: search through POST /mcp -> should NOT call mockStub, runs at edge against vault
+		// 3. Fast read: search through POST /mcp -> searches edge vault and falls back to store
 		const resSearch = await router.fetch(
 			new Request('http://localhost/', {
 				method: 'POST',
@@ -857,8 +895,30 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resSearch.status).toBe(200);
 		const searchData = (await resSearch.json()) as { result: { content: Array<{ text: string }> } };
 		expect(searchData.result.content[0]!.text).toContain('Edge Search Story');
-		// Verified fast read did not touch DO stub
-		expect(mockStub.listMcpEvents).not.toHaveBeenCalled();
+
+		// 4. Fetch note stored in DO TaskStore (e.g. from prior asynchronous tasks)
+		const resFetchStore = await router.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 4,
+					method: 'tools/call',
+					params: {
+						name: 'fetch',
+						arguments: { path: 'stories/hn-mock.md' },
+					},
+				}),
+			}),
+			envWithDO,
+		);
+		expect(resFetchStore.status).toBe(200);
+		const fetchStoreData = (await resFetchStore.json()) as {
+			result: { content: Array<{ text: string }> };
+		};
+		expect(fetchStoreData.result.content[0]!.text).toContain('# Mock Note Content');
+		expect(mockStub.getMcpNote).toHaveBeenCalledWith('stories/hn-mock.md');
 	});
 
 	it('handles CORS preflight (OPTIONS) and provides discovery manifests for OpenAI Plugins & Dots', async () => {
@@ -895,7 +955,13 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const mcpManifestJson = (await resMcpManifest.json()) as {
 			protocolVersion: string;
 			capabilities: { events: { subscribe: boolean } };
-			endpoints: { rpc: string; tasks: string; results: string; events: string; deliveries: string };
+			endpoints: {
+				rpc: string;
+				tasks: string;
+				results: string;
+				events: string;
+				deliveries: string;
+			};
 		};
 		expect(mcpManifestJson.protocolVersion).toBe('2026-07-28');
 		expect(mcpManifestJson.capabilities.events.subscribe).toBe(true);
@@ -922,11 +988,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const originalFetch = globalThis.fetch;
 		vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
 			const urlStr =
-				typeof input === 'string'
-					? input
-					: input instanceof URL
-						? input.toString()
-						: input.url;
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 			if (
 				urlStr.startsWith('http://localhost') ||
 				urlStr.startsWith('https://library.nymphai.workers.dev')
@@ -1005,7 +1067,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				}),
 			});
 			expect(resSubmit.status).toBe(200);
-			const submitData = (await resSubmit.json()) as { result: { content: Array<{ text: string }> } };
+			const submitData = (await resSubmit.json()) as {
+				result: { content: Array<{ text: string }> };
+			};
 			const parsedTask = JSON.parse(submitData.result.content[0]!.text) as {
 				taskId: string;
 				status: string;
@@ -1058,7 +1122,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				}),
 			});
 			expect(resResult.status).toBe(200);
-			const resultData = (await resResult.json()) as { result: { content: Array<{ text: string }> } };
+			const resultData = (await resResult.json()) as {
+				result: { content: Array<{ text: string }> };
+			};
 			const parsedResult = JSON.parse(resultData.result.content[0]!.text) as {
 				taskId: string;
 				status: string;
@@ -1108,4 +1174,3 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		}
 	});
 });
-

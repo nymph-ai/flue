@@ -36,15 +36,18 @@ export const COMMAND_TOOLS = [
 			properties: {
 				task_type: {
 					type: 'string',
-					description: 'Type of task to execute ("curate" | "synthesize" | "research" | "rebuild_index").',
+					description:
+						'Type of task to execute ("curate" | "synthesize" | "research" | "rebuild_index").',
 				},
 				payload: {
 					type: 'object',
-					description: 'Arguments for the task (e.g. native_id, title, url, summary, concepts, query).',
+					description:
+						'Arguments for the task (e.g. native_id, title, url, summary, concepts, query).',
 				},
 				correlation_id: {
 					type: 'string',
-					description: 'Optional caller-supplied correlation ID (e.g. Dot conversation ID or thread ID).',
+					description:
+						'Optional caller-supplied correlation ID (e.g. Dot conversation ID or thread ID).',
 				},
 			},
 			required: ['task_type', 'payload'],
@@ -79,8 +82,7 @@ export const COMMAND_TOOLS = [
 	},
 	{
 		name: 'cancel_task',
-		description:
-			'Cancel an in-flight or queued task, preventing or aborting further work.',
+		description: 'Cancel an in-flight or queued task, preventing or aborting further work.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -116,7 +118,10 @@ export const COMMAND_TOOLS = [
 		inputSchema: {
 			type: 'object',
 			properties: {
-				path: { type: 'string', description: 'Relative path of the note, e.g. "stories/hn-49930412.md".' },
+				path: {
+					type: 'string',
+					description: 'Relative path of the note, e.g. "stories/hn-49930412.md".',
+				},
 			},
 			required: ['path'],
 		},
@@ -132,7 +137,8 @@ export const COMMAND_TOOLS = [
 				task_id: { type: 'string', description: 'The task ID whose result is being acknowledged.' },
 				receipt: {
 					type: 'object',
-					description: 'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
+					description:
+						'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
 				},
 			},
 			required: ['task_id'],
@@ -205,7 +211,10 @@ export const EVENT_DEFINITIONS = [
 					type: 'string',
 					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
 				},
-				summary: { type: 'string', description: 'Short human-readable summary of the state change.' },
+				summary: {
+					type: 'string',
+					description: 'Short human-readable summary of the state change.',
+				},
 				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
 				error: { type: 'string', description: 'Error message if status is failed.' },
 				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
@@ -231,7 +240,13 @@ export interface McpTaskStore {
 		filter?: { taskId?: string; correlationId?: string };
 		fromRevision?: number;
 		cursor?: string;
-	}): Promise<{ subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string }> | { subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string };
+	}):
+		| Promise<{
+				subscription: SubscriptionRecord;
+				replayedEvents: TaskChangedEvent[];
+				cursor: string;
+		  }>
+		| { subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string };
 	unsubscribe(subscriptionId: string): Promise<boolean> | boolean;
 	listEvents(filter?: {
 		taskId?: string;
@@ -240,6 +255,8 @@ export interface McpTaskStore {
 		cursor?: string;
 	}): Promise<TaskChangedEvent[]> | TaskChangedEvent[];
 	getDeliveryRecords(taskId?: string): Promise<DeliveryRecord[]> | DeliveryRecord[];
+	getNote?(path: string): Promise<string | null> | string | null;
+	listNotes?(prefix?: string): Promise<string[]> | string[];
 }
 
 function rpcSuccess(id: unknown, result: unknown): Response {
@@ -302,9 +319,7 @@ export function createMcpRouter(
 	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
 
 	const resolveStore = (env?: Record<string, unknown>): McpTaskStore => {
-		const curatorBinding = env?.FLUE_CURATOR_AGENT as
-			| { getByName(name: string): any }
-			| undefined;
+		const curatorBinding = env?.FLUE_CURATOR_AGENT as { getByName(name: string): any } | undefined;
 		if (curatorBinding && typeof curatorBinding.getByName === 'function') {
 			const stub = curatorBinding.getByName('curator');
 			return {
@@ -317,6 +332,8 @@ export function createMcpRouter(
 				unsubscribe: (subId) => stub.unsubscribeMcp(subId),
 				listEvents: (filter) => stub.listMcpEvents(filter),
 				getDeliveryRecords: (taskId) => stub.getMcpDeliveries(taskId),
+				getNote: (path) => stub.getMcpNote(path),
+				listNotes: (prefix) => stub.listMcpNotes(prefix),
 			};
 		}
 		return resolveTaskStore();
@@ -535,14 +552,14 @@ export function createMcpRouter(
 			const params = body.params ?? {};
 			const delivery = (params.delivery ?? {}) as Record<string, unknown>;
 			const callbackUrl = String(
-				delivery.url ??
-				delivery.callbackUrl ??
-				params.callbackUrl ??
-				params.callback_url ??
-				'',
+				delivery.url ?? delivery.callbackUrl ?? params.callbackUrl ?? params.callback_url ?? '',
 			);
 			if (!callbackUrl) {
-				return rpcError(id, -32602, 'events/subscribe requires a delivery.url or callbackUrl parameter');
+				return rpcError(
+					id,
+					-32602,
+					'events/subscribe requires a delivery.url or callbackUrl parameter',
+				);
 			}
 			const secret = delivery.secret
 				? String(delivery.secret)
@@ -662,7 +679,11 @@ export function createMcpRouter(
 					if (!result) {
 						const task = await taskStore.getTask(taskId);
 						if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
-						return toolResult(id, `Task ${taskId} is currently ${task.status}; result not yet ready.`, true);
+						return toolResult(
+							id,
+							`Task ${taskId} is currently ${task.status}; result not yet ready.`,
+							true,
+						);
 					}
 					return toolResult(id, JSON.stringify(result, null, 2));
 				}
@@ -686,7 +707,9 @@ export function createMcpRouter(
 				case 'search': {
 					const query = String(args.query ?? '').toLowerCase();
 					if (!query) return toolResult(id, 'search requires query', true);
-					const allPaths = await vault.listNotes();
+					const vaultPaths = await vault.listNotes();
+					const storePaths = taskStore.listNotes ? await taskStore.listNotes() : [];
+					const allPaths = Array.from(new Set([...vaultPaths, ...storePaths]));
 					const targetType = args.type ? String(args.type) : 'all';
 
 					const targetPaths = allPaths.filter((p) => {
@@ -696,21 +719,28 @@ export function createMcpRouter(
 					});
 
 					const matches: Array<{ path: string; excerpt: string }> = [];
-					for (const path of targetPaths) {
-						const content = await vault.getNote(path);
+					for (const p of targetPaths) {
+						let content = await vault.getNote(p);
+						if ((content === null || content === undefined) && taskStore.getNote) {
+							content = await taskStore.getNote(p);
+						}
 						if (content && content.toLowerCase().includes(query)) {
 							const idx = content.toLowerCase().indexOf(query);
 							const start = Math.max(0, idx - 60);
 							const end = Math.min(content.length, idx + 100);
 							matches.push({
-								path,
+								path: p,
 								excerpt: `...${content.slice(start, end).replace(/\n+/g, ' ')}...`,
 							});
 						}
 					}
 					return toolResult(
 						id,
-						JSON.stringify({ query, totalMatches: matches.length, matches: matches.slice(0, 10) }, null, 2),
+						JSON.stringify(
+							{ query, totalMatches: matches.length, matches: matches.slice(0, 10) },
+							null,
+							2,
+						),
 					);
 				}
 
@@ -718,8 +748,14 @@ export function createMcpRouter(
 					let path = String(args.path ?? '').trim();
 					if (!path) return toolResult(id, 'fetch requires path', true);
 					if (!path.endsWith('.md')) path = `${path}.md`;
-					const content = await vault.getNote(path);
-					if (content === null) return toolResult(id, `Note not found: ${path}`, true);
+					const cleanPath = path.replace(/^\/+/, '');
+					let content = await vault.getNote(cleanPath);
+					if ((content === null || content === undefined) && taskStore.getNote) {
+						content = await taskStore.getNote(cleanPath);
+					}
+					if (content === null || content === undefined) {
+						return toolResult(id, `Note not found: ${path}`, true);
+					}
 					return toolResult(id, content);
 				}
 

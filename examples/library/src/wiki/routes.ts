@@ -22,35 +22,59 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 	const resolveVault = (env: Record<string, unknown>) =>
 		getVault ? getVault(env) : getOrCreateVault(env);
 
+	const getNoteFromVaultOrStore = async (
+		c: { env: Record<string, unknown> },
+		path: string,
+	): Promise<string | null> => {
+		const vault = resolveVault(c.env);
+		let note = await vault.getNote(path);
+		if (note !== null && note !== undefined) return note;
+
+		const curatorBinding = c.env?.FLUE_CURATOR_AGENT as
+			| { getByName(name: string): any }
+			| undefined;
+		if (curatorBinding && typeof curatorBinding.getByName === 'function') {
+			try {
+				const stub = curatorBinding.getByName('curator');
+				note = await stub.getMcpNote(path);
+				if (note !== null && note !== undefined) return note;
+			} catch {
+				// continue
+			}
+		}
+		return null;
+	};
+
 	// Root / Index
 	wiki.get('/', async (c) => {
 		const vault = resolveVault(c.env);
-		const index = await vault.getNote('index.md');
+		let index = await getNoteFromVaultOrStore(c, 'index.md');
 		if (!index) {
-			const rebuilt = await vault.rebuildIndex();
-			return c.text(rebuilt, 200, { 'content-type': 'text/markdown; charset=utf-8' });
+			index = await vault.rebuildIndex();
 		}
 		return c.text(index, 200, { 'content-type': 'text/markdown; charset=utf-8' });
 	});
 
 	wiki.get('/index.md', async (c) => {
 		const vault = resolveVault(c.env);
-		const index = (await vault.getNote('index.md')) ?? (await vault.rebuildIndex());
+		const index = (await getNoteFromVaultOrStore(c, 'index.md')) ?? (await vault.rebuildIndex());
 		return c.text(index, 200, { 'content-type': 'text/markdown; charset=utf-8' });
 	});
 
 	// Log
 	wiki.get('/log.md', async (c) => {
 		const vault = resolveVault(c.env);
-		const log = (await vault.getNote('log.md')) ?? '# Activity Log\n';
+		const log =
+			(await getNoteFromVaultOrStore(c, 'log.md')) ??
+			(await vault.getNote('log.md')) ??
+			'# Activity Log\n';
 		return c.text(log, 200, { 'content-type': 'text/markdown; charset=utf-8' });
 	});
 
 	// Story note
 	wiki.get('/stories/:id', async (c) => {
 		const id = c.req.param('id').replace(/\.md$/, '');
-		const vault = resolveVault(c.env);
-		const note = await vault.getNote(`stories/${id}.md`);
+		const note = await getNoteFromVaultOrStore(c, `stories/${id}.md`);
 		if (!note) return c.json({ error: 'not_found', path: `stories/${id}.md` }, 404);
 		return c.text(note, 200, { 'content-type': 'text/markdown; charset=utf-8' });
 	});
@@ -58,8 +82,7 @@ export function createWikiRouter(getVault?: (env: Record<string, unknown>) => Li
 	// Concept note
 	wiki.get('/concepts/:slug', async (c) => {
 		const slug = c.req.param('slug').replace(/\.md$/, '');
-		const vault = resolveVault(c.env);
-		const note = await vault.getNote(`concepts/${slug}.md`);
+		const note = await getNoteFromVaultOrStore(c, `concepts/${slug}.md`);
 		if (!note) return c.json({ error: 'not_found', path: `concepts/${slug}.md` }, 404);
 		return c.text(note, 200, { 'content-type': 'text/markdown; charset=utf-8' });
 	});
