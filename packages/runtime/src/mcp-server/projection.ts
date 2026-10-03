@@ -7,10 +7,12 @@
  * Reference: docs/mcp-capability-projection.md
  */
 
+import type { DurableStreamLog } from '../streams/log.ts';
 import { AppManager } from './apps.ts';
-import { EventProjection } from './events.ts';
+import { CANONICAL_EVENT_DEFINITIONS, EventProjection } from './events.ts';
 import { PolicyInterceptorPipeline } from './interceptor.ts';
 import { OperationStore } from './operations.ts';
+import type { DurableObjectStateLike, SqlStorageLike } from './ports.ts';
 import { BUILTIN_PROFILES, ProfileResolver } from './profiles.ts';
 import { CapabilityRegistry } from './registry.ts';
 import { SearchIndex } from './search.ts';
@@ -20,6 +22,7 @@ import type {
 	AuthContext,
 	CapabilityResult,
 	ClientExtensionCapabilities,
+	McpInputResponse,
 	ProjectionProfile,
 	RequestContext,
 	ResolvedClientCapabilities,
@@ -44,6 +47,11 @@ export interface McpJsonRpcResponse {
 export interface ProjectionOptions {
 	descriptor?: Partial<ServerDescriptor>;
 	customProfiles?: ProjectionProfile[];
+	operationStore?: OperationStore;
+	eventProjection?: EventProjection;
+	sql?: SqlStorageLike;
+	ctx?: DurableObjectStateLike;
+	streamLog?: DurableStreamLog;
 }
 
 export class McpCapabilityProjection {
@@ -65,8 +73,19 @@ export class McpCapabilityProjection {
 		this.registry = new CapabilityRegistry();
 		this.searchIndex = new SearchIndex(this.registry);
 		this.profileResolver = new ProfileResolver(options?.customProfiles);
-		this.operationStore = new OperationStore();
-		this.eventProjection = new EventProjection();
+		this.operationStore =
+			options?.operationStore ??
+			new OperationStore({
+				sql: options?.sql,
+				ctx: options?.ctx,
+			});
+		this.eventProjection =
+			options?.eventProjection ??
+			new EventProjection({
+				sql: options?.sql,
+				ctx: options?.ctx,
+				streamLog: options?.streamLog,
+			});
 		this.skillManager = new SkillManager(this.registry);
 		this.appManager = new AppManager();
 		this.pipeline = new PolicyInterceptorPipeline();
@@ -107,21 +126,51 @@ export class McpCapabilityProjection {
 	 *
 	 * INVARIANT: Never remember client extension capabilities across requests.
 	 * Never infer capabilities from clientInfo.name.
+	 * Compliant with MCP 2026-07-28 `_meta["io.modelcontextprotocol/clientCapabilities"]`.
 	 */
 	resolveClientCapabilities(
 		params?: Record<string, unknown>,
 		headers?: Headers | Record<string, string>,
 		queryProfile?: string,
 	): ResolvedClientCapabilities {
-		const rawCaps = (params?.capabilities ?? {}) as ClientExtensionCapabilities;
+		// 1. Official MCP 2026-07-28 meta client capabilities
+		const metaObj = (params?._meta ?? {}) as Record<string, unknown>;
+		const metaCaps = (metaObj['io.modelcontextprotocol/clientCapabilities'] ??
+			metaObj.clientCapabilities ??
+			{}) as Record<string, unknown>;
+		const metaExtensions = (metaCaps.extensions ?? {}) as Record<string, unknown>;
+
+		const legacyCaps = (params?.capabilities ?? {}) as ClientExtensionCapabilities;
+		const legacyExtensions = (legacyCaps.extensions ?? legacyCaps) as Record<string, unknown>;
+
+		const getExt = (name: string, namespaceKey?: string): boolean => {
+			if (namespaceKey && metaExtensions[namespaceKey] !== undefined) {
+				return Boolean(metaExtensions[namespaceKey]);
+			}
+			if (metaExtensions[name] !== undefined) {
+				return Boolean(metaExtensions[name]);
+			}
+			if (namespaceKey && legacyExtensions[namespaceKey] !== undefined) {
+				return Boolean(legacyExtensions[namespaceKey]);
+			}
+			if (legacyExtensions[name] !== undefined) {
+				return Boolean(legacyExtensions[name]);
+			}
+			if (legacyCaps[name] !== undefined) {
+				return Boolean(legacyCaps[name]);
+			}
+			return false;
+		};
 
 		// Resolve variant / projection profile
 		const requestedVariant =
 			typeof params?.variant === 'string'
 				? params.variant
-				: typeof rawCaps.variants === 'string'
-					? (rawCaps.variants as string)
-					: undefined;
+				: typeof metaExtensions['io.modelcontextprotocol/variants'] === 'string'
+					? (metaExtensions['io.modelcontextprotocol/variants'] as string)
+					: typeof legacyCaps.variants === 'string'
+						? (legacyCaps.variants as string)
+						: undefined;
 
 		const profile = this.profileResolver.resolve({
 			requestedVariant,
@@ -129,16 +178,21 @@ export class McpCapabilityProjection {
 			queryProfile,
 		});
 
+		const progressiveDiscovery =
+			legacyCaps.progressiveDiscovery !== false &&
+			metaExtensions.progressiveDiscovery !== false &&
+			metaExtensions['io.modelcontextprotocol/progressiveDiscovery'] !== false;
+
 		return {
 			protocolVersion: MCP_2026_07_28,
 			extensions: {
-				skills: Boolean(rawCaps.skills),
-				tasks: Boolean(rawCaps.tasks),
-				events: Boolean(rawCaps.events),
-				apps: Boolean(rawCaps.apps),
-				variants: Boolean(rawCaps.variants) || requestedVariant !== undefined,
-				toolsResolve: Boolean(rawCaps.toolsResolve),
-				progressiveDiscovery: rawCaps.progressiveDiscovery !== false,
+				skills: getExt('skills', 'io.modelcontextprotocol/skills'),
+				tasks: getExt('tasks', 'io.modelcontextprotocol/tasks'),
+				events: getExt('events', 'io.modelcontextprotocol/events'),
+				apps: getExt('apps', 'io.modelcontextprotocol/apps'),
+				variants: getExt('variants', 'io.modelcontextprotocol/variants') || requestedVariant !== undefined,
+				toolsResolve: getExt('toolsResolve', 'io.modelcontextprotocol/toolsResolve'),
+				progressiveDiscovery,
 			},
 			profile: profile.id,
 		};
@@ -151,6 +205,7 @@ export class McpCapabilityProjection {
 		capabilities: ResolvedClientCapabilities,
 		auth?: Partial<AuthContext>,
 		requestId?: string,
+		inputResponses?: Record<string, unknown> | McpInputResponse[],
 	): RequestContext {
 		const profile = this.profileResolver.resolve({
 			requestedVariant: capabilities.profile,
@@ -171,6 +226,7 @@ export class McpCapabilityProjection {
 			capabilities,
 			protocolVersion: MCP_2026_07_28,
 			profile,
+			inputResponses,
 		};
 	}
 
@@ -195,7 +251,19 @@ export class McpCapabilityProjection {
 
 		// Negotiate capabilities strictly for this request
 		const capabilities = this.resolveClientCapabilities(request.params, headers, queryProfile);
-		const context = this.createRequestContext(capabilities, auth, String(reqId ?? ''));
+		const inputResponses =
+			(request.params?.inputResponses as Record<string, unknown> | McpInputResponse[] | undefined) ??
+			((request.params?._meta as Record<string, unknown> | undefined)?.inputResponses as
+				| Record<string, unknown>
+				| McpInputResponse[]
+				| undefined);
+
+		const context = this.createRequestContext(
+			capabilities,
+			auth,
+			String(reqId ?? ''),
+			inputResponses,
+		);
 
 		try {
 			const result = await this.dispatch(request.method, request.params ?? {}, context);
@@ -237,6 +305,9 @@ export class McpCapabilityProjection {
 				return this.handleInitialize(params, context);
 
 			case 'server/discover':
+			case 'discover':
+			case 'server/info':
+			case 'server/capabilities':
 				return this.handleServerDiscover(context);
 
 			case 'tools/list':
@@ -255,7 +326,7 @@ export class McpCapabilityProjection {
 				return this.handleResourceTemplatesList(context);
 
 			case 'prompts/list':
-				return { prompts: [] };
+				return { resultType: 'complete', prompts: [] };
 
 			case 'prompts/get':
 				throw new Error(`Prompt '${String(params.name)}' not found.`);
@@ -273,7 +344,7 @@ export class McpCapabilityProjection {
 				if (!context.capabilities.extensions.skills) {
 					throw { code: -32601, message: `Method not found: ${method}` };
 				}
-				return { skills: this.skillManager.listSkills() };
+				return { resultType: 'complete', skills: this.skillManager.listSkills() };
 
 			case 'skills/get': {
 				if (!context.capabilities.extensions.skills) {
@@ -282,7 +353,7 @@ export class McpCapabilityProjection {
 				const skillName = String(params.name ?? '');
 				const skill = this.skillManager.getSkillDetails(skillName);
 				if (!skill) throw new Error(`Skill '${skillName}' not found.`);
-				return { skill };
+				return { resultType: 'complete', skill };
 			}
 
 			case 'tasks/get': {
@@ -292,7 +363,7 @@ export class McpCapabilityProjection {
 				const taskId = String(params.taskId ?? params.id ?? '');
 				const op = this.operationStore.getOperation(taskId);
 				if (!op) throw new Error(`Task '${taskId}' not found.`);
-				return { task: op };
+				return { resultType: 'complete', task: op };
 			}
 
 			case 'tasks/cancel': {
@@ -302,7 +373,7 @@ export class McpCapabilityProjection {
 				const taskId = String(params.taskId ?? params.id ?? '');
 				const reason = String(params.reason ?? 'Cancelled by caller');
 				const ok = this.operationStore.cancelOperation(taskId, reason);
-				return { success: ok };
+				return { resultType: 'complete', success: ok };
 			}
 
 			case 'events/list': {
@@ -311,7 +382,12 @@ export class McpCapabilityProjection {
 				}
 				const streams = this.eventProjection.listStreams();
 				return {
-					streams: streams.map((s) => ({ streamId: s, headCursor: this.eventProjection.getHeadCursor(s) })),
+					resultType: 'complete',
+					events: CANONICAL_EVENT_DEFINITIONS,
+					streams: streams.map((s) => ({
+						streamId: s,
+						headCursor: this.eventProjection.getHeadCursor(s),
+					})),
 				};
 			}
 
@@ -328,7 +404,7 @@ export class McpCapabilityProjection {
 				}
 				const subId = String(params.subscriptionId ?? params.id ?? '');
 				const ok = this.eventProjection.unsubscribe(subId);
-				return { success: ok };
+				return { resultType: 'complete', success: ok };
 			}
 
 			case 'tools/resolve': {
@@ -339,7 +415,8 @@ export class McpCapabilityProjection {
 				const args = (params.arguments as Record<string, unknown>) ?? {};
 				const cap = this.registry.get(name);
 				if (!cap) throw new Error(`Tool '${name}' not found.`);
-				return this.pipeline.resolve(cap, args, context);
+				const resolved = await this.pipeline.resolve(cap, args, context);
+				return { resultType: 'complete', ...resolved };
 			}
 
 			default:
@@ -352,14 +429,19 @@ export class McpCapabilityProjection {
 	// --------------------------------------------------------------------------
 
 	private handleInitialize(
-		_params: Record<string, unknown>,
+		params: Record<string, unknown>,
 		context: RequestContext,
 	): Record<string, unknown> {
+		const reqVersion =
+			typeof params.protocolVersion === 'string'
+				? params.protocolVersion
+				: MCP_2026_07_28;
+
 		const ext = context.capabilities.extensions;
 		const caps: Record<string, unknown> = {
-			tools: { listChanged: true },
-			resources: { subscribe: true, listChanged: true },
-			prompts: { listChanged: true },
+			tools: { listChanged: false },
+			resources: { subscribe: true, listChanged: false },
+			prompts: { listChanged: false },
 			logging: {},
 		};
 
@@ -371,8 +453,14 @@ export class McpCapabilityProjection {
 		if (ext.toolsResolve) caps.toolsResolve = {};
 
 		return {
-			protocolVersion: MCP_2026_07_28,
+			resultType: 'complete',
+			protocolVersion: reqVersion,
+			supportedVersions: [MCP_2026_07_28, '2024-11-05'],
 			serverInfo: {
+				name: this.descriptor.name,
+				version: this.descriptor.version,
+			},
+			_meta: {
 				name: this.descriptor.name,
 				version: this.descriptor.version,
 			},
@@ -382,16 +470,19 @@ export class McpCapabilityProjection {
 	}
 
 	private handleServerDiscover(context: RequestContext): Record<string, unknown> {
+		const toolsList = this.handleToolsList({}, context);
 		return this.serverCardManager.getServerDiscover({
 			activeProfile: context.profile.id,
 			activeExtensions: context.capabilities.extensions,
+			tools: toolsList.tools,
+			events: CANONICAL_EVENT_DEFINITIONS as unknown as Array<Record<string, unknown>>,
 		});
 	}
 
 	private handleToolsList(
 		_params: Record<string, unknown>,
 		context: RequestContext,
-	): { tools: Array<Record<string, unknown>> } {
+	): { resultType: 'complete'; tools: Array<Record<string, unknown>> } {
 		const tools: Array<Record<string, unknown>> = [];
 
 		// 1. Stable Bootstrap Progressive Discovery Meta-Tools (always present)
@@ -503,11 +594,17 @@ export class McpCapabilityProjection {
 			},
 		);
 
-		// 2. Native Capabilities (filtered by active profile)
+		// 2. Native Capabilities (filtered by active profile and progressive discovery)
 		const capabilities = this.registry.list();
 		for (const cap of capabilities) {
 			if (cap.kind !== 'tool' && cap.kind !== 'workflow') continue;
 			if (context.profile.toolFilter && !context.profile.toolFilter(cap)) continue;
+
+			// Progressive discovery rule: only expose pinned capabilities in tools/list
+			// unless progressive discovery is explicitly disabled.
+			if (context.capabilities.extensions.progressiveDiscovery && !cap.pinned) {
+				continue;
+			}
 
 			const desc = this.profileResolver.getCapabilityDescription(cap, context.profile);
 			const toolDef: Record<string, unknown> = {
@@ -530,7 +627,10 @@ export class McpCapabilityProjection {
 			tools.push(toolDef);
 		}
 
-		return { tools: tools.sort((a, b) => (a.name as string).localeCompare(b.name as string)) };
+		return {
+			resultType: 'complete',
+			tools: tools.sort((a, b) => (a.name as string).localeCompare(b.name as string)),
+		};
 	}
 
 	private async handleToolsCall(
@@ -549,6 +649,7 @@ export class McpCapabilityProjection {
 
 			const hits = this.searchIndex.search({ query, kinds, category, limit });
 			return {
+				resultType: 'complete',
 				content: [{ type: 'text', text: JSON.stringify(hits, null, 2) }],
 				structuredContent: { query, totalHits: hits.length, hits },
 			};
@@ -576,6 +677,7 @@ export class McpCapabilityProjection {
 				ui: cap.ui,
 			};
 			return {
+				resultType: 'complete',
 				content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
 				structuredContent: payload,
 			};
@@ -590,6 +692,7 @@ export class McpCapabilityProjection {
 		if (name === 'flue.categories') {
 			const categories = this.registry.getCategories();
 			return {
+				resultType: 'complete',
 				content: [{ type: 'text', text: JSON.stringify(categories, null, 2) }],
 				structuredContent: { categories },
 			};
@@ -603,6 +706,7 @@ export class McpCapabilityProjection {
 
 			const resolved = await this.pipeline.resolve(cap, capArgs, context);
 			return {
+				resultType: 'complete',
 				content: [{ type: 'text', text: JSON.stringify(resolved, null, 2) }],
 				structuredContent: resolved as unknown as Record<string, unknown>,
 			};
@@ -613,7 +717,13 @@ export class McpCapabilityProjection {
 			const reason = String(args.reason ?? 'Cancelled by user');
 			const ok = this.operationStore.cancelOperation(jobId, reason);
 			return {
-				content: [{ type: 'text', text: ok ? `Job '${jobId}' cancelled.` : `Failed to cancel '${jobId}'.` }],
+				resultType: 'complete',
+				content: [
+					{
+						type: 'text',
+						text: ok ? `Job '${jobId}' cancelled.` : `Failed to cancel '${jobId}'.`,
+					},
+				],
 				structuredContent: { jobId, success: ok },
 			};
 		}
@@ -623,7 +733,13 @@ export class McpCapabilityProjection {
 			const input = args.input;
 			const op = this.operationStore.respondOperation(jobId, { input });
 			return {
-				content: [{ type: 'text', text: `Response delivered to '${jobId}'. State: ${op.state}` }],
+				resultType: 'complete',
+				content: [
+					{
+						type: 'text',
+						text: `Response delivered to '${jobId}'. State: ${op.state}`,
+					},
+				],
 				structuredContent: { jobId, state: op.state },
 			};
 		}
@@ -633,6 +749,7 @@ export class McpCapabilityProjection {
 			const headCursor = this.eventProjection.getHeadCursor(streamId);
 			const headUri = `eventstream://${streamId}/head`;
 			return {
+				resultType: 'complete',
 				content: [
 					{
 						type: 'text',
@@ -666,9 +783,65 @@ export class McpCapabilityProjection {
 				state: 'running',
 			});
 
+			// Schedule actual capability invocation in background
+			const runAsync = async () => {
+				try {
+					if (cap.invoke) {
+						const res = await cap.invoke(args, context);
+						const current = this.operationStore.getOperation(op.operationId);
+						if (current?.state === 'cancelled') {
+							return;
+						}
+						this.operationStore.updateOperation(op.operationId, {
+							state: 'completed',
+							result: res,
+							summary: `Operation '${op.operationId}' completed successfully.`,
+						});
+						this.eventProjection.appendEvent(
+							`task_${op.operationId}`,
+							'task_changed',
+							{
+								taskId: op.operationId,
+								status: 'completed',
+								result: res,
+							},
+						);
+					}
+				} catch (err: unknown) {
+					const current = this.operationStore.getOperation(op.operationId);
+					if (current?.state === 'cancelled') {
+						return;
+					}
+					const message = err instanceof Error ? err.message : String(err);
+					this.operationStore.updateOperation(op.operationId, {
+						state: 'failed',
+						error: { code: 'EXECUTION_FAILED', message },
+						summary: `Operation '${op.operationId}' failed: ${message}`,
+					});
+					this.eventProjection.appendEvent(
+						`task_${op.operationId}`,
+						'task_changed',
+						{
+							taskId: op.operationId,
+							status: 'failed',
+							error: message,
+						},
+					);
+				}
+			};
+
+			if (context.waitUntil) {
+				context.waitUntil(runAsync());
+			} else {
+				queueMicrotask(() => {
+					void runAsync();
+				});
+			}
+
 			// If client negotiated Tasks extension, return native task reference
 			if (context.capabilities.extensions.tasks) {
 				return {
+					resultType: 'complete',
 					content: [
 						{
 							type: 'text',
@@ -688,13 +861,15 @@ export class McpCapabilityProjection {
 		}
 
 		// Execute through the common policy interceptor pipeline
-		return this.pipeline.execute(cap, args, context);
+		const result = await this.pipeline.execute(cap, args, context);
+		result.resultType = result.resultType ?? 'complete';
+		return result;
 	}
 
 	private handleResourcesList(
 		_params: Record<string, unknown>,
 		context: RequestContext,
-	): { resources: Array<Record<string, unknown>> } {
+	): { resultType: 'complete'; resources: Array<Record<string, unknown>> } {
 		const resources: Array<Record<string, unknown>> = [];
 
 		// 1. Skill resources (canonical SKILL.md and assets)
@@ -757,6 +932,7 @@ export class McpCapabilityProjection {
 		}
 
 		return {
+			resultType: 'complete',
 			resources: resources.sort((a, b) => (a.uri as string).localeCompare(b.uri as string)),
 		};
 	}
@@ -764,13 +940,19 @@ export class McpCapabilityProjection {
 	private async handleResourcesRead(
 		params: Record<string, unknown>,
 		context: RequestContext,
-	): Promise<{ contents: Array<{ uri: string; mimeType: string; text?: string; blob?: string }> }> {
+	): Promise<{
+		resultType: 'complete';
+		contents: Array<{ uri: string; mimeType: string; text?: string; blob?: string }>;
+	}> {
 		const uri = String(params.uri ?? '');
 
 		// 1. Skill URI: skill://<name>/<path>
 		if (uri.startsWith('skill://')) {
 			const res = this.skillManager.readSkillResource(uri);
-			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+			};
 		}
 
 		// 2. Capability Descriptor URI: capability://<id>
@@ -780,6 +962,7 @@ export class McpCapabilityProjection {
 			if (!cap) throw new Error(`Capability '${capId}' not found.`);
 			const desc = this.profileResolver.getCapabilityDescription(cap, context.profile);
 			return {
+				resultType: 'complete',
 				contents: [
 					{
 						uri,
@@ -810,11 +993,16 @@ export class McpCapabilityProjection {
 			const category = uri.slice('category://'.length);
 			const caps = this.registry.list({ category });
 			return {
+				resultType: 'complete',
 				contents: [
 					{
 						uri,
 						mimeType: 'application/json',
-						text: JSON.stringify({ category, capabilities: caps.map((c) => c.id) }, null, 2),
+						text: JSON.stringify(
+							{ category, capabilities: caps.map((c) => c.id) },
+							null,
+							2,
+						),
 					},
 				],
 			};
@@ -823,7 +1011,10 @@ export class McpCapabilityProjection {
 		// 4. Job URI: job://<id>
 		if (uri.startsWith('job://')) {
 			const res = this.operationStore.readJobResource(uri);
-			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+			};
 		}
 
 		// 5. EventStream Head URI: eventstream://<streamId>/head
@@ -831,7 +1022,10 @@ export class McpCapabilityProjection {
 		if (headMatch) {
 			const streamId = headMatch[1] ?? '';
 			const res = this.eventProjection.readHeadResource(streamId);
-			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+			};
 		}
 
 		// 6. EventStream Slice URI: eventstream://<streamId>/after/<cursor>
@@ -840,13 +1034,19 @@ export class McpCapabilityProjection {
 			const streamId = afterMatch[1] ?? '';
 			const afterCursor = afterMatch[2] ?? '';
 			const res = this.eventProjection.readAfterResource(streamId, afterCursor);
-			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+			};
 		}
 
 		// 7. App UI URI: ui://<app>/<view>
 		if (uri.startsWith('ui://')) {
 			const res = this.appManager.readUiResource(uri);
-			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+			};
 		}
 
 		// 8. Custom registered resource
@@ -855,17 +1055,24 @@ export class McpCapabilityProjection {
 			const res = await custom.read(context);
 			const text = typeof res.content === 'string' ? res.content : undefined;
 			const blob =
-				res.content instanceof Uint8Array ? Buffer.from(res.content).toString('base64') : undefined;
-			return { contents: [{ uri, mimeType: res.mimeType, text, blob }] };
+				res.content instanceof Uint8Array
+					? Buffer.from(res.content).toString('base64')
+					: undefined;
+			return {
+				resultType: 'complete',
+				contents: [{ uri, mimeType: res.mimeType, text, blob }],
+			};
 		}
 
 		throw new Error(`Resource '${uri}' not found.`);
 	}
 
 	private handleResourceTemplatesList(_context: RequestContext): {
+		resultType: 'complete';
 		resourceTemplates: Array<Record<string, unknown>>;
 	} {
 		return {
+			resultType: 'complete',
 			resourceTemplates: CapabilityRegistry.CANONICAL_RESOURCE_TEMPLATES.map((t) => ({
 				uriTemplate: t.uriTemplate,
 				name: t.name,
@@ -878,7 +1085,7 @@ export class McpCapabilityProjection {
 	private handleSubscriptionListen(
 		params: Record<string, unknown>,
 		context: RequestContext,
-	): { success: boolean; uri: string } {
+	): { resultType: 'complete'; success: boolean; uri: string } {
 		const uri = String(params.uri ?? '');
 		const clientId = context.auth.actor;
 		let listeners = this.resourceListeners.get(uri);
@@ -887,27 +1094,42 @@ export class McpCapabilityProjection {
 			this.resourceListeners.set(uri, listeners);
 		}
 		listeners.add(clientId);
-		return { success: true, uri };
+		return { resultType: 'complete', success: true, uri };
 	}
 
 	private handleSubscriptionUnlisten(params: Record<string, unknown>): {
+		resultType: 'complete';
 		success: boolean;
 		uri: string;
 	} {
 		const uri = String(params.uri ?? '');
 		this.resourceListeners.delete(uri);
-		return { success: true, uri };
+		return { resultType: 'complete', success: true, uri };
 	}
 
 	private async handleEventsSubscribe(
 		params: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
 		const delivery = (params.delivery as Record<string, unknown>) ?? {};
-		const callbackUrl = String(delivery.url ?? params.callbackUrl ?? '');
-		const secret = delivery.secret ? String(delivery.secret) : params.secret ? String(params.secret) : undefined;
+		const callbackUrl = String(
+			delivery.url ?? delivery.callbackUrl ?? params.callbackUrl ?? params.callback_url ?? '',
+		);
+		const secret = delivery.secret
+			? String(delivery.secret)
+			: params.secret
+				? String(params.secret)
+				: undefined;
 		const streamId = params.streamId ? String(params.streamId) : undefined;
 		const filter = (params.filter ?? params.arguments) as Record<string, unknown> | undefined;
 		const cursor = params.cursor ? String(params.cursor) : undefined;
+		const fromRevision =
+			typeof params.fromRevision === 'number' ? params.fromRevision : undefined;
+		const subscriptionId =
+			typeof params.subscriptionId === 'string'
+				? params.subscriptionId
+				: typeof params.subscription_id === 'string'
+					? params.subscription_id
+					: undefined;
 		const skipVerification = Boolean(params.skipVerification);
 
 		if (!callbackUrl) {
@@ -916,14 +1138,18 @@ export class McpCapabilityProjection {
 
 		const { subscription, refreshBefore } = await this.eventProjection.subscribe({
 			callbackUrl,
+			delivery: { url: callbackUrl, secret },
 			secret,
 			streamId,
 			filter,
 			cursor,
+			fromRevision,
+			subscriptionId,
 			skipVerification,
 		});
 
 		return {
+			resultType: 'complete',
 			id: subscription.id,
 			refreshBefore,
 			cursor: subscription.cursor ?? null,

@@ -4,6 +4,11 @@
  * Generates both the pre-connection Server Card and post-connection server/discover
  * from the same canonical ServerDescriptor.
  *
+ * Follows MCP 2026-07-28 DiscoverResult contract:
+ * - resultType: "complete"
+ * - supportedVersions: ["2026-07-28", "2024-11-05"]
+ * - serverInfo and _meta metadata
+ *
  * Reference: docs/mcp-capability-projection.md § 11
  */
 
@@ -29,10 +34,11 @@ export class ServerCardManager {
 			protocolVersion: this.descriptor.protocolVersion,
 			endpoints: this.descriptor.endpoints,
 			capabilities: {
-				tools: { listChanged: true },
-				resources: { subscribe: true, listChanged: true },
-				prompts: { listChanged: true },
+				tools: { listChanged: false },
+				resources: { subscribe: true, listChanged: false },
+				prompts: { listChanged: false },
 				logging: {},
+				events: { subscribe: true, list: true, history: true },
 			},
 			extensions: this.descriptor.extensions,
 			profiles: this.descriptor.profiles ?? ['default'],
@@ -47,24 +53,34 @@ export class ServerCardManager {
 	}
 
 	/**
-	 * Get the post-connection server/discover structure.
+	 * Get the post-connection server/discover structure (MCP 2026-07-28).
 	 */
 	getServerDiscover(negotiated?: {
 		activeProfile?: string;
 		activeExtensions?: Record<string, boolean>;
+		tools?: Array<Record<string, unknown>>;
+		events?: Array<Record<string, unknown>>;
 	}): Record<string, unknown> {
 		return {
+			resultType: 'complete',
+			protocolVersion: this.descriptor.protocolVersion,
+			supportedVersions: [this.descriptor.protocolVersion, '2024-11-05'],
 			serverInfo: {
 				name: this.descriptor.name,
 				version: this.descriptor.version,
 				description: this.descriptor.description,
 			},
-			protocolVersion: this.descriptor.protocolVersion,
+			_meta: {
+				name: this.descriptor.name,
+				version: this.descriptor.version,
+				description: this.descriptor.description,
+			},
 			capabilities: {
-				tools: { listChanged: true },
-				resources: { subscribe: true, listChanged: true },
-				prompts: { listChanged: true },
+				tools: { listChanged: false },
+				resources: { subscribe: true, listChanged: false },
+				prompts: { listChanged: false },
 				logging: {},
+				events: { subscribe: true, list: true, history: true },
 			},
 			extensions: this.descriptor.extensions,
 			activeExtensions: negotiated?.activeExtensions,
@@ -77,6 +93,8 @@ export class ServerCardManager {
 				resolveTool: 'flue.resolve',
 				categoriesTool: 'flue.categories',
 			},
+			...(negotiated?.tools ? { tools: negotiated.tools } : {}),
+			...(negotiated?.events ? { events: negotiated.events } : {}),
 		};
 	}
 }

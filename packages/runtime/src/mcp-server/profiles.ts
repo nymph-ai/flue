@@ -11,13 +11,15 @@
 
 import type { Capability, ProjectionProfile } from './types.ts';
 
+export const DEFAULT_PROFILE: ProjectionProfile = {
+	id: 'default',
+	name: 'Default Balanced Profile',
+	description: 'Standard Flue capability projection with canonical tools and discovery surface.',
+	verbosity: 'normal',
+};
+
 export const BUILTIN_PROFILES: Record<string, ProjectionProfile> = {
-	default: {
-		id: 'default',
-		name: 'Default Balanced Profile',
-		description: 'Standard Flue capability projection with canonical tools and discovery surface.',
-		verbosity: 'normal',
-	},
+	default: DEFAULT_PROFILE,
 	compact: {
 		id: 'compact',
 		name: 'Compact Profile',
@@ -124,7 +126,7 @@ export class ProfileResolver {
 			chosenId = options.queryProfile;
 		}
 
-		return this.profiles.get(chosenId ?? 'default') ?? BUILTIN_PROFILES.default;
+		return this.profiles.get(chosenId ?? 'default') ?? DEFAULT_PROFILE;
 	}
 
 	/**

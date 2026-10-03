@@ -37,6 +37,7 @@ function setupTestProjection(): McpCapabilityProjection {
 		title: 'Create Linear Issue',
 		description: 'Create a new ticket in the Linear project tracker.',
 		category: 'linear',
+		pinned: true,
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -63,6 +64,7 @@ function setupTestProjection(): McpCapabilityProjection {
 		title: 'View Linear Project',
 		description: 'View project details with interactive board visualization.',
 		category: 'linear',
+		pinned: true,
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -106,6 +108,7 @@ function setupTestProjection(): McpCapabilityProjection {
 		description: 'Trigger an asynchronous deployment pipeline to target environment.',
 		category: 'devops',
 		asyncPolicy: 'async',
+		pinned: true,
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -116,6 +119,18 @@ function setupTestProjection(): McpCapabilityProjection {
 		},
 		effects: { write: true, externalCommunication: true },
 		trust: { source: 'ci-runner', sensitivity: 'confidential' },
+		invoke: async (args: Record<string, unknown>): Promise<CapabilityResult> => {
+			await new Promise((r) => setTimeout(r, 60));
+			return {
+				content: [
+					{
+						type: 'text',
+						text: `Deployment started for ${String(args.service)} to ${String(args.env)}.`,
+					},
+				],
+				structuredContent: { service: args.service, env: args.env, deployed: true },
+			};
+		},
 	});
 
 	// 4. Policy/Review Governed Tool: admin.database.wipe
@@ -232,9 +247,29 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 		})) as any;
 
 		expect(disc.result).toBeDefined();
+		expect(disc.result.resultType).toBe('complete');
 		expect(disc.result.protocolVersion).toBe(MCP_2026_07_28);
+		expect(disc.result.supportedVersions).toContain(MCP_2026_07_28);
 		expect(disc.result.extensions.skills).toBe(true);
 		expect(disc.result.extensions.tasks).toBe(true);
+
+		// 1.5. Standard 2026-07-28 _meta negotiation
+		const metaDiscover = (await projection.handleRequest({
+			jsonrpc: '2.0',
+			id: 1.5,
+			method: 'server/discover',
+			params: {
+				_meta: {
+					'io.modelcontextprotocol/clientCapabilities': {
+						extensions: {
+							'io.modelcontextprotocol/skills': true,
+						},
+					},
+				},
+			},
+		})) as any;
+		expect(metaDiscover.result.resultType).toBe('complete');
+		expect(metaDiscover.result.activeExtensions.skills).toBe(true);
 
 		// 2. tools/list: bootstrap meta-tools + native capabilities present
 		const toolsRes = (await projection.handleRequest({
@@ -243,6 +278,8 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 			method: 'tools/list',
 			params: { capabilities: {} },
 		})) as any;
+
+		expect(toolsRes.result.resultType).toBe('complete');
 
 		const toolNames = toolsRes.result.tools.map((t: any) => t.name);
 		expect(toolNames).toContain('flue.search');
@@ -989,8 +1026,8 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	it('Invariant 8: A client ignoring action/trust metadata cannot bypass server policy', async () => {
 		const projection = setupTestProjection();
 
-		// 1. Destructive tool without confirmation -> McpElicitationRequiredError (-32001)
-		const destructiveRes = await projection.handleRequest({
+		// 1. Destructive tool without confirmation -> MRTR input_required
+		const destructiveRes = (await projection.handleRequest({
 			jsonrpc: '2.0',
 			id: 1,
 			method: 'tools/call',
@@ -998,13 +1035,13 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 				name: 'admin.database.wipe',
 				arguments: { confirmPhrase: 'YES' },
 			},
-		});
-		expect(destructiveRes.error).toBeDefined();
-		expect(destructiveRes.error?.code).toBe(-32001);
-		expect(destructiveRes.error?.message).toContain('Please confirm execution');
+		})) as any;
+		expect(destructiveRes.result).toBeDefined();
+		expect(destructiveRes.result.resultType).toBe('input_required');
+		expect(destructiveRes.result.inputRequests[0].id).toBe('confirm_execution');
 
-		// 2. Destructive tool with _confirmed -> succeeds
-		const confirmedRes = (await projection.handleRequest({
+		// 1.5. Spoofing _confirmed in tool arguments is rejected
+		const spoofRes = (await projection.handleRequest({
 			jsonrpc: '2.0',
 			id: 2,
 			method: 'tools/call',
@@ -1013,6 +1050,20 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 				arguments: { confirmPhrase: 'YES', _confirmed: true },
 			},
 		})) as any;
+		expect(spoofRes.result.resultType).toBe('input_required');
+
+		// 2. Destructive tool with verified human review inputResponses -> succeeds
+		const confirmedRes = (await projection.handleRequest({
+			jsonrpc: '2.0',
+			id: 3,
+			method: 'tools/call',
+			params: {
+				name: 'admin.database.wipe',
+				arguments: { confirmPhrase: 'YES' },
+				inputResponses: [{ id: 'confirm_execution', response: { confirmed: true } }],
+			},
+		})) as any;
+		expect(confirmedRes.result.resultType).toBe('complete');
 		expect(confirmedRes.result.structuredContent.wiped).toBe(true);
 
 		// 3. Unauthorized caller attempting to call scope-restricted tool

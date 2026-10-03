@@ -171,82 +171,9 @@ export const COMMAND_TOOLS = [
 	},
 ];
 
-export const EVENT_DEFINITIONS = [
-	{
-		name: 'task_changed',
-		description:
-			'Fired whenever an asynchronous task changes state (queued, running, completed, failed, input_required, cancelled). Delivers state revision, cursor, status, summary, and durable result reference.',
-		delivery: ['webhook'],
-		inputSchema: {
-			type: 'object',
-			properties: {
-				filter: {
-					type: 'object',
-					properties: {
-						taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
-						correlationId: {
-							type: 'string',
-							description: 'Filter notifications to a specific conversation or correlation ID.',
-						},
-					},
-					description: 'Optional filter criteria for events.',
-				},
-				taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
-				correlationId: {
-					type: 'string',
-					description: 'Filter notifications to a specific conversation or correlation ID.',
-				},
-				cursor: {
-					type: 'string',
-					description: 'Opaque cursor for event streaming and replay.',
-				},
-			},
-		},
-		payloadSchema: {
-			type: 'object',
-			properties: {
-				event: { type: 'string', enum: ['task_changed'] },
-				eventId: { type: 'string', description: 'Unique UUID for event deduplication.' },
-				taskId: { type: 'string', description: 'Durable task ID.' },
-				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
-				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
-				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
-				status: {
-					type: 'string',
-					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
-				},
-				summary: { type: 'string', description: 'Human-readable summary of the state change.' },
-				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
-				error: { type: 'string', description: 'Error message if status is failed.' },
-				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
-			},
-			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
-		},
-		schema: {
-			type: 'object',
-			properties: {
-				event: { type: 'string', enum: ['task_changed'] },
-				eventId: { type: 'string', description: 'Unique UUID for event deduplication.' },
-				taskId: { type: 'string', description: 'Durable task ID.' },
-				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
-				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
-				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
-				status: {
-					type: 'string',
-					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
-				},
-				summary: {
-					type: 'string',
-					description: 'Short human-readable summary of the state change.',
-				},
-				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
-				error: { type: 'string', description: 'Error message if status is failed.' },
-				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
-			},
-			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
-		},
-	},
-];
+import { CANONICAL_EVENT_DEFINITIONS as EVENT_DEFINITIONS } from '@flue/runtime/mcp-server';
+export { EVENT_DEFINITIONS };
+
 
 export interface McpTaskStore {
 	submitTask(params: {

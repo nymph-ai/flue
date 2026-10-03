@@ -18,134 +18,37 @@ import type {
 	TaskStatus,
 } from './types.ts';
 
-export interface SqlCursorLike {
-	toArray(): Record<string, unknown>[];
-}
+import {
+	type SqlCursorLike,
+	type SqlStorageLike,
+	type DurableObjectStateLike,
+	decodeWebhookSecret,
+	deriveSubscriptionId,
+	constantTimeEqual,
+	signStandardWebhook,
+	verifyStandardWebhook,
+	signPayload,
+	verifyPayloadSignature,
+} from '@flue/runtime/mcp-server';
 
-export interface SqlStorageLike {
-	exec(query: string, ...bindings: unknown[]): SqlCursorLike;
-}
-
-export interface DurableObjectStateLike {
-	storage?: { sql?: SqlStorageLike };
-	waitUntil?(promise: Promise<unknown>): void;
-}
+export {
+	type SqlCursorLike,
+	type SqlStorageLike,
+	type DurableObjectStateLike,
+	decodeWebhookSecret,
+	deriveSubscriptionId,
+	constantTimeEqual,
+	signStandardWebhook,
+	verifyStandardWebhook,
+	signPayload,
+	verifyPayloadSignature,
+};
 
 export interface TaskStoreOptions {
 	sql?: SqlStorageLike;
 	ctx?: DurableObjectStateLike;
 }
 
-export function decodeWebhookSecret(secret: string): Uint8Array {
-	let raw = secret;
-	if (raw.startsWith('whsec_')) {
-		raw = raw.slice('whsec_'.length);
-	}
-	try {
-		let b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
-		while (b64.length % 4 !== 0) {
-			b64 += '=';
-		}
-		const binary = atob(b64);
-		const bytes = new Uint8Array(binary.length);
-		for (let i = 0; i < binary.length; i++) {
-			bytes[i] = binary.charCodeAt(i);
-		}
-		return bytes;
-	} catch {
-		return new TextEncoder().encode(secret);
-	}
-}
-
-export async function deriveSubscriptionId(
-	callbackUrl: string,
-	eventName = 'task_changed',
-	filter?: { taskId?: string; correlationId?: string },
-): Promise<string> {
-	const filterKey = `${filter?.taskId ?? ''}:${filter?.correlationId ?? ''}`;
-	const key = `${eventName}:${callbackUrl}:${filterKey}`;
-	const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-	const hex = Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.slice(0, 16)
-		.join('');
-	return `sub_${hex}`;
-}
-
-export function constantTimeEqual(a: string, b: string): boolean {
-	if (typeof a !== 'string' || typeof b !== 'string') return false;
-	const enc = new TextEncoder();
-	const aBytes = enc.encode(a);
-	const bBytes = enc.encode(b);
-	if (aBytes.length !== bBytes.length) return false;
-	let mismatch = 0;
-	for (let i = 0; i < aBytes.length; i++) {
-		mismatch |= aBytes[i]! ^ bBytes[i]!;
-	}
-	return mismatch === 0;
-}
-
-export async function signStandardWebhook(
-	secret: string,
-	msgId: string,
-	timestamp: string,
-	payload: string,
-): Promise<string> {
-	const keyBytes = decodeWebhookSecret(secret);
-	const key = await crypto.subtle.importKey(
-		'raw',
-		keyBytes,
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign'],
-	);
-	const signedContent = `${msgId}.${timestamp}.${payload}`;
-	const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedContent));
-	const b64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
-	return `v1,${b64}`;
-}
-
-export async function verifyStandardWebhook(
-	secret: string,
-	msgId: string,
-	timestamp: string,
-	payload: string,
-	signatureHeader: string,
-): Promise<boolean> {
-	const expected = await signStandardWebhook(secret, msgId, timestamp, payload);
-	const parts = signatureHeader.split(' ');
-	for (const part of parts) {
-		if (constantTimeEqual(part, expected)) {
-			return true;
-		}
-	}
-	return false;
-}
-
-export async function signPayload(secret: string, payload: string): Promise<string> {
-	const encoder = new TextEncoder();
-	const key = await crypto.subtle.importKey(
-		'raw',
-		encoder.encode(secret),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign'],
-	);
-	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-	const hex = Array.from(new Uint8Array(signature))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
-	return `sha256=${hex}`;
-}
-
-export async function verifyPayloadSignature(
-	secret: string,
-	payload: string,
-	signatureHeader: string,
-): Promise<boolean> {
-	const expected = await signPayload(secret, payload);
-	return constantTimeEqual(expected, signatureHeader);
-}
 
 export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();

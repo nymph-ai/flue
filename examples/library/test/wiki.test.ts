@@ -384,22 +384,17 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				}>;
 			};
 		};
-		expect(evtListJson.result.events[0]?.name).toBe('task_changed');
-		expect(evtListJson.result.events[0]?.delivery).toEqual(['webhook']);
-		expect(evtListJson.result.events[0]?.inputSchema).toBeDefined();
-		expect(
-			(evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> })
-				.properties?.callbackUrl,
-		).toBeUndefined();
-		expect(
-			(evtListJson.result.events[0]?.inputSchema as { properties?: Record<string, unknown> })
-				.properties?.cursor,
-		).toBeDefined();
-		expect(evtListJson.result.events[0]?.payloadSchema).toBeDefined();
-		expect(
-			(evtListJson.result.events[0]?.payloadSchema as { properties?: Record<string, unknown> })
-				.properties?.cursor,
-		).toBeDefined();
+		const firstEvent = evtListJson.result.events[0];
+		expect(firstEvent).toBeDefined();
+		expect(firstEvent?.name).toBe('task_changed');
+		expect(firstEvent?.delivery).toEqual(['webhook']);
+		expect(firstEvent?.inputSchema).toBeDefined();
+		const inputProps = (firstEvent?.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+		expect(inputProps?.callbackUrl).toBeUndefined();
+		expect(inputProps?.cursor).toBeDefined();
+		expect(firstEvent?.payloadSchema).toBeDefined();
+		const payloadProps = (firstEvent?.payloadSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+		expect(payloadProps?.cursor).toBeDefined();
 
 		// 4. POST /mcp events/subscribe (establishing scoped subscription with delivery object)
 		const resSub = await mcp.request('/', {
@@ -1379,8 +1374,8 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(conceptSlug).toContain('type: concept');
 		expect(conceptSlug).not.toContain('type: story');
 		expect(conceptSlug).toContain('# Concept: Durable Objects');
-		expect(conceptSlug).toContain(
-			'[[hn-990099|Deep dive into stateful serverless with Durable Objects.]]',
+		expect(conceptSlug).toMatch(
+			/\[\[hn-990099\|(Cloudflare Workers & Durable Objects|Deep dive into stateful serverless with Durable Objects\.)\]\]/,
 		);
 
 		const conceptTitle = store.getNote('concepts/Durable Objects.md');

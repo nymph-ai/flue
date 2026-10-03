@@ -8,6 +8,7 @@
  */
 
 export * from './types.ts';
+export * from './ports.ts';
 export * from './registry.ts';
 export * from './search.ts';
 export * from './profiles.ts';

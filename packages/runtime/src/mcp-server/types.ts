@@ -10,8 +10,33 @@
 export const MCP_2026_07_28 = '2026-07-28' as const;
 export type McpProtocolVersion = typeof MCP_2026_07_28;
 
+export type McpResultType = 'complete' | 'input_required';
+
+export interface McpInputRequest {
+	id: string;
+	prompt: string;
+	schema?: Record<string, unknown>;
+	reason?: string;
+}
+
+export interface McpInputResponse {
+	id: string;
+	response: unknown;
+}
+
 export type CapabilityKind = 'tool' | 'resource' | 'skill' | 'workflow' | 'event' | 'app';
 export type AsyncPolicy = 'sync' | 'async' | 'flexible';
+
+export interface ClientExtensionCapabilities {
+	skills?: boolean;
+	tasks?: boolean;
+	events?: boolean;
+	apps?: boolean;
+	variants?: boolean | string;
+	toolsResolve?: boolean;
+	progressiveDiscovery?: boolean;
+	[key: string]: unknown;
+}
 
 export interface TrustMetadata {
 	source: string;
@@ -110,10 +135,12 @@ export interface RequestContext {
 	capabilities: ResolvedClientCapabilities;
 	protocolVersion: string;
 	profile: ProjectionProfile;
+	inputResponses?: Record<string, unknown> | McpInputResponse[];
 	waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface CapabilityResult {
+	resultType?: McpResultType;
 	content?: Array<
 		| { type: 'text'; text: string }
 		| { type: 'image'; data: string; mimeType: string }
@@ -127,6 +154,8 @@ export interface CapabilityResult {
 	resourceLinks?: string[];
 	uiUri?: string;
 	operationId?: string;
+	inputRequests?: McpInputRequest[];
+	requestState?: string;
 	_meta?: Record<string, unknown>;
 }
 
@@ -136,6 +165,7 @@ export interface Capability {
 	title: string;
 	description: string;
 	category?: string;
+	pinned?: boolean; // Pinned tools appear directly in default progressive discovery tools/list
 	inputSchema?: Record<string, unknown>;
 	outputSchema?: Record<string, unknown>;
 	invoke?: (args: Record<string, unknown>, context: RequestContext) => Promise<CapabilityResult>;
@@ -171,7 +201,7 @@ export interface Operation {
 	payload?: Record<string, unknown>;
 	result?: CapabilityResult;
 	error?: { code: string; message: string; details?: unknown };
-	inputRequests?: Array<{ id: string; prompt: string; schema?: Record<string, unknown> }>;
+	inputRequests?: Array<McpInputRequest>;
 	cancellation?: { reason: string; cancelledAt: string };
 	createdAt: string;
 	updatedAt: string;
@@ -186,6 +216,15 @@ export interface ElectricEvent {
 	data: unknown;
 }
 
+export interface EventDefinition {
+	name: string;
+	description: string;
+	delivery: string[];
+	inputSchema: Record<string, unknown>;
+	payloadSchema: Record<string, unknown>;
+	schema?: Record<string, unknown>;
+}
+
 export interface EventSubscription {
 	id: string;
 	callbackUrl: string;
@@ -194,6 +233,27 @@ export interface EventSubscription {
 	filter?: Record<string, unknown>;
 	cursor?: string;
 	createdAt: string;
+}
+
+export interface WebhookDeliveryRecord {
+	id: string;
+	subscriptionId: string;
+	eventId: string;
+	taskId?: string;
+	revision?: number;
+	cursor: string;
+	statusCode?: number;
+	status: 'delivered' | 'failed' | 'success';
+	error?: string;
+	attempt?: number;
+	timestamp: string;
+}
+
+export interface AuditLogEntry {
+	id: string;
+	category: string;
+	details: unknown;
+	timestamp: string;
 }
 
 export interface ServerDescriptor {
