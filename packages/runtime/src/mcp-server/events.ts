@@ -27,6 +27,10 @@ export class EventProjection {
 	private readonly deliveryLogs: WebhookDeliveryRecord[] = [];
 	private nextOffset = 1;
 
+	getDeliveryLogs(): readonly WebhookDeliveryRecord[] {
+		return this.deliveryLogs;
+	}
+
 	/**
 	 * Append an event to a durable stream.
 	 */

@@ -16,7 +16,6 @@ export type OperationListener = (operation: Operation) => void;
 export class OperationStore {
 	private readonly operations = new Map<string, Operation>();
 	private readonly listeners = new Set<OperationListener>();
-	private readonly resourceSubscribers = new Map<string, Set<string>>(); // uri -> set of subscriberIds
 
 	/**
 	 * Create a new Operation in 'queued' or 'running' state.
@@ -153,7 +152,7 @@ export class OperationStore {
 		if (!match) {
 			throw new Error(`Invalid job URI: ${jobUri}`);
 		}
-		const jobId = match[1]!;
+		const jobId = match[1] ?? '';
 		const op = this.getOperation(jobId);
 		if (!op) {
 			throw new Error(`Job '${jobId}' not found.`);

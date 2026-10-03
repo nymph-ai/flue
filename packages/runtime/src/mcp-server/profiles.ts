@@ -124,7 +124,7 @@ export class ProfileResolver {
 			chosenId = options.queryProfile;
 		}
 
-		return this.profiles.get(chosenId ?? 'default') ?? BUILTIN_PROFILES.default!;
+		return this.profiles.get(chosenId ?? 'default') ?? BUILTIN_PROFILES.default;
 	}
 
 	/**
@@ -132,13 +132,15 @@ export class ProfileResolver {
 	 */
 	getCapabilityDescription(cap: Capability, profile: ProjectionProfile): string {
 		// 1. Profile-level explicit override
-		if (profile.descriptionOverrides?.[cap.id]) {
-			return profile.descriptionOverrides[cap.id]!;
+		const profileOverride = profile.descriptionOverrides?.[cap.id];
+		if (profileOverride) {
+			return profileOverride;
 		}
 
 		// 2. Capability variant override matching profile ID
-		if (cap.variants?.[profile.id]?.description) {
-			return cap.variants[profile.id]!.description!;
+		const variantOverride = cap.variants?.[profile.id]?.description;
+		if (variantOverride) {
+			return variantOverride;
 		}
 
 		// 3. Compact mode fallback if minimal verbosity

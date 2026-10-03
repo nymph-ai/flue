@@ -831,7 +831,7 @@ export class McpCapabilityProjection {
 		// 5. EventStream Head URI: eventstream://<streamId>/head
 		const headMatch = uri.match(/^eventstream:\/\/([^/]+)\/head$/);
 		if (headMatch) {
-			const streamId = headMatch[1]!;
+			const streamId = headMatch[1] ?? '';
 			const res = this.eventProjection.readHeadResource(streamId);
 			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
 		}
@@ -839,8 +839,8 @@ export class McpCapabilityProjection {
 		// 6. EventStream Slice URI: eventstream://<streamId>/after/<cursor>
 		const afterMatch = uri.match(/^eventstream:\/\/([^/]+)\/after\/(.+)$/);
 		if (afterMatch) {
-			const streamId = afterMatch[1]!;
-			const afterCursor = afterMatch[2]!;
+			const streamId = afterMatch[1] ?? '';
+			const afterCursor = afterMatch[2] ?? '';
 			const res = this.eventProjection.readAfterResource(streamId, afterCursor);
 			return { contents: [{ uri, mimeType: res.mimeType, text: res.content }] };
 		}

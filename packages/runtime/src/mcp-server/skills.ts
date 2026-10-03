@@ -9,7 +9,7 @@
  * Reference: docs/mcp-capability-projection.md § 6
  */
 
-import type { CapabilitySkill, CapabilitySkillFile } from './types.ts';
+import type { CapabilitySkill } from './types.ts';
 import type { CapabilityRegistry } from './registry.ts';
 
 export class SkillManager {
@@ -59,8 +59,8 @@ export class SkillManager {
 		if (!match) {
 			throw new Error(`Invalid skill URI: ${uri}`);
 		}
-		const skillName = match[1]!;
-		const subpath = match[2]!;
+		const skillName = match[1] ?? '';
+		const subpath = match[2] ?? '';
 
 		const skill = this.getSkill(skillName);
 		if (!skill) {
