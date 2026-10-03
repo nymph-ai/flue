@@ -1103,7 +1103,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(completionWake?.headers['webhook-signature']).toMatch(/^v1,/);
 			expect(completionWake?.headers['webhook-id']).toBeDefined();
 			expect(completionWake?.headers['webhook-timestamp']).toBeDefined();
-			expect(completionWake?.headers['x-mcp-subscription-id']).toBe(subJson.result.subscriptionId);
+			expect(completionWake?.headers['x-mcp-subscription-id']).toBe(subJson.result.id);
 			expect(completionWake?.headers['x-mcp-event-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
 			expect(completionWake?.headers['x-mcp-task-id']).toBe(taskId);
 			expect(completionWake?.headers['x-mcp-cursor']).toBe('3');
@@ -1228,16 +1228,16 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			});
 			expect(resSub.status).toBe(200);
 			const subJson = (await resSub.json()) as any;
-			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+			expect(subJson.result.id).toMatch(/^sub_/);
 
 			const resInbox = await app.request('/mcp/test-callback');
 			const inbox = (await resInbox.json()) as {
 				callbacks: Array<{ headers: Record<string, string>; payload: any }>;
 			};
 			const chg = inbox.callbacks.find((c) => c.payload?.type === 'verification');
-			expect(subJson.result.ttlMs).toBe(7 * 86400 * 1000);
+			expect(subJson.result.refreshBefore).toBeDefined();
 			expect(chg).toBeDefined();
-			expect(chg?.headers['x-mcp-subscription-id']).toBe(subJson.result.subscriptionId);
+			expect(chg?.headers['x-mcp-subscription-id']).toBe(subJson.result.id);
 			expect(chg?.headers['mcp-method']).toBe('events/subscribe');
 			expect(chg?.headers['webhook-signature']).toMatch(/^v1,/);
 		} finally {
