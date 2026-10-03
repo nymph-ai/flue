@@ -413,7 +413,7 @@ export function createMcpRouter(
 		return c.json(getOpenApiSpec(origin));
 	});
 
-	router.post('/test-callback', async (c) => {
+	const handleTestCallback = async (c: any) => {
 		const secret = c.req.query('secret');
 		const sigHeader = c.req.header('x-mcp-event-signature');
 		const rawText = await c.req.text();
@@ -472,7 +472,10 @@ export function createMcpRouter(
 			eventId: c.req.header('x-mcp-event-id'),
 			taskId: c.req.header('x-mcp-task-id'),
 		});
-	});
+	};
+
+	router.post('/test-callback', handleTestCallback);
+	router.post('/mcp/test-callback', handleTestCallback);
 
 	router.get('/test-callback', (c) => {
 		return c.json({
@@ -673,8 +676,12 @@ export function createMcpRouter(
 						callbackUrl.includes('library.nymphai.workers.dev') ||
 						callbackUrl.startsWith('http://localhost')
 					) {
+						const parsed = new URL(callbackUrl);
+						const subPath = parsed.pathname.startsWith('/mcp/')
+							? parsed.pathname.slice('/mcp'.length)
+							: parsed.pathname;
 						chgRes = await router.fetch(
-							new Request(callbackUrl, {
+							new Request(new URL(subPath + parsed.search, 'http://localhost'), {
 								method: 'POST',
 								headers: chgHeaders,
 								body: challengePayload,
