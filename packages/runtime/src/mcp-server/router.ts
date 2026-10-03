@@ -46,7 +46,7 @@ export function createMcpCapabilityRouter(
 	// -------------------------------------------------------------------------
 	const handleServerCard = (c: any) => {
 		setCorsHeaders(c);
-		const card = projection.serverCardManager.generateServerCard();
+		const card = projection.serverCardManager.getServerCard();
 		return c.json(card, 200, {
 			'content-type': 'application/json; charset=utf-8',
 		});
@@ -63,7 +63,7 @@ export function createMcpCapabilityRouter(
 	// -------------------------------------------------------------------------
 	const handleOptions = (c: any) => {
 		setCorsHeaders(c);
-		return new Response(null, { status: 204 });
+		return c.body(null, 204);
 	};
 
 	app.options('*', handleOptions);

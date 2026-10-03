@@ -67,8 +67,8 @@ export class PolicyInterceptorPipeline {
 
 		// Check authorization
 		if (capability.authorization?.scopes && capability.authorization.scopes.length > 0) {
-			const hasScope = capability.authorization.scopes.every((s) =>
-				context.auth.scopes.includes(s),
+			const hasScope = capability.authorization.scopes.every(
+				(s) => context.auth.scopes.includes('*') || context.auth.scopes.includes(s),
 			);
 			if (!hasScope) {
 				approvalReasons.push(
@@ -98,8 +98,8 @@ export class PolicyInterceptorPipeline {
 	): Promise<CapabilityResult> {
 		// 1. Authorization check
 		if (capability.authorization?.scopes && capability.authorization.scopes.length > 0) {
-			const hasScope = capability.authorization.scopes.every((s) =>
-				context.auth.scopes.includes(s),
+			const hasScope = capability.authorization.scopes.every(
+				(s) => context.auth.scopes.includes('*') || context.auth.scopes.includes(s),
 			);
 			if (!hasScope) {
 				throw new Error(

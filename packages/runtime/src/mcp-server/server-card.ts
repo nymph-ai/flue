@@ -37,6 +37,13 @@ export class ServerCardManager {
 	}
 
 	/**
+	 * Alias for getServerCard to support generator naming conventions.
+	 */
+	generateServerCard(): Record<string, unknown> {
+		return this.getServerCard();
+	}
+
+	/**
 	 * Get the post-connection server/discover structure.
 	 */
 	getServerDiscover(negotiated?: {
@@ -56,7 +63,8 @@ export class ServerCardManager {
 				prompts: { listChanged: true },
 				logging: {},
 			},
-			extensions: negotiated?.activeExtensions ?? this.descriptor.extensions,
+			extensions: this.descriptor.extensions,
+			activeExtensions: negotiated?.activeExtensions,
 			activeProfile: negotiated?.activeProfile ?? 'default',
 			profiles: this.descriptor.profiles ?? ['default'],
 			progressiveDiscovery: {
