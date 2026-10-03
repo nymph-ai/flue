@@ -416,6 +416,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 						secret: 'dot_hmac_secret_key_abc123',
 					},
 					filter: { correlationId: 'chatgpt-thread-456' },
+					skipVerification: true,
 				},
 			}),
 		});
@@ -423,12 +424,16 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		const subJson = (await resSub.json()) as {
 			result: {
 				subscriptionId: string;
+				id: string;
+				refreshBefore: string;
 				cursor: string;
 				delivery: { type: string; url: string };
 				callbackUrl: string;
 			};
 		};
 		expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+		expect(subJson.result.id).toBe(subJson.result.subscriptionId);
+		expect(subJson.result.refreshBefore).toBeDefined();
 		expect(subJson.result.cursor).toBeDefined();
 		expect(subJson.result.delivery.type).toBe('webhook');
 		expect(subJson.result.delivery.url).toBe(
