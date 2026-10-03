@@ -12,10 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { AppManager } from '../apps.ts';
-import { PolicyInterceptorPipeline } from '../interceptor.ts';
 import { McpCapabilityProjection } from '../projection.ts';
 import { createMcpCapabilityRouter } from '../router.ts';
-import type { Capability, CapabilityResult, RequestContext } from '../types.ts';
+import type { CapabilityResult } from '../types.ts';
 import { MCP_2026_07_28 } from '../types.ts';
 
 // -----------------------------------------------------------------------------
