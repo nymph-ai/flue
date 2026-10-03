@@ -341,7 +341,12 @@ export class TaskStore {
 				.toArray();
 			const content = rows[0]?.content;
 			if (content !== undefined && content !== null) {
-				return String(content);
+				const strContent = String(content);
+				if (cleanPath.startsWith('concepts/') && strContent.includes('type: story')) {
+					// Invalid concept note caching story content: bypass to synthesize proper concept note
+				} else {
+					return strContent;
+				}
 			}
 
 			// If looking for a concept, also check by slugified path in vault files
@@ -352,49 +357,81 @@ export class TaskStore {
 					const slugRows = this.sql
 						.exec(`SELECT content FROM mcp_vault_files WHERE path = ?`, slugPath)
 						.toArray();
-					if (slugRows[0]?.content !== undefined && slugRows[0]?.content !== null) {
-						return String(slugRows[0].content);
+					const slugContent = slugRows[0]?.content;
+					if (slugContent !== undefined && slugContent !== null) {
+						const strSlug = String(slugContent);
+						if (!strSlug.includes('type: story')) {
+							return strSlug;
+						}
 					}
 				}
 			}
 
 			// Fallback: check mcp_results table for matching artifact
-			const resultRows = this.sql
-				.exec(
-					`SELECT content, artifacts, summary, completed_at FROM mcp_results WHERE artifacts LIKE ?`,
-					`%${cleanPath}%`,
-				)
-				.toArray();
+			let resultRows: Array<Record<string, unknown>> = [];
+			if (cleanPath.startsWith('concepts/')) {
+				resultRows = this.sql
+					.exec(
+						`SELECT content, artifacts, summary, completed_at FROM mcp_results WHERE artifacts LIKE '%concepts/%'`,
+					)
+					.toArray() as Array<Record<string, unknown>>;
+			} else {
+				resultRows = this.sql
+					.exec(
+						`SELECT content, artifacts, summary, completed_at FROM mcp_results WHERE artifacts LIKE ?`,
+						`%${cleanPath}%`,
+					)
+					.toArray() as Array<Record<string, unknown>>;
+			}
+
 			for (const r of resultRows) {
 				try {
 					const artifacts = JSON.parse(String(r.artifacts)) as string[];
-					if (Array.isArray(artifacts) && artifacts.includes(cleanPath)) {
-						if (cleanPath.startsWith('stories/')) {
-							return String(r.content ?? '');
-						}
-						if (cleanPath.startsWith('concepts/')) {
-							const conceptTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+					if (!Array.isArray(artifacts)) continue;
+
+					if (cleanPath.startsWith('stories/') && artifacts.includes(cleanPath)) {
+						return String(r.content ?? '');
+					}
+
+					if (cleanPath.startsWith('concepts/')) {
+						const targetTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+						const targetSlug = slugify(targetTitle);
+
+						const matchingArtifact = artifacts.find((a) => {
+							if (a === cleanPath) return true;
+							if (a.startsWith('concepts/')) {
+								const aTitle = a.slice('concepts/'.length).replace(/\.md$/, '');
+								return slugify(aTitle) === targetSlug;
+							}
+							return false;
+						});
+
+						if (matchingArtifact) {
+							const conceptTitle = matchingArtifact.startsWith('concepts/')
+								? matchingArtifact.slice('concepts/'.length).replace(/\.md$/, '')
+								: targetTitle;
 							const storyPath = artifacts.find((a) => a.startsWith('stories/')) ?? '';
 							const storyId = storyPath.replace(/^stories\//, '').replace(/\.md$/, '');
 							const summary = String(r.summary ?? '');
 							const completedAt = String(r.completed_at || new Date().toISOString());
 							const conceptNote: OKFConceptNote = {
 								schema_version: 'okf/v1',
-								id: slugify(conceptTitle),
+								id: targetSlug,
 								type: 'concept',
 								title: conceptTitle,
 								first_observed: completedAt,
 								last_updated: completedAt,
 								curator: 'curator',
-								tags: ['concept', slugify(conceptTitle)],
+								tags: ['concept', targetSlug],
 								description: `Core domain concept extracted from curated literature.`,
 								relatedStories: storyId ? [{ id: storyId, title: summary }] : [],
 							};
 							const formatted = formatConceptNote(conceptNote);
 							this.saveNote(cleanPath, formatted);
-							this.saveNote(`concepts/${slugify(conceptTitle)}.md`, formatted);
+							this.saveNote(`concepts/${targetSlug}.md`, formatted);
 							return formatted;
 						}
+					} else if (artifacts.includes(cleanPath)) {
 						return String(r.content ?? '');
 					}
 				} catch {
@@ -405,34 +442,61 @@ export class TaskStore {
 		}
 
 		if (this.vaultFiles.has(cleanPath)) {
-			return this.vaultFiles.get(cleanPath)!;
+			const str = this.vaultFiles.get(cleanPath)!;
+			if (!cleanPath.startsWith('concepts/') || !str.includes('type: story')) {
+				return str;
+			}
+		}
+
+		if (cleanPath.startsWith('concepts/')) {
+			const title = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+			const slugPath = `concepts/${slugify(title)}.md`;
+			if (this.vaultFiles.has(slugPath)) {
+				const str = this.vaultFiles.get(slugPath)!;
+				if (!str.includes('type: story')) return str;
+			}
 		}
 
 		for (const r of this.results.values()) {
-			if (r.artifacts.includes(cleanPath)) {
-				if (cleanPath.startsWith('stories/')) {
-					return r.content;
-				}
-				if (cleanPath.startsWith('concepts/')) {
-					const conceptTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+			if (cleanPath.startsWith('stories/') && r.artifacts.includes(cleanPath)) {
+				return r.content;
+			}
+			if (cleanPath.startsWith('concepts/')) {
+				const targetTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+				const targetSlug = slugify(targetTitle);
+				const matchingArtifact = r.artifacts.find((a) => {
+					if (a === cleanPath) return true;
+					if (a.startsWith('concepts/')) {
+						const aTitle = a.slice('concepts/'.length).replace(/\.md$/, '');
+						return slugify(aTitle) === targetSlug;
+					}
+					return false;
+				});
+
+				if (matchingArtifact) {
+					const conceptTitle = matchingArtifact.startsWith('concepts/')
+						? matchingArtifact.slice('concepts/'.length).replace(/\.md$/, '')
+						: targetTitle;
 					const storyPath = r.artifacts.find((a) => a.startsWith('stories/')) ?? '';
 					const storyId = storyPath.replace(/^stories\//, '').replace(/\.md$/, '');
 					const conceptNote: OKFConceptNote = {
 						schema_version: 'okf/v1',
-						id: slugify(conceptTitle),
+						id: targetSlug,
 						type: 'concept',
 						title: conceptTitle,
 						first_observed: r.completedAt,
 						last_updated: r.completedAt,
 						curator: 'curator',
-						tags: ['concept', slugify(conceptTitle)],
+						tags: ['concept', targetSlug],
 						description: `Core domain concept extracted from curated literature.`,
 						relatedStories: storyId ? [{ id: storyId, title: r.summary }] : [],
 					};
 					const formatted = formatConceptNote(conceptNote);
 					this.vaultFiles.set(cleanPath, formatted);
+					this.vaultFiles.set(`concepts/${targetSlug}.md`, formatted);
 					return formatted;
 				}
+			} else if (r.artifacts.includes(cleanPath)) {
 				return r.content;
 			}
 		}
@@ -441,7 +505,7 @@ export class TaskStore {
 	}
 
 	listNotes(prefix = ''): string[] {
-		const paths = new Set<string>();
+		const rawPaths = new Set<string>();
 		if (this.sql) {
 			let query = `SELECT path FROM mcp_vault_files`;
 			const bindings: unknown[] = [];
@@ -451,7 +515,7 @@ export class TaskStore {
 			}
 			const rows = this.sql.exec(query, ...bindings).toArray();
 			for (const r of rows) {
-				if (r.path) paths.add(String(r.path));
+				if (r.path) rawPaths.add(String(r.path));
 			}
 
 			// Also collect artifacts from mcp_results
@@ -461,7 +525,7 @@ export class TaskStore {
 					const artifacts = JSON.parse(String(r.artifacts)) as string[];
 					if (Array.isArray(artifacts)) {
 						for (const a of artifacts) {
-							if (a.startsWith(prefix)) paths.add(a);
+							if (a.startsWith(prefix)) rawPaths.add(a);
 						}
 					}
 				} catch {
@@ -470,15 +534,33 @@ export class TaskStore {
 			}
 		} else {
 			for (const p of this.vaultFiles.keys()) {
-				if (p.startsWith(prefix)) paths.add(p);
+				if (p.startsWith(prefix)) rawPaths.add(p);
 			}
 			for (const r of this.results.values()) {
 				for (const a of r.artifacts) {
-					if (a.startsWith(prefix)) paths.add(a);
+					if (a.startsWith(prefix)) rawPaths.add(a);
 				}
 			}
 		}
-		return Array.from(paths).sort();
+
+		// Canonicalize paths so concept notes don't duplicate (e.g. concepts/foo-bar.md vs concepts/Foo Bar.md)
+		const canonicalPaths = new Set<string>();
+		for (const p of rawPaths) {
+			const clean = p.replace(/^\/+/, '');
+			if (clean.startsWith('concepts/')) {
+				const title = clean.slice('concepts/'.length).replace(/\.md$/, '');
+				const canonical = `concepts/${slugify(title)}.md`;
+				if (!prefix || canonical.startsWith(prefix)) {
+					canonicalPaths.add(canonical);
+				}
+			} else {
+				if (!prefix || clean.startsWith(prefix)) {
+					canonicalPaths.add(clean);
+				}
+			}
+		}
+
+		return Array.from(canonicalPaths).sort();
 	}
 
 	private scheduleExecution(taskId: string): void {
@@ -1242,11 +1324,9 @@ export class TaskStore {
 					const conceptTitle = concept.replace(/^\[\[/, '').replace(/\]\]$/, '').trim();
 					const slug = slugify(conceptTitle);
 					const cPath = `concepts/${slug}.md`;
-					const cTitlePath = `concepts/${conceptTitle}.md`;
 					const cContent = (await vault.getNote(cPath)) ?? '';
 					if (cContent) {
 						this.saveNote(cPath, cContent);
-						this.saveNote(cTitlePath, cContent);
 					}
 				}
 				const idxContent = (await vault.getNote('index.md')) ?? '';
@@ -1269,7 +1349,10 @@ export class TaskStore {
 						'Automated synthesis by Muse Spark 1.3 Contributor',
 						`Significance score: ${story.significance_score}`,
 					],
-					artifacts: [path, ...concepts.map((c) => `concepts/${c.replace(/[[\]]/g, '')}.md`)],
+					artifacts: [
+						path,
+						...concepts.map((c) => `concepts/${slugify(c.replace(/[[\]]/g, '').trim())}.md`),
+					],
 					content,
 					acknowledged: false,
 					completedAt: new Date().toISOString(),
@@ -1328,7 +1411,7 @@ export class TaskStore {
 				const query = String(task.payload.query ?? '');
 				const vaultPaths = await vault.listNotes();
 				const storePaths = this.listNotes();
-				const allPaths = Array.from(new Set([...vaultPaths, ...storePaths]));
+				const allPaths = Array.from(new Set([...vaultPaths, ...storePaths])).sort();
 				const matches: Array<{ path: string; excerpt: string }> = [];
 
 				for (const path of allPaths) {
@@ -1336,8 +1419,20 @@ export class TaskStore {
 					if (!text) {
 						text = this.getNote(path);
 					}
-					if (text && text.toLowerCase().includes(query.toLowerCase())) {
-						matches.push({ path, excerpt: text.slice(0, 200) });
+					if (query.trim().length > 0 && text && text.toLowerCase().includes(query.toLowerCase())) {
+						const lowerText = text.toLowerCase();
+						const qLower = query.toLowerCase();
+						const matchIdx = lowerText.indexOf(qLower);
+						let excerpt = text.slice(0, 200);
+						if (matchIdx >= 0) {
+							const start = Math.max(0, matchIdx - 40);
+							const end = Math.min(text.length, matchIdx + qLower.length + 120);
+							excerpt =
+								(start > 0 ? '...' : '') +
+								text.slice(start, end).trim() +
+								(end < text.length ? '...' : '');
+						}
+						matches.push({ path, excerpt });
 					}
 				}
 

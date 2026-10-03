@@ -1326,4 +1326,95 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			vi.unstubAllGlobals();
 		}
 	});
+
+	it('formats distinct OKF concept notes with slug resolution and contextual excerpts in research tasks', async () => {
+		const db = new DatabaseSync(':memory:');
+		const sql = {
+			exec: (query: string, ...bindings: unknown[]) => {
+				const stmt = db.prepare(query);
+				const cleanBindings = bindings.map((b) => (b === undefined ? null : b));
+				if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(query)) {
+					const rows = stmt.all(...(cleanBindings as never[])) as Record<string, unknown>[];
+					return { toArray: () => rows };
+				}
+				stmt.run(...(cleanBindings as never[]));
+				return { toArray: () => [] };
+			},
+		};
+
+		const waitUntilPromises: Promise<unknown>[] = [];
+		const mockCtx = {
+			waitUntil: (p: Promise<unknown>) => {
+				waitUntilPromises.push(p);
+			},
+		};
+
+		const vault = new LibraryVault();
+		const store = new TaskStore(() => vault, { sql, ctx: mockCtx });
+
+		// Seed a story curation task into store
+		const task = store.submitTask({
+			type: 'curate',
+			payload: {
+				native_id: '990099',
+				title: 'Cloudflare Workers & Durable Objects',
+				url: 'https://blog.cloudflare.com/workers-and-durable-objects',
+				topics: ['Cloudflare', 'Serverless'],
+				concepts: ['[[Cloudflare Workers]]', '[[Durable Objects]]'],
+				summary: 'Deep dive into stateful serverless with Durable Objects.',
+			},
+		});
+
+		await Promise.all(waitUntilPromises);
+
+		// 1. Verify getNote on story note
+		const storyContent = store.getNote('stories/hn-990099.md');
+		expect(storyContent).not.toBeNull();
+		expect(storyContent).toContain('type: story');
+		expect(storyContent).toContain('Cloudflare Workers & Durable Objects');
+
+		// 2. Verify getNote on concept note by slug and title
+		const conceptSlug = store.getNote('concepts/durable-objects.md');
+		expect(conceptSlug).not.toBeNull();
+		expect(conceptSlug).toContain('type: concept');
+		expect(conceptSlug).not.toContain('type: story');
+		expect(conceptSlug).toContain('# Concept: Durable Objects');
+		expect(conceptSlug).toContain(
+			'[[hn-990099|Deep dive into stateful serverless with Durable Objects.]]',
+		);
+
+		const conceptTitle = store.getNote('concepts/Durable Objects.md');
+		expect(conceptTitle).not.toBeNull();
+		expect(conceptTitle).toContain('type: concept');
+		expect(conceptTitle).not.toContain('type: story');
+
+		// 3. Verify listNotes canonicalizes concept paths
+		const allNotes = store.listNotes();
+		expect(allNotes).toContain('concepts/cloudflare-workers.md');
+		expect(allNotes).toContain('concepts/durable-objects.md');
+		expect(allNotes).not.toContain('concepts/Durable Objects.md'); // canonicalized to slug
+
+		// 4. Run research task for "Cloudflare"
+		const researchTask = store.submitTask({
+			type: 'research',
+			payload: { query: 'Cloudflare' },
+		});
+		await Promise.all(waitUntilPromises);
+
+		const researchResult = store.getResult(researchTask.id);
+		expect(researchResult).not.toBeNull();
+		const matches = JSON.parse(researchResult!.content) as Array<{ path: string; excerpt: string }>;
+		expect(matches.length).toBeGreaterThanOrEqual(2);
+
+		// Every concept match MUST have type: concept in its excerpt or note, NEVER type: story
+		for (const m of matches) {
+			if (m.path.startsWith('concepts/')) {
+				const note = store.getNote(m.path);
+				expect(note).toContain('type: concept');
+				expect(note).not.toContain('type: story');
+			}
+		}
+
+		db.close();
+	});
 });
