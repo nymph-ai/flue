@@ -1088,7 +1088,13 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				total: number;
 				callbacks: Array<{
 					headers: Record<string, string>;
-					payload: { event: string; taskId: string; status: string; revision: number };
+					payload: {
+						name: string;
+						eventId: string;
+						timestamp: string;
+						data: { event: string; taskId: string; status: string; revision: number };
+						cursor: string;
+					};
 					signatureValid: boolean;
 				}>;
 			};
@@ -1096,7 +1102,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(callbacksData.total).toBeGreaterThanOrEqual(1);
 			// Find the completion event callback
 			const completionWake = callbacksData.callbacks.find(
-				(c) => c.payload.taskId === taskId && c.payload.status === 'completed',
+				(c) => c.payload.data?.taskId === taskId && c.payload.data?.status === 'completed',
 			);
 			expect(completionWake).toBeDefined();
 			expect(completionWake?.signatureValid).toBe(true);
@@ -1107,8 +1113,9 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(completionWake?.headers['x-mcp-event-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
 			expect(completionWake?.headers['x-mcp-task-id']).toBe(taskId);
 			expect(completionWake?.headers['x-mcp-cursor']).toBe('3');
-			expect(completionWake?.payload.revision).toBe(3);
-			expect((completionWake?.payload as { cursor?: string }).cursor).toBe('3');
+			expect(completionWake?.payload.name).toBe('task_changed');
+			expect(completionWake?.payload.data.revision).toBe(3);
+			expect(completionWake?.payload.cursor).toBe('3');
 
 			// 5. Dots "wakes" up from idle and calls get_result(taskId) to retrieve completed artifacts
 			const resResult = await app.request('/mcp', {

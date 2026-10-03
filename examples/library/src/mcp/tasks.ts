@@ -931,11 +931,27 @@ export class TaskStore {
 
 	private async deliverEvent(sub: SubscriptionRecord, event: TaskChangedEvent): Promise<void> {
 		const cursor = event.cursor ?? String(event.revision);
-		const eventWithCursor: TaskChangedEvent = {
-			...event,
+		const eventData = {
+			event: 'task_changed',
+			eventId: event.eventId,
+			taskId: event.taskId,
+			correlationId: event.correlationId,
+			revision: event.revision,
 			cursor,
+			status: event.status,
+			summary: event.summary,
+			resultReference: event.resultReference,
+			error: event.error,
+			timestamp: event.timestamp,
 		};
-		const payloadString = JSON.stringify(eventWithCursor);
+		const eventEnvelope = {
+			eventId: event.eventId,
+			name: 'task_changed',
+			timestamp: event.timestamp || new Date().toISOString(),
+			data: eventData,
+			cursor: cursor ?? null,
+		};
+		const payloadString = JSON.stringify(eventEnvelope);
 		const timestampSeconds = Math.floor(Date.now() / 1000).toString();
 		const headers: Record<string, string> = {
 			'content-type': 'application/json',
@@ -946,7 +962,7 @@ export class TaskStore {
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),
 			'x-mcp-cursor': cursor,
-			'x-mcp-event-type': event.event,
+			'x-mcp-event-type': 'task_changed',
 			'user-agent': 'NymphAI-Knowledge-Vault/2.0 (MCP 2026-07-28)',
 		};
 
@@ -984,7 +1000,10 @@ export class TaskStore {
 				headers,
 				body: payloadString,
 			});
-			console.log(`[mcp:deliverEvent] Delivery ${deliveryId} response: status=${res.status}`);
+			const resText = await res.text();
+			console.log(
+				`[mcp:deliverEvent] Delivery ${deliveryId} response: status=${res.status} body=${resText}`,
+			);
 
 			this.logAudit('mcp:deliverEvent:response', {
 				deliveryId,
@@ -994,6 +1013,7 @@ export class TaskStore {
 				taskId: event.taskId,
 				status: res.status,
 				ok: res.ok,
+				responseBody: resText.slice(0, 1000),
 			});
 
 			if (this.sql) {
