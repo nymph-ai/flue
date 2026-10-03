@@ -1245,10 +1245,88 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 				callbacks: Array<{ headers: Record<string, string>; payload: any }>;
 			};
 			const chg = inbox.callbacks.find((c) => c.payload?.type === 'verification');
+			expect(subJson.result.ttlMs).toBe(7 * 86400 * 1000);
 			expect(chg).toBeDefined();
 			expect(chg?.headers['x-mcp-subscription-id']).toBe(subJson.result.subscriptionId);
 			expect(chg?.headers['mcp-method']).toBe('events/subscribe');
 			expect(chg?.headers['webhook-signature']).toMatch(/^v1,/);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('handles exact OpenAI ChatGPT events/subscribe payload structure with arguments.filter and exposes get_audit_logs tool', async () => {
+		const originalFetch = globalThis.fetch;
+		vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+			const urlStr =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (
+				urlStr.startsWith('http://localhost') ||
+				urlStr.startsWith('https://library.nymphai.workers.dev')
+			) {
+				const req = input instanceof Request ? input : new Request(urlStr, init);
+				return app.fetch(req);
+			}
+			return originalFetch(input, init);
+		});
+
+		try {
+			await app.request('/mcp/test-callback', { method: 'DELETE' });
+
+			const secret = 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-1_abc99';
+			const correlationId = 'nyai-wake-test-20261003-exact-openai';
+
+			// Exactly matches what ChatGPT OpenAI MCP client transmits
+			const resSub = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 11,
+					method: 'events/subscribe',
+					params: {
+						name: 'task_changed',
+						arguments: {
+							filter: {
+								correlationId,
+							},
+						},
+						delivery: {
+							mode: 'webhook',
+							url: `http://localhost/mcp/test-callback?secret=${secret}`,
+							secret,
+						},
+						cursor: null,
+					},
+				}),
+			});
+			expect(resSub.status).toBe(200);
+			const subJson = (await resSub.json()) as any;
+			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+			expect(subJson.result.ttlMs).toBe(7 * 86400 * 1000);
+			expect(subJson.result.refreshBefore).toBeDefined();
+			// Crucial: Must NOT replay unrelated historical tasks
+			expect(subJson.result.replayedEventsCount).toBe(0);
+			expect(subJson.result.filter).toEqual({ correlationId });
+
+			// Verify get_audit_logs MCP tool
+			const resTool = await app.request('/mcp', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 12,
+					method: 'tools/call',
+					params: {
+						name: 'get_audit_logs',
+						arguments: { limit: 10 },
+					},
+				}),
+			});
+			expect(resTool.status).toBe(200);
+			const toolJson = (await resTool.json()) as any;
+			expect(toolJson.result.content[0].text).toContain('events/subscribe:received');
+			expect(toolJson.result.content[0].text).toContain('events/subscribe:success');
 		} finally {
 			vi.unstubAllGlobals();
 		}

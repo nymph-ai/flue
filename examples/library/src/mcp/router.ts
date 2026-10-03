@@ -154,6 +154,21 @@ export const COMMAND_TOOLS = [
 		},
 		annotations: { destructiveHint: false },
 	},
+	{
+		name: 'get_audit_logs',
+		description:
+			'Retrieve recent audit logs for MCP subscriptions, challenge verifications, and event deliveries. Useful for diagnosing connection handshakes and delivery statuses.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				limit: {
+					type: 'integer',
+					description: 'Maximum number of audit log records to return (default: 50).',
+				},
+			},
+		},
+		annotations: { destructiveHint: false },
+	},
 ];
 
 export const EVENT_DEFINITIONS = [
@@ -423,12 +438,19 @@ export function createMcpRouter(
 		return c.json(getOpenApiSpec(origin));
 	});
 
-	router.get('/audit-logs', async (c) => {
+	const handleAuditLogs = async (c: any) => {
 		const store = resolveStore(c.env);
 		const limit = Number(c.req.query('limit')) || 50;
 		const logs = store.getAuditLogs ? await store.getAuditLogs(limit) : [];
-		return c.json({ total: logs.length, logs });
-	});
+		return c.json({ total: logs.length, logs }, 200, {
+			'access-control-allow-origin': '*',
+			'access-control-allow-methods': 'GET, OPTIONS',
+			'access-control-allow-headers': '*',
+		});
+	};
+
+	router.get('/audit-logs', handleAuditLogs);
+	router.get('/mcp/audit-logs', handleAuditLogs);
 
 	const handleTestCallback = async (c: any) => {
 		const secret = c.req.query('secret');
@@ -625,20 +647,29 @@ export function createMcpRouter(
 					: undefined;
 
 			const args = (params.arguments ?? params.filter ?? {}) as Record<string, unknown>;
+			const nestedFilter = (args.filter ?? params.filter ?? {}) as Record<string, unknown>;
 			const taskId = args.taskId
 				? String(args.taskId)
 				: args.task_id
 					? String(args.task_id)
-					: params.taskId
-						? String(params.taskId)
-						: undefined;
+					: nestedFilter.taskId
+						? String(nestedFilter.taskId)
+						: nestedFilter.task_id
+							? String(nestedFilter.task_id)
+							: params.taskId
+								? String(params.taskId)
+								: undefined;
 			const correlationId = args.correlationId
 				? String(args.correlationId)
 				: args.correlation_id
 					? String(args.correlation_id)
-					: params.correlationId
-						? String(params.correlationId)
-						: undefined;
+					: nestedFilter.correlationId
+						? String(nestedFilter.correlationId)
+						: nestedFilter.correlation_id
+							? String(nestedFilter.correlation_id)
+							: params.correlationId
+								? String(params.correlationId)
+								: undefined;
 			const filter = taskId || correlationId ? { taskId, correlationId } : undefined;
 
 			const rawCursor = params.cursor ?? params.fromRevision ?? args.cursor;
@@ -853,10 +884,14 @@ export function createMcpRouter(
 				});
 			}
 
+			const ttlMs = 7 * 86400 * 1000;
+			const refreshBefore = new Date(Date.now() + ttlMs).toISOString();
+
 			return rpcSuccess(id, {
+				refreshBefore,
+				ttlMs,
 				subscriptionId: subscription.id,
 				id: subscription.id,
-				refreshBefore: new Date(Date.now() + 7 * 86400000).toISOString(),
 				cursor,
 				delivery: {
 					type: 'webhook',
@@ -1007,6 +1042,13 @@ export function createMcpRouter(
 						return toolResult(id, `Note not found: ${path}`, true);
 					}
 					return toolResult(id, content);
+				}
+
+				case 'get_audit_logs': {
+					const limit =
+						typeof args.limit === 'number' ? Math.min(Math.max(args.limit, 1), 100) : 50;
+					const logs = taskStore.getAuditLogs ? await taskStore.getAuditLogs(limit) : [];
+					return toolResult(id, JSON.stringify({ total: logs.length, logs }, null, 2));
 				}
 
 				default:
