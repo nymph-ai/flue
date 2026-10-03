@@ -121,7 +121,7 @@ export class FabricLibraryClient {
 		callbackUrl: string;
 		secret?: string;
 		filter?: { taskId?: string; correlationId?: string };
-	}): Promise<{ subscriptionId: string }> {
+	}): Promise<{ id: string; refreshBefore: string; cursor: string | null; truncated: boolean }> {
 		return this.rpc('events/subscribe', {
 			callbackUrl: params.callbackUrl,
 			secret: params.secret ?? this.secret,

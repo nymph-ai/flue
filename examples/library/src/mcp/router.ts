@@ -887,20 +887,18 @@ export function createMcpRouter(
 			const ttlMs = 7 * 86400 * 1000;
 			const refreshBefore = new Date(Date.now() + ttlMs).toISOString();
 
+			const resCursor =
+				cursorParam !== undefined && cursorParam !== null
+					? cursorParam
+					: replayedEvents.length > 0
+						? cursor
+						: null;
+
 			return rpcSuccess(id, {
-				refreshBefore,
-				ttlMs,
-				subscriptionId: subscription.id,
 				id: subscription.id,
-				cursor,
-				delivery: {
-					type: 'webhook',
-					mode: 'webhook',
-					url: subscription.callbackUrl,
-				},
-				callbackUrl: subscription.callbackUrl,
-				replayedEventsCount: replayedEvents.length,
-				filter: subscription.filter,
+				refreshBefore,
+				cursor: resCursor,
+				truncated: false,
 			});
 		}
 
@@ -908,8 +906,8 @@ export function createMcpRouter(
 		if (method === 'events/unsubscribe') {
 			const params = body.params ?? {};
 			const subId = String(params.subscriptionId ?? params.subscription_id ?? params.id ?? '');
-			const ok = await taskStore.unsubscribe(subId);
-			return rpcSuccess(id, { success: ok, subscriptionId: subId });
+			await taskStore.unsubscribe(subId);
+			return rpcSuccess(id, {});
 		}
 
 		// 8. tools/call

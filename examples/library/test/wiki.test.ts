@@ -423,22 +423,15 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(resSub.status).toBe(200);
 		const subJson = (await resSub.json()) as {
 			result: {
-				subscriptionId: string;
 				id: string;
 				refreshBefore: string;
-				cursor: string;
-				delivery: { type: string; url: string };
-				callbackUrl: string;
+				cursor: string | null;
+				truncated: boolean;
 			};
 		};
-		expect(subJson.result.subscriptionId).toMatch(/^sub_/);
-		expect(subJson.result.id).toBe(subJson.result.subscriptionId);
+		expect(subJson.result.id).toMatch(/^sub_/);
 		expect(subJson.result.refreshBefore).toBeDefined();
-		expect(subJson.result.cursor).toBeDefined();
-		expect(subJson.result.delivery.type).toBe('webhook');
-		expect(subJson.result.delivery.url).toBe(
-			'https://chatgpt.openai.com/api/mcp/callbacks/dot-123',
-		);
+		expect(subJson.result.truncated).toBe(false);
 
 		// 5. POST /mcp tools/call submit_task (asynchronous job submission)
 		const resSubmit = await mcp.request('/', {
@@ -620,9 +613,11 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 		expect(resReplaySub.status).toBe(200);
 		const replaySubJson = (await resReplaySub.json()) as {
-			result: { replayedEventsCount: number };
+			result: { id: string; cursor: string | null; truncated: boolean };
 		};
-		expect(replaySubJson.result.replayedEventsCount).toBeGreaterThan(0);
+		expect(replaySubJson.result.id).toMatch(/^sub_/);
+		expect(replaySubJson.result.cursor).toBeDefined();
+		expect(replaySubJson.result.truncated).toBe(false);
 	});
 
 	it('persists tasks, results, events, and subscriptions to SQLite via TaskStore with Durable Object storage', async () => {
@@ -1032,20 +1027,15 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(resSub.status).toBe(200);
 			const subJson = (await resSub.json()) as {
 				result: {
-					subscriptionId: string;
 					id: string;
 					refreshBefore: string;
-					cursor: string;
-					delivery: { type: string; url: string };
-					callbackUrl: string;
+					cursor: string | null;
+					truncated: boolean;
 				};
 			};
-			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
-			expect(subJson.result.id).toBe(subJson.result.subscriptionId);
+			expect(subJson.result.id).toMatch(/^sub_/);
 			expect(subJson.result.refreshBefore).toBeDefined();
-			expect(subJson.result.cursor).toBeDefined();
-			expect(subJson.result.delivery.type).toBe('webhook');
-			expect(subJson.result.delivery.url).toContain('/mcp/test-callback');
+			expect(subJson.result.truncated).toBe(false);
 
 			// 2. OpenAI Dots submits an asynchronous long-running task
 			const resSubmit = await app.request('/mcp', {
@@ -1302,12 +1292,10 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			});
 			expect(resSub.status).toBe(200);
 			const subJson = (await resSub.json()) as any;
-			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
-			expect(subJson.result.ttlMs).toBe(7 * 86400 * 1000);
+			expect(subJson.result.id).toMatch(/^sub_/);
 			expect(subJson.result.refreshBefore).toBeDefined();
-			// Crucial: Must NOT replay unrelated historical tasks
-			expect(subJson.result.replayedEventsCount).toBe(0);
-			expect(subJson.result.filter).toEqual({ correlationId });
+			expect(subJson.result.cursor).toBeNull();
+			expect(subJson.result.truncated).toBe(false);
 
 			// Verify get_audit_logs MCP tool
 			const resTool = await app.request('/mcp', {
