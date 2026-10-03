@@ -72,7 +72,7 @@ export class EventProjection {
 			return { events: [], nextCursor: null, headCursor: null };
 		}
 
-		const headCursor = stream[stream.length - 1]!.cursor;
+		const headCursor = stream[stream.length - 1]?.cursor ?? null;
 
 		let startIndex = 0;
 		if (afterCursor) {
@@ -83,7 +83,8 @@ export class EventProjection {
 		}
 
 		const slice = stream.slice(startIndex, startIndex + limit);
-		const nextCursor = slice.length > 0 ? slice[slice.length - 1]!.cursor : afterCursor ?? null;
+		const nextCursor =
+			slice.length > 0 ? (slice[slice.length - 1]?.cursor ?? null) : afterCursor ?? null;
 
 		return {
 			events: slice,
@@ -98,7 +99,7 @@ export class EventProjection {
 	getHeadCursor(streamId: string): string | null {
 		const stream = this.streams.get(streamId);
 		if (!stream || stream.length === 0) return null;
-		return stream[stream.length - 1]!.cursor;
+		return stream[stream.length - 1]?.cursor ?? null;
 	}
 
 	/**
@@ -231,7 +232,10 @@ export class EventProjection {
 
 		let binary = '';
 		for (let i = 0; i < sigBytes.length; i++) {
-			binary += String.fromCharCode(sigBytes[i]!);
+			const byte = sigBytes[i];
+			if (byte !== undefined) {
+				binary += String.fromCharCode(byte);
+			}
 		}
 		const b64 = btoa(binary);
 		return `v1,${b64}`;
@@ -246,12 +250,13 @@ export class EventProjection {
 	 */
 	readHeadResource(streamId: string): { content: string; mimeType: string } {
 		const stream = this.streams.get(streamId) ?? [];
-		const headCursor = stream.length > 0 ? stream[stream.length - 1]!.cursor : null;
+		const lastEvent = stream.length > 0 ? stream[stream.length - 1] : undefined;
+		const headCursor = lastEvent?.cursor ?? null;
 		const payload = {
 			streamId,
 			headCursor,
 			eventCount: stream.length,
-			updatedAt: stream.length > 0 ? stream[stream.length - 1]!.timestamp : new Date().toISOString(),
+			updatedAt: lastEvent?.timestamp ?? new Date().toISOString(),
 		};
 		return {
 			content: JSON.stringify(payload, null, 2),

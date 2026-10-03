@@ -18,10 +18,8 @@ import { ServerCardManager } from './server-card.ts';
 import { SkillManager } from './skills.ts';
 import type {
 	AuthContext,
-	Capability,
 	CapabilityResult,
 	ClientExtensionCapabilities,
-	McpProtocolVersion,
 	ProjectionProfile,
 	RequestContext,
 	ResolvedClientCapabilities,
@@ -853,7 +851,7 @@ export class McpCapabilityProjection {
 
 		// 8. Custom registered resource
 		const custom = this.registry.getAllResources().find((r) => r.uri === uri);
-		if (custom && custom.read) {
+		if (custom?.read) {
 			const res = await custom.read(context);
 			const text = typeof res.content === 'string' ? res.content : undefined;
 			const blob =
