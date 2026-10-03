@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_model": "fabric_library_vault",
+  "name_for_human": "Fabric Knowledge Library",
+  "description_for_model": "Autonomous technical knowledge vault in Google Open Knowledge Format (OKF) with MCP 2.0 (2026-07-28) and native MCP Events. Supports fast edge note search, raw OKF note fetching (stories, concepts, MOC index), and long-running asynchronous task submission (curation, synthesis, topic research). Persisted in Cloudflare DO SQLite with background signed webhook callbacks (x-mcp-event-signature HMAC SHA-256) that wake idle conversations when background jobs complete.",
+  "description_for_human": "Autonomous Knowledge Vault in Google OKF with MCP 2.0 and native MCP Events.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://library.nymphai.workers.dev/openapi.json"
+  },
+  "logo_url": "https://library.nymphai.workers.dev/logo.png",
+  "contact_email": "nympharum@proton.me",
+  "legal_info_url": "https://library.nymphai.workers.dev/wiki"
+}

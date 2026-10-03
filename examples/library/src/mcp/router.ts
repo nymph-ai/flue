@@ -4,11 +4,30 @@
  * - Commands: submit_task, get_task, get_result, cancel_task, search, fetch, acknowledge_result.
  * - Events: events/list, events/subscribe, events/unsubscribe, task_changed notifications.
  * - Atomic durable results with sources, versions, limitations, and signed webhook deliveries.
+ * - Stateless edge ingress with delegation to Durable Object SQLite backend.
  */
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
-import { getOrCreateTaskStore, TaskStore } from './tasks.ts';
+import { getOpenApiSpec } from './openapi.ts';
+import {
+	constantTimeEqual,
+	deriveSubscriptionId,
+	getOrCreateTaskStore,
+	signPayload,
+	signStandardWebhook,
+	TaskStore,
+	verifyPayloadSignature,
+	verifyStandardWebhook,
+} from './tasks.ts';
+import type {
+	DeliveryRecord,
+	SubscriptionRecord,
+	TaskChangedEvent,
+	TaskRecord,
+	TaskResult,
+} from './types.ts';
 
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
 export const SERVER_INFO = {
@@ -26,15 +45,18 @@ export const COMMAND_TOOLS = [
 			properties: {
 				task_type: {
 					type: 'string',
-					description: 'Type of task to execute ("curate" | "synthesize" | "research" | "rebuild_index").',
+					description:
+						'Type of task to execute ("curate" | "synthesize" | "research" | "rebuild_index").',
 				},
 				payload: {
 					type: 'object',
-					description: 'Arguments for the task (e.g. native_id, title, url, summary, concepts, query).',
+					description:
+						'Arguments for the task (e.g. native_id, title, url, summary, concepts, query).',
 				},
 				correlation_id: {
 					type: 'string',
-					description: 'Optional caller-supplied correlation ID (e.g. Dot conversation ID or thread ID).',
+					description:
+						'Optional caller-supplied correlation ID (e.g. Dot conversation ID or thread ID).',
 				},
 			},
 			required: ['task_type', 'payload'],
@@ -69,8 +91,7 @@ export const COMMAND_TOOLS = [
 	},
 	{
 		name: 'cancel_task',
-		description:
-			'Cancel an in-flight or queued task, preventing or aborting further work.',
+		description: 'Cancel an in-flight or queued task, preventing or aborting further work.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -106,7 +127,10 @@ export const COMMAND_TOOLS = [
 		inputSchema: {
 			type: 'object',
 			properties: {
-				path: { type: 'string', description: 'Relative path of the note, e.g. "stories/hn-49930412.md".' },
+				path: {
+					type: 'string',
+					description: 'Relative path of the note, e.g. "stories/hn-49930412.md".',
+				},
 			},
 			required: ['path'],
 		},
@@ -122,10 +146,26 @@ export const COMMAND_TOOLS = [
 				task_id: { type: 'string', description: 'The task ID whose result is being acknowledged.' },
 				receipt: {
 					type: 'object',
-					description: 'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
+					description:
+						'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
 				},
 			},
 			required: ['task_id'],
+		},
+		annotations: { destructiveHint: false },
+	},
+	{
+		name: 'get_audit_logs',
+		description:
+			'Retrieve recent audit logs for MCP subscriptions, challenge verifications, and event deliveries. Useful for diagnosing connection handshakes and delivery statuses.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				limit: {
+					type: 'integer',
+					description: 'Maximum number of audit log records to return (default: 50).',
+				},
+			},
 		},
 		annotations: { destructiveHint: false },
 	},
@@ -135,7 +175,53 @@ export const EVENT_DEFINITIONS = [
 	{
 		name: 'task_changed',
 		description:
-			'Fired whenever a task changes state (queued, running, completed, failed, input_required, cancelled). Includes revision, correlation ID, and result reference.',
+			'Fired whenever an asynchronous task changes state (queued, running, completed, failed, input_required, cancelled). Delivers state revision, cursor, status, summary, and durable result reference.',
+		delivery: ['webhook'],
+		inputSchema: {
+			type: 'object',
+			properties: {
+				filter: {
+					type: 'object',
+					properties: {
+						taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
+						correlationId: {
+							type: 'string',
+							description: 'Filter notifications to a specific conversation or correlation ID.',
+						},
+					},
+					description: 'Optional filter criteria for events.',
+				},
+				taskId: { type: 'string', description: 'Filter notifications to a specific task ID.' },
+				correlationId: {
+					type: 'string',
+					description: 'Filter notifications to a specific conversation or correlation ID.',
+				},
+				cursor: {
+					type: 'string',
+					description: 'Opaque cursor for event streaming and replay.',
+				},
+			},
+		},
+		payloadSchema: {
+			type: 'object',
+			properties: {
+				event: { type: 'string', enum: ['task_changed'] },
+				eventId: { type: 'string', description: 'Unique UUID for event deduplication.' },
+				taskId: { type: 'string', description: 'Durable task ID.' },
+				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
+				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
+				status: {
+					type: 'string',
+					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
+				},
+				summary: { type: 'string', description: 'Human-readable summary of the state change.' },
+				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
+				error: { type: 'string', description: 'Error message if status is failed.' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
+			},
+			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
+		},
 		schema: {
 			type: 'object',
 			properties: {
@@ -144,19 +230,65 @@ export const EVENT_DEFINITIONS = [
 				taskId: { type: 'string', description: 'Durable task ID.' },
 				correlationId: { type: 'string', description: 'Caller-supplied correlation ID.' },
 				revision: { type: 'integer', description: 'Monotonically increasing state revision.' },
+				cursor: { type: 'string', description: 'Opaque cursor for event streaming and replay.' },
 				status: {
 					type: 'string',
 					enum: ['queued', 'running', 'completed', 'failed', 'input_required', 'cancelled'],
 				},
-				summary: { type: 'string', description: 'Short human-readable summary of the state change.' },
+				summary: {
+					type: 'string',
+					description: 'Short human-readable summary of the state change.',
+				},
 				resultReference: { type: 'string', description: 'URI pointing to the durable result.' },
 				error: { type: 'string', description: 'Error message if status is failed.' },
-				timestamp: { type: 'string', description: 'ISO-8601 timestamp.' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO-8601 timestamp.' },
 			},
 			required: ['event', 'eventId', 'taskId', 'revision', 'status', 'summary', 'timestamp'],
 		},
 	},
 ];
+
+export interface McpTaskStore {
+	submitTask(params: {
+		type: string;
+		payload: Record<string, unknown>;
+		correlationId?: string;
+	}): Promise<TaskRecord> | TaskRecord;
+	getTask(taskId: string): Promise<TaskRecord | null> | TaskRecord | null;
+	getResult(taskId: string): Promise<TaskResult | null> | TaskResult | null;
+	cancelTask(taskId: string, reason?: string): Promise<boolean> | boolean;
+	acknowledgeResult(taskId: string, receipt?: unknown): Promise<boolean> | boolean;
+	subscribe(params: {
+		callbackUrl: string;
+		secret?: string;
+		filter?: { taskId?: string; correlationId?: string };
+		fromRevision?: number;
+		cursor?: string;
+		subscriptionId?: string;
+	}):
+		| Promise<{
+				subscription: SubscriptionRecord;
+				replayedEvents: TaskChangedEvent[];
+				cursor: string;
+		  }>
+		| { subscription: SubscriptionRecord; replayedEvents: TaskChangedEvent[]; cursor: string };
+	unsubscribe(subscriptionId: string): Promise<boolean> | boolean;
+	listEvents(filter?: {
+		taskId?: string;
+		correlationId?: string;
+		fromRevision?: number;
+		cursor?: string;
+	}): Promise<TaskChangedEvent[]> | TaskChangedEvent[];
+	getDeliveryRecords(taskId?: string): Promise<DeliveryRecord[]> | DeliveryRecord[];
+	getNote?(path: string): Promise<string | null> | string | null;
+	listNotes?(prefix?: string): Promise<string[]> | string[];
+	logAudit?(category: string, details: Record<string, unknown>): Promise<void> | void;
+	getAuditLogs?(
+		limit?: number,
+	):
+		| Promise<Array<{ id: string; category: string; details: unknown; timestamp: string }>>
+		| Array<{ id: string; category: string; details: unknown; timestamp: string }>;
+}
 
 function rpcSuccess(id: unknown, result: unknown): Response {
 	return Response.json({ jsonrpc: '2.0', id, result });
@@ -173,60 +305,233 @@ function toolResult(id: unknown, text: string, isError = false): Response {
 	});
 }
 
+const testCallbacks: Array<{
+	receivedAt: string;
+	headers: Record<string, string>;
+	payload: unknown;
+	signatureValid?: boolean;
+}> = [];
+
 export function createMcpRouter(
 	getVault: (env?: Record<string, unknown>) => LibraryVault = getOrCreateVault,
 	getTaskStore: (vaultFn?: () => LibraryVault) => TaskStore = getOrCreateTaskStore,
 ) {
 	const router = new Hono<{ Bindings: Record<string, unknown> }>();
 
+	router.use(
+		'*',
+		cors({
+			origin: '*',
+			allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+			allowHeaders: [
+				'Content-Type',
+				'Authorization',
+				'x-mcp-event-signature',
+				'x-mcp-event-id',
+				'x-mcp-task-id',
+				'x-mcp-revision',
+				'x-mcp-cursor',
+				'x-mcp-event-type',
+			],
+			exposeHeaders: [
+				'x-mcp-event-signature',
+				'x-mcp-event-id',
+				'x-mcp-task-id',
+				'x-mcp-revision',
+				'x-mcp-cursor',
+				'x-mcp-event-type',
+			],
+		}),
+	);
+
+	router.options('*', () => new Response(null, { status: 204 }));
+
 	const resolveTaskStore = () => getTaskStore(() => getVault());
 	const resolveVault = (env?: Record<string, unknown>) => getVault(env);
+
+	const resolveStore = (env?: Record<string, unknown>): McpTaskStore => {
+		const curatorBinding = env?.FLUE_CURATOR_AGENT as { getByName(name: string): any } | undefined;
+		if (curatorBinding && typeof curatorBinding.getByName === 'function') {
+			const stub = curatorBinding.getByName('curator');
+			return {
+				submitTask: (params) => stub.submitMcpTask(params),
+				getTask: (taskId) => stub.getMcpTask(taskId),
+				getResult: (taskId) => stub.getMcpResult(taskId),
+				cancelTask: (taskId, reason) => stub.cancelMcpTask(taskId, reason),
+				acknowledgeResult: (taskId, receipt) => stub.acknowledgeMcpResult(taskId, receipt),
+				subscribe: (params) => stub.subscribeMcp(params),
+				unsubscribe: (subId) => stub.unsubscribeMcp(subId),
+				listEvents: (filter) => stub.listMcpEvents(filter),
+				getDeliveryRecords: (taskId) => stub.getMcpDeliveries(taskId),
+				getNote: (path) => stub.getMcpNote(path),
+				listNotes: (prefix) => stub.listMcpNotes(prefix),
+				logAudit: (category, details) => stub.logMcpAudit(category, details),
+				getAuditLogs: (limit) => stub.getMcpAuditLogs(limit),
+			};
+		}
+		return resolveTaskStore();
+	};
 
 	// GET /mcp — Discovery and protocol capability negotiation
 	router.get('/', (c) =>
 		c.json({
+			resultType: 'complete',
 			name: SERVER_INFO.name,
 			version: SERVER_INFO.version,
 			protocol: MCP_PROTOCOL_VERSION,
+			protocolVersion: MCP_PROTOCOL_VERSION,
+			supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+			serverInfo: SERVER_INFO,
+			_meta: SERVER_INFO,
 			capabilities: {
 				tools: { listChanged: false },
 				events: { subscribe: true, list: true, history: true },
+				resources: { subscribe: false, listChanged: false },
+				prompts: { listChanged: false },
 			},
 			tools: COMMAND_TOOLS.map((t) => t.name),
 			events: EVENT_DEFINITIONS.map((e) => e.name),
+			toolDefinitions: COMMAND_TOOLS,
+			eventDefinitions: EVENT_DEFINITIONS,
 			endpoints: {
 				rpc: '/mcp',
 				tasks: '/mcp/tasks',
 				results: '/mcp/results',
 				events: '/mcp/events',
+				deliveries: '/mcp/deliveries',
+				testCallback: '/mcp/test-callback',
 			},
 		}),
 	);
 
 	// REST endpoints for direct inspection
-	router.get('/tasks/:id', (c) => {
-		const task = resolveTaskStore().getTask(c.req.param('id'));
+	router.get('/tasks/:id', async (c) => {
+		const store = resolveStore(c.env);
+		const task = await store.getTask(c.req.param('id'));
 		if (!task) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		return c.json(task);
 	});
 
-	router.get('/results/:id', (c) => {
-		const result = resolveTaskStore().getResult(c.req.param('id'));
+	router.get('/results/:id', async (c) => {
+		const store = resolveStore(c.env);
+		const result = await store.getResult(c.req.param('id'));
 		if (!result) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		return c.json(result);
 	});
 
-	router.get('/events', (c) => {
+	router.get('/events', async (c) => {
+		const store = resolveStore(c.env);
 		const taskId = c.req.query('taskId');
 		const correlationId = c.req.query('correlationId');
-		const events = resolveTaskStore().listEvents({ taskId, correlationId });
+		const events = await store.listEvents({ taskId, correlationId });
 		return c.json({ total: events.length, events });
 	});
 
-	router.get('/deliveries/:taskId', (c) => {
-		const deliveries = resolveTaskStore().getDeliveryRecords(c.req.param('taskId'));
+	router.get('/deliveries/:taskId', async (c) => {
+		const store = resolveStore(c.env);
+		const deliveries = await store.getDeliveryRecords(c.req.param('taskId'));
 		return c.json({ total: deliveries.length, deliveries });
 	});
+
+	router.get('/openapi.json', (c) => {
+		const origin = new URL(c.req.url).origin;
+		return c.json(getOpenApiSpec(origin));
+	});
+
+	const handleAuditLogs = async (c: any) => {
+		const store = resolveStore(c.env);
+		const limit = Number(c.req.query('limit')) || 50;
+		const logs = store.getAuditLogs ? await store.getAuditLogs(limit) : [];
+		return c.json({ total: logs.length, logs }, 200, {
+			'access-control-allow-origin': '*',
+			'access-control-allow-methods': 'GET, OPTIONS',
+			'access-control-allow-headers': '*',
+		});
+	};
+
+	router.get('/audit-logs', handleAuditLogs);
+	router.get('/mcp/audit-logs', handleAuditLogs);
+
+	const handleTestCallback = async (c: any) => {
+		const secret = c.req.query('secret');
+		const sigHeader = c.req.header('x-mcp-event-signature');
+		const rawText = await c.req.text();
+		let payload: unknown = null;
+		try {
+			payload = JSON.parse(rawText);
+		} catch {
+			payload = rawText;
+		}
+
+		let signatureValid: boolean | undefined = undefined;
+		if (secret) {
+			if (sigHeader) {
+				signatureValid = await verifyPayloadSignature(secret, rawText, sigHeader);
+			} else {
+				const standardSig = c.req.header('webhook-signature');
+				const msgId = c.req.header('webhook-id');
+				const ts = c.req.header('webhook-timestamp');
+				if (standardSig && msgId && ts) {
+					signatureValid = await verifyStandardWebhook(secret, msgId, ts, rawText, standardSig);
+				}
+			}
+		}
+
+		const headers: Record<string, string> = {};
+		for (const [k, v] of Object.entries(c.req.header())) {
+			if (typeof v === 'string') headers[k] = v;
+		}
+
+		const record = {
+			receivedAt: new Date().toISOString(),
+			headers,
+			payload,
+			signatureValid,
+		};
+		testCallbacks.push(record);
+
+		if (
+			payload &&
+			typeof payload === 'object' &&
+			(payload as Record<string, unknown>).type === 'verification'
+		) {
+			const challenge = (payload as Record<string, unknown>).challenge;
+			return c.json({
+				ok: true,
+				challenge,
+				received: true,
+				signatureValid,
+			});
+		}
+
+		return c.json({
+			ok: true,
+			received: true,
+			signatureValid,
+			eventId: c.req.header('x-mcp-event-id'),
+			taskId: c.req.header('x-mcp-task-id'),
+		});
+	};
+
+	router.post('/test-callback', handleTestCallback);
+	router.post('/mcp/test-callback', handleTestCallback);
+
+	const getTestCallback = (c: any) => {
+		return c.json({
+			total: testCallbacks.length,
+			callbacks: testCallbacks,
+		});
+	};
+
+	const deleteTestCallback = (c: any) => {
+		testCallbacks.length = 0;
+		return c.json({ cleared: true });
+	};
+
+	router.get('/test-callback', getTestCallback);
+	router.get('/mcp/test-callback', getTestCallback);
+	router.delete('/test-callback', deleteTestCallback);
+	router.delete('/mcp/test-callback', deleteTestCallback);
 
 	// POST /mcp — Unified JSON-RPC 2.0 Handler
 	router.post('/', async (c) => {
@@ -239,18 +544,52 @@ export function createMcpRouter(
 
 		const id = body.id ?? null;
 		const method = body.method;
-		const taskStore = resolveTaskStore();
+		const taskStore = resolveStore(c.env);
 		const vault = resolveVault(c.env);
 
-		// 1. initialize
-		if (method === 'initialize') {
+		// 0. server/discover (Stateless discovery mandatory in MCP 2026-07-28)
+		if (
+			method === 'server/discover' ||
+			method === 'discover' ||
+			method === 'server/info' ||
+			method === 'server/capabilities'
+		) {
 			return rpcSuccess(id, {
+				resultType: 'complete',
 				protocolVersion: MCP_PROTOCOL_VERSION,
+				supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+				serverInfo: SERVER_INFO,
+				_meta: SERVER_INFO,
 				capabilities: {
 					tools: { listChanged: false },
 					events: { subscribe: true, list: true, history: true },
+					resources: { subscribe: false, listChanged: false },
+					prompts: { listChanged: false },
+				},
+				instructions:
+					'Autonomous Knowledge Vault with MCP Events for OpenAI Dots. Submit tasks asynchronously, subscribe to task_changed events, and retrieve verified durable results.',
+				tools: COMMAND_TOOLS,
+				events: EVENT_DEFINITIONS,
+			});
+		}
+
+		// 1. initialize
+		if (method === 'initialize') {
+			const reqVersion =
+				typeof body.params?.protocolVersion === 'string'
+					? body.params.protocolVersion
+					: MCP_PROTOCOL_VERSION;
+			return rpcSuccess(id, {
+				protocolVersion: reqVersion,
+				supportedVersions: [MCP_PROTOCOL_VERSION, '2024-11-05'],
+				capabilities: {
+					tools: { listChanged: false },
+					events: { subscribe: true, list: true, history: true },
+					resources: { subscribe: false, listChanged: false },
+					prompts: { listChanged: false },
 				},
 				serverInfo: SERVER_INFO,
+				_meta: SERVER_INFO,
 				instructions:
 					'Autonomous Knowledge Vault with MCP Events for OpenAI Dots. Submit tasks asynchronously, subscribe to task_changed events, and retrieve verified durable results.',
 			});
@@ -266,6 +605,16 @@ export function createMcpRouter(
 			return rpcSuccess(id, {});
 		}
 
+		// resources/list
+		if (method === 'resources/list') {
+			return rpcSuccess(id, { resources: [] });
+		}
+
+		// prompts/list
+		if (method === 'prompts/list') {
+			return rpcSuccess(id, { prompts: [] });
+		}
+
 		// 4. tools/list
 		if (method === 'tools/list') {
 			return rpcSuccess(id, { tools: COMMAND_TOOLS });
@@ -279,35 +628,286 @@ export function createMcpRouter(
 		// 6. events/subscribe
 		if (method === 'events/subscribe') {
 			const params = body.params ?? {};
-			const callbackUrl = String(params.callbackUrl ?? params.callback_url ?? '');
+			console.log(`[mcp:events/subscribe] Incoming params: ${JSON.stringify(params)}`);
+			const delivery = (params.delivery ?? {}) as Record<string, unknown>;
+			const callbackUrl = String(
+				delivery.url ?? delivery.callbackUrl ?? params.callbackUrl ?? params.callback_url ?? '',
+			);
 			if (!callbackUrl) {
-				return rpcError(id, -32602, 'events/subscribe requires a callbackUrl parameter');
+				return rpcError(
+					id,
+					-32602,
+					'events/subscribe requires a delivery.url or callbackUrl parameter',
+				);
 			}
-			const secret = params.secret ? String(params.secret) : undefined;
-			const filter = params.filter as { taskId?: string; correlationId?: string } | undefined;
-			const fromRevision = typeof params.fromRevision === 'number' ? params.fromRevision : undefined;
+			const secret = delivery.secret
+				? String(delivery.secret)
+				: params.secret
+					? String(params.secret)
+					: undefined;
 
-			const { subscription, replayedEvents } = await taskStore.subscribe({
+			const args = (params.arguments ?? params.filter ?? {}) as Record<string, unknown>;
+			const nestedFilter = (args.filter ?? params.filter ?? {}) as Record<string, unknown>;
+			const taskId = args.taskId
+				? String(args.taskId)
+				: args.task_id
+					? String(args.task_id)
+					: nestedFilter.taskId
+						? String(nestedFilter.taskId)
+						: nestedFilter.task_id
+							? String(nestedFilter.task_id)
+							: params.taskId
+								? String(params.taskId)
+								: undefined;
+			const correlationId = args.correlationId
+				? String(args.correlationId)
+				: args.correlation_id
+					? String(args.correlation_id)
+					: nestedFilter.correlationId
+						? String(nestedFilter.correlationId)
+						: nestedFilter.correlation_id
+							? String(nestedFilter.correlation_id)
+							: params.correlationId
+								? String(params.correlationId)
+								: undefined;
+			const filter = taskId || correlationId ? { taskId, correlationId } : undefined;
+
+			const rawCursor = params.cursor ?? params.fromRevision ?? args.cursor;
+			let fromRevision: number | undefined = undefined;
+			if (typeof rawCursor === 'number') {
+				fromRevision = rawCursor;
+			} else if (typeof rawCursor === 'string' && rawCursor.trim() !== '') {
+				const parsed = parseInt(rawCursor, 10);
+				if (!Number.isNaN(parsed)) {
+					fromRevision = parsed;
+				}
+			}
+
+			const cursorParam =
+				typeof rawCursor === 'string'
+					? rawCursor
+					: typeof rawCursor === 'number'
+						? String(rawCursor)
+						: undefined;
+
+			const subId: string =
+				typeof params.subscriptionId === 'string'
+					? params.subscriptionId
+					: typeof params.subscription_id === 'string'
+						? params.subscription_id
+						: await deriveSubscriptionId(callbackUrl, 'task_changed', filter);
+
+			if (taskStore.logAudit) {
+				await taskStore.logAudit('events/subscribe:received', {
+					subId,
+					callbackUrl,
+					secretPresent: Boolean(secret),
+					filter,
+					cursor: cursorParam,
+					rawParams: params,
+				});
+			}
+
+			// If secret is present, perform the standard callback verification challenge
+			if (secret && !params.skipVerification) {
+				const challenge = `chg_${crypto.randomUUID().replace(/-/g, '')}`;
+				const challengePayload = JSON.stringify({
+					type: 'verification',
+					challenge,
+				});
+				const chgId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+				const chgTimestamp = Math.floor(Date.now() / 1000).toString();
+
+				const chgHeaders: Record<string, string> = {
+					'content-type': 'application/json',
+					'webhook-id': chgId,
+					'webhook-timestamp': chgTimestamp,
+					'x-mcp-subscription-id': subId,
+					'x-mcp-event-id': chgId,
+					'x-mcp-event-type': 'verification',
+					'mcp-method': 'events/subscribe',
+					'user-agent': 'NymphAI-Knowledge-Vault/2.0 (MCP 2026-07-28)',
+				};
+
+				try {
+					chgHeaders['webhook-signature'] = await signStandardWebhook(
+						secret,
+						chgId,
+						chgTimestamp,
+						challengePayload,
+					);
+					chgHeaders['x-mcp-event-signature'] = await signPayload(secret, challengePayload);
+				} catch (signErr) {
+					console.error('[mcp:events/subscribe] Failed to sign verification challenge:', signErr);
+				}
+
+				if (taskStore.logAudit) {
+					await taskStore.logAudit('events/subscribe:challenge_attempt', {
+						subId,
+						callbackUrl,
+						chgId,
+						challenge,
+						headers: chgHeaders,
+					});
+				}
+
+				try {
+					console.log(
+						`[mcp:events/subscribe] Dispatching verification challenge to: ${callbackUrl}`,
+					);
+					let chgRes: Response;
+					if (
+						callbackUrl.includes('library.nymphai.workers.dev') ||
+						callbackUrl.startsWith('http://localhost')
+					) {
+						const parsed = new URL(callbackUrl);
+						const subPath = parsed.pathname.startsWith('/mcp/')
+							? parsed.pathname.slice('/mcp'.length)
+							: parsed.pathname;
+						chgRes = await router.fetch(
+							new Request(new URL(subPath + parsed.search, 'http://localhost'), {
+								method: 'POST',
+								headers: chgHeaders,
+								body: challengePayload,
+							}),
+						);
+					} else {
+						chgRes = await fetch(callbackUrl, {
+							method: 'POST',
+							headers: chgHeaders,
+							body: challengePayload,
+						});
+					}
+
+					const chgText = await chgRes.text();
+					console.log(
+						`[mcp:events/subscribe] Challenge response HTTP ${chgRes.status}: body=${chgText}`,
+					);
+
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_response', {
+							subId,
+							callbackUrl,
+							status: chgRes.status,
+							body: chgText,
+						});
+					}
+
+					if (!chgRes.ok) {
+						if (taskStore.logAudit) {
+							await taskStore.logAudit('events/subscribe:challenge_failed', {
+								subId,
+								callbackUrl,
+								status: chgRes.status,
+								body: chgText,
+							});
+						}
+						return rpcError(
+							id,
+							-32015,
+							`Callback verification failed: endpoint returned HTTP ${chgRes.status}`,
+							{ reason: 'challenge_failed', status: chgRes.status, body: chgText },
+						);
+					}
+
+					let echoed = chgText.trim();
+					try {
+						const json = JSON.parse(chgText);
+						if (json && typeof json.challenge === 'string') {
+							echoed = json.challenge.trim();
+						}
+					} catch {
+						// continue
+					}
+
+					if (!constantTimeEqual(echoed, challenge)) {
+						console.warn(
+							`[mcp:events/subscribe] Challenge echo mismatch: expected=${challenge}, got=${echoed}`,
+						);
+						if (taskStore.logAudit) {
+							await taskStore.logAudit('events/subscribe:challenge_mismatch', {
+								subId,
+								callbackUrl,
+								expected: challenge,
+								received: echoed,
+							});
+						}
+						return rpcError(id, -32015, 'Callback verification failed: challenge_failed', {
+							reason: 'challenge_failed',
+							expected: challenge,
+							received: echoed,
+						});
+					}
+					console.log('[mcp:events/subscribe] Callback verification succeeded');
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_success', {
+							subId,
+							callbackUrl,
+						});
+					}
+				} catch (fetchErr) {
+					console.error(
+						`[mcp:events/subscribe] Network error during callback verification for ${callbackUrl}:`,
+						fetchErr,
+					);
+					if (taskStore.logAudit) {
+						await taskStore.logAudit('events/subscribe:challenge_network_error', {
+							subId,
+							callbackUrl,
+							error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+						});
+					}
+					return rpcError(
+						id,
+						-32015,
+						`Callback verification failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+						{ reason: 'challenge_failed' },
+					);
+				}
+			}
+
+			const { subscription, replayedEvents, cursor } = await taskStore.subscribe({
+				subscriptionId: subId,
 				callbackUrl,
 				secret,
 				filter,
 				fromRevision,
+				cursor: cursorParam,
 			});
 
+			if (taskStore.logAudit) {
+				await taskStore.logAudit('events/subscribe:success', {
+					subId: subscription.id,
+					callbackUrl: subscription.callbackUrl,
+					cursor,
+					replayedCount: replayedEvents.length,
+				});
+			}
+
+			const ttlMs = 7 * 86400 * 1000;
+			const refreshBefore = new Date(Date.now() + ttlMs).toISOString();
+
+			const resCursor =
+				cursorParam !== undefined && cursorParam !== null
+					? cursorParam
+					: replayedEvents.length > 0
+						? cursor
+						: null;
+
 			return rpcSuccess(id, {
-				subscriptionId: subscription.id,
-				callbackUrl: subscription.callbackUrl,
-				replayedEventsCount: replayedEvents.length,
-				filter: subscription.filter,
+				id: subscription.id,
+				refreshBefore,
+				cursor: resCursor,
+				truncated: false,
 			});
 		}
 
 		// 7. events/unsubscribe
 		if (method === 'events/unsubscribe') {
 			const params = body.params ?? {};
-			const subId = String(params.subscriptionId ?? params.subscription_id ?? '');
-			const ok = taskStore.unsubscribe(subId);
-			return rpcSuccess(id, { success: ok, subscriptionId: subId });
+			const subId = String(params.subscriptionId ?? params.subscription_id ?? params.id ?? '');
+			await taskStore.unsubscribe(subId);
+			return rpcSuccess(id, {});
 		}
 
 		// 8. tools/call
@@ -324,7 +924,7 @@ export function createMcpRouter(
 
 					if (!taskType) return toolResult(id, 'submit_task requires task_type', true);
 
-					const task = taskStore.submitTask({
+					const task = await taskStore.submitTask({
 						type: taskType,
 						payload,
 						correlationId,
@@ -350,7 +950,7 @@ export function createMcpRouter(
 				case 'get_task': {
 					const taskId = String(args.task_id ?? '');
 					if (!taskId) return toolResult(id, 'get_task requires task_id', true);
-					const task = taskStore.getTask(taskId);
+					const task = await taskStore.getTask(taskId);
 					if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
 					return toolResult(id, JSON.stringify(task, null, 2));
 				}
@@ -358,11 +958,15 @@ export function createMcpRouter(
 				case 'get_result': {
 					const taskId = String(args.task_id ?? '');
 					if (!taskId) return toolResult(id, 'get_result requires task_id', true);
-					const result = taskStore.getResult(taskId);
+					const result = await taskStore.getResult(taskId);
 					if (!result) {
-						const task = taskStore.getTask(taskId);
+						const task = await taskStore.getTask(taskId);
 						if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
-						return toolResult(id, `Task ${taskId} is currently ${task.status}; result not yet ready.`, true);
+						return toolResult(
+							id,
+							`Task ${taskId} is currently ${task.status}; result not yet ready.`,
+							true,
+						);
 					}
 					return toolResult(id, JSON.stringify(result, null, 2));
 				}
@@ -371,7 +975,7 @@ export function createMcpRouter(
 					const taskId = String(args.task_id ?? '');
 					const reason = args.reason ? String(args.reason) : undefined;
 					if (!taskId) return toolResult(id, 'cancel_task requires task_id', true);
-					const ok = taskStore.cancelTask(taskId, reason);
+					const ok = await taskStore.cancelTask(taskId, reason);
 					return toolResult(id, JSON.stringify({ taskId, cancelled: ok }));
 				}
 
@@ -379,14 +983,16 @@ export function createMcpRouter(
 					const taskId = String(args.task_id ?? '');
 					const receipt = args.receipt;
 					if (!taskId) return toolResult(id, 'acknowledge_result requires task_id', true);
-					const ok = taskStore.acknowledgeResult(taskId, receipt);
+					const ok = await taskStore.acknowledgeResult(taskId, receipt);
 					return toolResult(id, JSON.stringify({ taskId, acknowledged: ok }));
 				}
 
 				case 'search': {
 					const query = String(args.query ?? '').toLowerCase();
 					if (!query) return toolResult(id, 'search requires query', true);
-					const allPaths = await vault.listNotes();
+					const vaultPaths = await vault.listNotes();
+					const storePaths = taskStore.listNotes ? await taskStore.listNotes() : [];
+					const allPaths = Array.from(new Set([...vaultPaths, ...storePaths]));
 					const targetType = args.type ? String(args.type) : 'all';
 
 					const targetPaths = allPaths.filter((p) => {
@@ -396,21 +1002,28 @@ export function createMcpRouter(
 					});
 
 					const matches: Array<{ path: string; excerpt: string }> = [];
-					for (const path of targetPaths) {
-						const content = await vault.getNote(path);
+					for (const p of targetPaths) {
+						let content = await vault.getNote(p);
+						if ((content === null || content === undefined) && taskStore.getNote) {
+							content = await taskStore.getNote(p);
+						}
 						if (content && content.toLowerCase().includes(query)) {
 							const idx = content.toLowerCase().indexOf(query);
 							const start = Math.max(0, idx - 60);
 							const end = Math.min(content.length, idx + 100);
 							matches.push({
-								path,
+								path: p,
 								excerpt: `...${content.slice(start, end).replace(/\n+/g, ' ')}...`,
 							});
 						}
 					}
 					return toolResult(
 						id,
-						JSON.stringify({ query, totalMatches: matches.length, matches: matches.slice(0, 10) }, null, 2),
+						JSON.stringify(
+							{ query, totalMatches: matches.length, matches: matches.slice(0, 10) },
+							null,
+							2,
+						),
 					);
 				}
 
@@ -418,9 +1031,22 @@ export function createMcpRouter(
 					let path = String(args.path ?? '').trim();
 					if (!path) return toolResult(id, 'fetch requires path', true);
 					if (!path.endsWith('.md')) path = `${path}.md`;
-					const content = await vault.getNote(path);
-					if (content === null) return toolResult(id, `Note not found: ${path}`, true);
+					const cleanPath = path.replace(/^\/+/, '');
+					let content = await vault.getNote(cleanPath);
+					if ((content === null || content === undefined) && taskStore.getNote) {
+						content = await taskStore.getNote(cleanPath);
+					}
+					if (content === null || content === undefined) {
+						return toolResult(id, `Note not found: ${path}`, true);
+					}
 					return toolResult(id, content);
+				}
+
+				case 'get_audit_logs': {
+					const limit =
+						typeof args.limit === 'number' ? Math.min(Math.max(args.limit, 1), 100) : 50;
+					const logs = taskStore.getAuditLogs ? await taskStore.getAuditLogs(limit) : [];
+					return toolResult(id, JSON.stringify({ total: logs.length, logs }, null, 2));
 				}
 
 				default:
