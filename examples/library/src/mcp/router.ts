@@ -668,11 +668,25 @@ export function createMcpRouter(
 					console.log(
 						`[mcp:events/subscribe] Dispatching verification challenge to: ${callbackUrl}`,
 					);
-					const chgRes = await fetch(callbackUrl, {
-						method: 'POST',
-						headers: chgHeaders,
-						body: challengePayload,
-					});
+					let chgRes: Response;
+					if (
+						callbackUrl.includes('library.nymphai.workers.dev') ||
+						callbackUrl.startsWith('http://localhost')
+					) {
+						chgRes = await router.fetch(
+							new Request(callbackUrl, {
+								method: 'POST',
+								headers: chgHeaders,
+								body: challengePayload,
+							}),
+						);
+					} else {
+						chgRes = await fetch(callbackUrl, {
+							method: 'POST',
+							headers: chgHeaders,
+							body: challengePayload,
+						});
+					}
 
 					const chgText = await chgRes.text();
 					console.log(
