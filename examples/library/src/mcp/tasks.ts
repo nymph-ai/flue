@@ -1258,11 +1258,16 @@ export class TaskStore {
 				});
 			} else if (task.type === 'research' || task.type === 'search') {
 				const query = String(task.payload.query ?? '');
-				const allPaths = await vault.listNotes();
+				const vaultPaths = await vault.listNotes();
+				const storePaths = this.listNotes();
+				const allPaths = Array.from(new Set([...vaultPaths, ...storePaths]));
 				const matches: Array<{ path: string; excerpt: string }> = [];
 
 				for (const path of allPaths) {
-					const text = await vault.getNote(path);
+					let text = await vault.getNote(path);
+					if (!text) {
+						text = this.getNote(path);
+					}
 					if (text && text.toLowerCase().includes(query.toLowerCase())) {
 						matches.push({ path, excerpt: text.slice(0, 200) });
 					}
