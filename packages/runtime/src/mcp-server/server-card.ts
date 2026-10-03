@@ -18,6 +18,9 @@ export class ServerCardManager {
 	getServerCard(): Record<string, unknown> {
 		return {
 			$schema: 'https://modelcontextprotocol.io/schemas/server-card.json',
+			name: this.descriptor.name,
+			version: this.descriptor.version,
+			description: this.descriptor.description,
 			serverInfo: {
 				name: this.descriptor.name,
 				version: this.descriptor.version,

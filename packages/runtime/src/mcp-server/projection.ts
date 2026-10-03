@@ -207,15 +207,15 @@ export class McpCapabilityProjection {
 				result,
 			};
 		} catch (err: unknown) {
-			if (err && typeof err === 'object' && 'code' in err && 'data' in err) {
-				const elicitation = err as { code: number; message: string; data: unknown };
+			if (err && typeof err === 'object' && 'code' in err) {
+				const rpcErr = err as { code: number; message?: string; data?: unknown };
 				return {
 					jsonrpc: '2.0',
 					id: reqId,
 					error: {
-						code: elicitation.code,
-						message: elicitation.message,
-						data: elicitation.data,
+						code: rpcErr.code,
+						message: rpcErr.message ?? 'Internal error',
+						...(rpcErr.data !== undefined ? { data: rpcErr.data } : {}),
 					},
 				};
 			}
