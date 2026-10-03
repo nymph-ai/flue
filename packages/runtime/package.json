@@ -77,6 +77,10 @@
 		"./cloudflare/workers-ai": {
 			"types": "./dist/cloudflare/workers-ai-provider.d.mts",
 			"import": "./dist/cloudflare/workers-ai-provider.mjs"
+		},
+		"./mcp-server": {
+			"types": "./dist/mcp-server/index.d.mts",
+			"import": "./dist/mcp-server/index.mjs"
 		}
 	},
 	"main": "./dist/index.mjs",
