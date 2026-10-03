@@ -11,7 +11,15 @@ import { cors } from 'hono/cors';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
 import { getOpenApiSpec } from './openapi.ts';
-import { getOrCreateTaskStore, TaskStore, verifyPayloadSignature } from './tasks.ts';
+import {
+	constantTimeEqual,
+	getOrCreateTaskStore,
+	signPayload,
+	signStandardWebhook,
+	TaskStore,
+	verifyPayloadSignature,
+	verifyStandardWebhook,
+} from './tasks.ts';
 import type {
 	DeliveryRecord,
 	SubscriptionRecord,
@@ -417,8 +425,17 @@ export function createMcpRouter(
 		}
 
 		let signatureValid: boolean | undefined = undefined;
-		if (secret && sigHeader) {
-			signatureValid = await verifyPayloadSignature(secret, rawText, sigHeader);
+		if (secret) {
+			if (sigHeader) {
+				signatureValid = await verifyPayloadSignature(secret, rawText, sigHeader);
+			} else {
+				const standardSig = c.req.header('webhook-signature');
+				const msgId = c.req.header('webhook-id');
+				const ts = c.req.header('webhook-timestamp');
+				if (standardSig && msgId && ts) {
+					signatureValid = await verifyStandardWebhook(secret, msgId, ts, rawText, standardSig);
+				}
+			}
 		}
 
 		const headers: Record<string, string> = {};
@@ -433,6 +450,20 @@ export function createMcpRouter(
 			signatureValid,
 		};
 		testCallbacks.push(record);
+
+		if (
+			payload &&
+			typeof payload === 'object' &&
+			(payload as Record<string, unknown>).type === 'verification'
+		) {
+			const challenge = (payload as Record<string, unknown>).challenge;
+			return c.json({
+				ok: true,
+				challenge,
+				received: true,
+				signatureValid,
+			});
+		}
 
 		return c.json({
 			ok: true,
@@ -550,6 +581,7 @@ export function createMcpRouter(
 		// 6. events/subscribe
 		if (method === 'events/subscribe') {
 			const params = body.params ?? {};
+			console.log(`[mcp:events/subscribe] Incoming params: ${JSON.stringify(params)}`);
 			const delivery = (params.delivery ?? {}) as Record<string, unknown>;
 			const callbackUrl = String(
 				delivery.url ?? delivery.callbackUrl ?? params.callbackUrl ?? params.callback_url ?? '',
@@ -567,20 +599,24 @@ export function createMcpRouter(
 					? String(params.secret)
 					: undefined;
 
-			const filterObj = (params.filter ?? {}) as Record<string, unknown>;
-			const taskId = filterObj.taskId
-				? String(filterObj.taskId)
-				: params.taskId
-					? String(params.taskId)
-					: undefined;
-			const correlationId = filterObj.correlationId
-				? String(filterObj.correlationId)
-				: params.correlationId
-					? String(params.correlationId)
-					: undefined;
+			const args = (params.arguments ?? params.filter ?? {}) as Record<string, unknown>;
+			const taskId = args.taskId
+				? String(args.taskId)
+				: args.task_id
+					? String(args.task_id)
+					: params.taskId
+						? String(params.taskId)
+						: undefined;
+			const correlationId = args.correlationId
+				? String(args.correlationId)
+				: args.correlation_id
+					? String(args.correlation_id)
+					: params.correlationId
+						? String(params.correlationId)
+						: undefined;
 			const filter = taskId || correlationId ? { taskId, correlationId } : undefined;
 
-			const rawCursor = params.cursor ?? params.fromRevision ?? filterObj.cursor;
+			const rawCursor = params.cursor ?? params.fromRevision ?? args.cursor;
 			let fromRevision: number | undefined = undefined;
 			if (typeof rawCursor === 'number') {
 				fromRevision = rawCursor;
@@ -598,6 +634,95 @@ export function createMcpRouter(
 						? String(rawCursor)
 						: undefined;
 
+			// If secret is present, perform the standard callback verification challenge
+			if (secret && !params.skipVerification) {
+				const challenge = `chg_${crypto.randomUUID().replace(/-/g, '')}`;
+				const challengePayload = JSON.stringify({
+					type: 'verification',
+					challenge,
+				});
+				const chgId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+				const chgTimestamp = Math.floor(Date.now() / 1000).toString();
+
+				const chgHeaders: Record<string, string> = {
+					'content-type': 'application/json',
+					'webhook-id': chgId,
+					'webhook-timestamp': chgTimestamp,
+					'x-mcp-event-id': chgId,
+					'x-mcp-event-type': 'verification',
+				};
+
+				try {
+					chgHeaders['webhook-signature'] = await signStandardWebhook(
+						secret,
+						chgId,
+						chgTimestamp,
+						challengePayload,
+					);
+					chgHeaders['x-mcp-event-signature'] = await signPayload(secret, challengePayload);
+				} catch (signErr) {
+					console.error('[mcp:events/subscribe] Failed to sign verification challenge:', signErr);
+				}
+
+				try {
+					console.log(
+						`[mcp:events/subscribe] Dispatching verification challenge to: ${callbackUrl}`,
+					);
+					const chgRes = await fetch(callbackUrl, {
+						method: 'POST',
+						headers: chgHeaders,
+						body: challengePayload,
+					});
+
+					const chgText = await chgRes.text();
+					console.log(
+						`[mcp:events/subscribe] Challenge response HTTP ${chgRes.status}: body=${chgText}`,
+					);
+
+					if (!chgRes.ok) {
+						return rpcError(
+							id,
+							-32015,
+							`Callback verification failed: endpoint returned HTTP ${chgRes.status}`,
+							{ reason: 'challenge_failed', status: chgRes.status, body: chgText },
+						);
+					}
+
+					let echoed = chgText.trim();
+					try {
+						const json = JSON.parse(chgText);
+						if (json && typeof json.challenge === 'string') {
+							echoed = json.challenge.trim();
+						}
+					} catch {
+						// continue
+					}
+
+					if (!constantTimeEqual(echoed, challenge)) {
+						console.warn(
+							`[mcp:events/subscribe] Challenge echo mismatch: expected=${challenge}, got=${echoed}`,
+						);
+						return rpcError(id, -32015, 'Callback verification failed: challenge_failed', {
+							reason: 'challenge_failed',
+							expected: challenge,
+							received: echoed,
+						});
+					}
+					console.log('[mcp:events/subscribe] Callback verification succeeded');
+				} catch (fetchErr) {
+					console.error(
+						`[mcp:events/subscribe] Network error during callback verification for ${callbackUrl}:`,
+						fetchErr,
+					);
+					return rpcError(
+						id,
+						-32015,
+						`Callback verification failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+						{ reason: 'challenge_failed' },
+					);
+				}
+			}
+
 			const { subscription, replayedEvents, cursor } = await taskStore.subscribe({
 				callbackUrl,
 				secret,
@@ -608,9 +733,12 @@ export function createMcpRouter(
 
 			return rpcSuccess(id, {
 				subscriptionId: subscription.id,
+				id: subscription.id,
+				refreshBefore: new Date(Date.now() + 7 * 86400000).toISOString(),
 				cursor,
 				delivery: {
 					type: 'webhook',
+					mode: 'webhook',
 					url: subscription.callbackUrl,
 				},
 				callbackUrl: subscription.callbackUrl,
@@ -622,7 +750,7 @@ export function createMcpRouter(
 		// 7. events/unsubscribe
 		if (method === 'events/unsubscribe') {
 			const params = body.params ?? {};
-			const subId = String(params.subscriptionId ?? params.subscription_id ?? '');
+			const subId = String(params.subscriptionId ?? params.subscription_id ?? params.id ?? '');
 			const ok = await taskStore.unsubscribe(subId);
 			return rpcSuccess(id, { success: ok, subscriptionId: subId });
 		}

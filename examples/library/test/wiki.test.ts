@@ -1028,12 +1028,16 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			const subJson = (await resSub.json()) as {
 				result: {
 					subscriptionId: string;
+					id: string;
+					refreshBefore: string;
 					cursor: string;
 					delivery: { type: string; url: string };
 					callbackUrl: string;
 				};
 			};
 			expect(subJson.result.subscriptionId).toMatch(/^sub_/);
+			expect(subJson.result.id).toBe(subJson.result.subscriptionId);
+			expect(subJson.result.refreshBefore).toBeDefined();
 			expect(subJson.result.cursor).toBeDefined();
 			expect(subJson.result.delivery.type).toBe('webhook');
 			expect(subJson.result.delivery.url).toContain('/mcp/test-callback');
@@ -1101,6 +1105,10 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			);
 			expect(completionWake).toBeDefined();
 			expect(completionWake?.signatureValid).toBe(true);
+			expect(completionWake?.headers['webhook-signature']).toMatch(/^v1,/);
+			expect(completionWake?.headers['webhook-id']).toBeDefined();
+			expect(completionWake?.headers['webhook-timestamp']).toBeDefined();
+			expect(completionWake?.headers['x-mcp-subscription-id']).toBe(subJson.result.subscriptionId);
 			expect(completionWake?.headers['x-mcp-event-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
 			expect(completionWake?.headers['x-mcp-task-id']).toBe(taskId);
 			expect(completionWake?.headers['x-mcp-cursor']).toBe('3');

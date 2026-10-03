@@ -36,6 +36,73 @@ export interface TaskStoreOptions {
 	ctx?: DurableObjectStateLike;
 }
 
+function decodeWebhookSecret(secret: string): Uint8Array {
+	if (secret.startsWith('whsec_')) {
+		try {
+			const b64 = secret.slice('whsec_'.length);
+			const binary = atob(b64);
+			const bytes = new Uint8Array(binary.length);
+			for (let i = 0; i < binary.length; i++) {
+				bytes[i] = binary.charCodeAt(i);
+			}
+			return bytes;
+		} catch {
+			return new TextEncoder().encode(secret);
+		}
+	}
+	return new TextEncoder().encode(secret);
+}
+
+export function constantTimeEqual(a: string, b: string): boolean {
+	if (typeof a !== 'string' || typeof b !== 'string') return false;
+	const enc = new TextEncoder();
+	const aBytes = enc.encode(a);
+	const bBytes = enc.encode(b);
+	if (aBytes.length !== bBytes.length) return false;
+	let mismatch = 0;
+	for (let i = 0; i < aBytes.length; i++) {
+		mismatch |= aBytes[i]! ^ bBytes[i]!;
+	}
+	return mismatch === 0;
+}
+
+export async function signStandardWebhook(
+	secret: string,
+	msgId: string,
+	timestamp: string,
+	payload: string,
+): Promise<string> {
+	const keyBytes = decodeWebhookSecret(secret);
+	const key = await crypto.subtle.importKey(
+		'raw',
+		keyBytes,
+		{ name: 'HMAC', hash: 'SHA-256' },
+		false,
+		['sign'],
+	);
+	const signedContent = `${msgId}.${timestamp}.${payload}`;
+	const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedContent));
+	const b64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+	return `v1,${b64}`;
+}
+
+export async function verifyStandardWebhook(
+	secret: string,
+	msgId: string,
+	timestamp: string,
+	payload: string,
+	signatureHeader: string,
+): Promise<boolean> {
+	const expected = await signStandardWebhook(secret, msgId, timestamp, payload);
+	const parts = signatureHeader.split(' ');
+	for (const part of parts) {
+		if (constantTimeEqual(part, expected)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 export async function signPayload(secret: string, payload: string): Promise<string> {
 	const encoder = new TextEncoder();
 	const key = await crypto.subtle.importKey(
@@ -58,7 +125,7 @@ export async function verifyPayloadSignature(
 	signatureHeader: string,
 ): Promise<boolean> {
 	const expected = await signPayload(secret, payload);
-	return expected === signatureHeader;
+	return constantTimeEqual(expected, signatureHeader);
 }
 
 export class TaskStore {
@@ -490,12 +557,25 @@ export class TaskStore {
 		filter?: { taskId?: string; correlationId?: string };
 		fromRevision?: number;
 		cursor?: string;
+		subscriptionId?: string;
 	}): Promise<{
 		subscription: SubscriptionRecord;
 		replayedEvents: TaskChangedEvent[];
 		cursor: string;
 	}> {
-		const subId = `sub_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+		let subId = params.subscriptionId;
+		if (!subId) {
+			const filterKey = `${params.filter?.taskId ?? ''}:${params.filter?.correlationId ?? ''}`;
+			const key = `${params.callbackUrl}:${filterKey}`;
+			const hashBytes = new Uint8Array(
+				await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)),
+			);
+			const hash = Array.from(hashBytes)
+				.map((b) => b.toString(16).padStart(2, '0'))
+				.slice(0, 16)
+				.join('');
+			subId = `sub_${hash}`;
+		}
 		const now = new Date().toISOString();
 		const subscription: SubscriptionRecord = {
 			id: subId,
@@ -518,7 +598,8 @@ export class TaskStore {
 		if (this.sql) {
 			this.sql.exec(
 				`INSERT INTO mcp_subscriptions (id, callback_url, secret, filter_task_id, filter_correlation_id, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?)`,
+				 VALUES (?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(id) DO UPDATE SET callback_url = excluded.callback_url, secret = excluded.secret, filter_task_id = excluded.filter_task_id, filter_correlation_id = excluded.filter_correlation_id`,
 				subId,
 				params.callbackUrl,
 				params.secret ?? null,
@@ -779,8 +860,12 @@ export class TaskStore {
 			cursor,
 		};
 		const payloadString = JSON.stringify(eventWithCursor);
+		const timestampSeconds = Math.floor(Date.now() / 1000).toString();
 		const headers: Record<string, string> = {
 			'content-type': 'application/json',
+			'webhook-id': event.eventId,
+			'webhook-timestamp': timestampSeconds,
+			'x-mcp-subscription-id': sub.id,
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-task-id': event.taskId,
 			'x-mcp-revision': String(event.revision),
@@ -789,18 +874,32 @@ export class TaskStore {
 		};
 
 		if (sub.secret) {
-			headers['x-mcp-event-signature'] = await signPayload(sub.secret, payloadString);
+			try {
+				headers['webhook-signature'] = await signStandardWebhook(
+					sub.secret,
+					event.eventId,
+					timestampSeconds,
+					payloadString,
+				);
+				headers['x-mcp-event-signature'] = await signPayload(sub.secret, payloadString);
+			} catch (signErr) {
+				console.error('[mcp:deliverEvent] Failed to sign payload:', signErr);
+			}
 		}
 
 		const deliveryId = `del_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const now = new Date().toISOString();
 
 		try {
+			console.log(
+				`[mcp:deliverEvent] Delivering event ${event.eventId} (status=${event.status}) to ${sub.callbackUrl}`,
+			);
 			const res = await fetch(sub.callbackUrl, {
 				method: 'POST',
 				headers,
 				body: payloadString,
 			});
+			console.log(`[mcp:deliverEvent] Delivery ${deliveryId} response: status=${res.status}`);
 
 			if (this.sql) {
 				this.sql.exec(
