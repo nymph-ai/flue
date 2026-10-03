@@ -5,10 +5,10 @@
  * Backed by Cloudflare Durable Object SQLite (ctx.storage.sql) with in-memory fallback.
  */
 import { liveModel } from '../model.ts';
-import { slugify } from '../wiki/okf.ts';
+import { formatConceptNote, slugify } from '../wiki/okf.ts';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
-import type { OKFStoryNote } from '../wiki/types.ts';
+import type { OKFConceptNote, OKFStoryNote } from '../wiki/types.ts';
 import type {
 	DeliveryRecord,
 	SubscriptionRecord,
@@ -344,14 +344,57 @@ export class TaskStore {
 				return String(content);
 			}
 
+			// If looking for a concept, also check by slugified path in vault files
+			if (cleanPath.startsWith('concepts/')) {
+				const title = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+				const slugPath = `concepts/${slugify(title)}.md`;
+				if (slugPath !== cleanPath) {
+					const slugRows = this.sql
+						.exec(`SELECT content FROM mcp_vault_files WHERE path = ?`, slugPath)
+						.toArray();
+					if (slugRows[0]?.content !== undefined && slugRows[0]?.content !== null) {
+						return String(slugRows[0].content);
+					}
+				}
+			}
+
 			// Fallback: check mcp_results table for matching artifact
 			const resultRows = this.sql
-				.exec(`SELECT content, artifacts FROM mcp_results WHERE artifacts LIKE ?`, `%${cleanPath}%`)
+				.exec(
+					`SELECT content, artifacts, summary, completed_at FROM mcp_results WHERE artifacts LIKE ?`,
+					`%${cleanPath}%`,
+				)
 				.toArray();
 			for (const r of resultRows) {
 				try {
 					const artifacts = JSON.parse(String(r.artifacts)) as string[];
 					if (Array.isArray(artifacts) && artifacts.includes(cleanPath)) {
+						if (cleanPath.startsWith('stories/')) {
+							return String(r.content ?? '');
+						}
+						if (cleanPath.startsWith('concepts/')) {
+							const conceptTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+							const storyPath = artifacts.find((a) => a.startsWith('stories/')) ?? '';
+							const storyId = storyPath.replace(/^stories\//, '').replace(/\.md$/, '');
+							const summary = String(r.summary ?? '');
+							const completedAt = String(r.completed_at || new Date().toISOString());
+							const conceptNote: OKFConceptNote = {
+								schema_version: 'okf/v1',
+								id: slugify(conceptTitle),
+								type: 'concept',
+								title: conceptTitle,
+								first_observed: completedAt,
+								last_updated: completedAt,
+								curator: 'curator',
+								tags: ['concept', slugify(conceptTitle)],
+								description: `Core domain concept extracted from curated literature.`,
+								relatedStories: storyId ? [{ id: storyId, title: summary }] : [],
+							};
+							const formatted = formatConceptNote(conceptNote);
+							this.saveNote(cleanPath, formatted);
+							this.saveNote(`concepts/${slugify(conceptTitle)}.md`, formatted);
+							return formatted;
+						}
 						return String(r.content ?? '');
 					}
 				} catch {
@@ -367,6 +410,29 @@ export class TaskStore {
 
 		for (const r of this.results.values()) {
 			if (r.artifacts.includes(cleanPath)) {
+				if (cleanPath.startsWith('stories/')) {
+					return r.content;
+				}
+				if (cleanPath.startsWith('concepts/')) {
+					const conceptTitle = cleanPath.slice('concepts/'.length).replace(/\.md$/, '');
+					const storyPath = r.artifacts.find((a) => a.startsWith('stories/')) ?? '';
+					const storyId = storyPath.replace(/^stories\//, '').replace(/\.md$/, '');
+					const conceptNote: OKFConceptNote = {
+						schema_version: 'okf/v1',
+						id: slugify(conceptTitle),
+						type: 'concept',
+						title: conceptTitle,
+						first_observed: r.completedAt,
+						last_updated: r.completedAt,
+						curator: 'curator',
+						tags: ['concept', slugify(conceptTitle)],
+						description: `Core domain concept extracted from curated literature.`,
+						relatedStories: storyId ? [{ id: storyId, title: r.summary }] : [],
+					};
+					const formatted = formatConceptNote(conceptNote);
+					this.vaultFiles.set(cleanPath, formatted);
+					return formatted;
+				}
 				return r.content;
 			}
 		}
@@ -1176,9 +1242,11 @@ export class TaskStore {
 					const conceptTitle = concept.replace(/^\[\[/, '').replace(/\]\]$/, '').trim();
 					const slug = slugify(conceptTitle);
 					const cPath = `concepts/${slug}.md`;
+					const cTitlePath = `concepts/${conceptTitle}.md`;
 					const cContent = (await vault.getNote(cPath)) ?? '';
 					if (cContent) {
 						this.saveNote(cPath, cContent);
+						this.saveNote(cTitlePath, cContent);
 					}
 				}
 				const idxContent = (await vault.getNote('index.md')) ?? '';
