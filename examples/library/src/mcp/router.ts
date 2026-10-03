@@ -659,10 +659,12 @@ export function createMcpRouter(
 						? String(rawCursor)
 						: undefined;
 
-			const subId =
-				params.subscriptionId ??
-				params.subscription_id ??
-				(await deriveSubscriptionId(callbackUrl, 'task_changed', filter));
+			const subId: string =
+				typeof params.subscriptionId === 'string'
+					? params.subscriptionId
+					: typeof params.subscription_id === 'string'
+						? params.subscription_id
+						: await deriveSubscriptionId(callbackUrl, 'task_changed', filter);
 
 			if (taskStore.logAudit) {
 				await taskStore.logAudit('events/subscribe:received', {
