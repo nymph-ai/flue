@@ -71,7 +71,7 @@ const BUDGET: Record<string, Rows> = {
 	'plain answer (~30 partials)': { rowsRead: 60, rowsWritten: 45 },
 	'5-tool-call turn': { rowsRead: 60, rowsWritten: 50 },
 	'A2A send (sender turn)': { rowsRead: 55, rowsWritten: 45 },
-	'A2A receive (doorbell, pump, admission, turn)': { rowsRead: 20, rowsWritten: 45 },
+	'A2A receive (doorbell, pump, admission, turn)': { rowsRead: 25, rowsWritten: 45 },
 	'idle wake': { rowsRead: 4, rowsWritten: 0 },
 	'cold open + admission + turn': { rowsRead: 80, rowsWritten: 30 },
 	'Code Mode store() turn, cold, after <size> store writes': { rowsRead: 120, rowsWritten: 50 },

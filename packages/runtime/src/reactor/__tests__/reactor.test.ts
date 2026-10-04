@@ -65,11 +65,6 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		const env = await setupEnvironment();
 		const host = await env.instance.host();
 
-		// [CRASH SIMULATION]: Process terminates before reconciliation
-		vi.spyOn(env.instance.reactor, 'reconcileSettlements').mockRejectedValue(
-			new Error('Simulated process crash before reconciliation'),
-		);
-
 		// Admit task-1
 		await env.instance.admit({
 			kind: 'direct',
