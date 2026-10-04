@@ -2213,11 +2213,11 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// Fail Electric append
 			let failAppend = true;
 			const originalAppend = streamLog.append.bind(streamLog);
-			vi.spyOn(streamLog, 'append').mockImplementation(async (path, messages, headers) => {
+			vi.spyOn(streamLog, 'append').mockImplementation(async (path: string, messages: readonly unknown[]) => {
 				if (failAppend) {
 					throw new Error('Electric network partition');
 				}
-				return originalAppend(path, messages, headers);
+				return originalAppend(path, messages);
 			});
 
 			// Call getTask while Electric is failing
@@ -2244,8 +2244,9 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// Verify Electric now has exactly 1 projected event with deterministic id
 			batch = await streamLog.read(streamPath, STREAM_START);
 			expect(batch.messages.length).toBe(1);
-			expect(batch.messages[0]?.id).toBe('task-settled:task-fail-retry-1');
-			expect(batch.messages[0]?.name).toBe('task.completed');
+			const msg = batch.messages[0] as { id?: string; name?: string } | undefined;
+			expect(msg?.id).toBe('task-settled:task-fail-retry-1');
+			expect(msg?.name).toBe('task.completed');
 
 			// Trigger another wake - deduplication ensures no duplicate event is appended
 			await instance.wake({ kind: 'live-tasks' });

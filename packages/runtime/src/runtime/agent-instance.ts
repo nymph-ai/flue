@@ -306,11 +306,9 @@ export class FlueAgentInstance implements AgentOperationService {
 		}
 	}
 
-	async #retryUnprojectedSettlements(): Promise<void> {
+	async #retryUnprojectedSettlements(host: FluePiHost): Promise<void> {
 		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
-		if (!this.#opened && !hasPiState(await this.#db())) return;
 
-		const { host } = await this.#open();
 		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
 		if (!index) return;
 
@@ -335,7 +333,7 @@ export class FlueAgentInstance implements AgentOperationService {
 				continue;
 			}
 
-			const settlement = await this.settlement(id);
+			const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
 			if (settlement) {
 				await this.#publishSettlementEvent({
 					submissionId: settlement.submissionId,
@@ -561,7 +559,7 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (instance?.uid)
 			await this.#render(host, undefined, context).catch((error) => this.#report(error));
 		await entity?.refreshCursors(context).catch((error) => this.#report(error));
-		await this.#retryUnprojectedSettlements().catch((error) => this.#report(error));
+		await this.#retryUnprojectedSettlements(host).catch((error) => this.#report(error));
 		return { database, host, telemetry, entity, detach };
 	}
 
@@ -888,7 +886,7 @@ export class FlueAgentInstance implements AgentOperationService {
 		} else {
 			await opened.host.wake(reason, context);
 		}
-		await this.#retryUnprojectedSettlements().catch((error) => this.#report(error));
+		await this.#retryUnprojectedSettlements(opened.host).catch((error) => this.#report(error));
 		return { behind: pump?.behind ?? false, ...(pump ? { pump } : {}) };
 	}
 
