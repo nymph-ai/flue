@@ -72,8 +72,8 @@ const BUDGET: { total: Rows; flue: Rows; piStateChecks: number } = {
  */
 const BEFORE: Record<string, Rows> = {
 	receive: { rowsRead: 220, rowsWritten: 105 },
-	streamed: { rowsRead: 482, rowsWritten: 289 },
-	tools: { rowsRead: 617, rowsWritten: 370 },
+	streamed: { rowsRead: 482, rowsWritten: 295 },
+	tools: { rowsRead: 617, rowsWritten: 375 },
 	store: { rowsRead: 552, rowsWritten: 245 },
 };
 
