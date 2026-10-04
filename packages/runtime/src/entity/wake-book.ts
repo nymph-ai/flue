@@ -71,6 +71,28 @@ export class EntityWakeBook {
 	}
 
 	/**
+	 * Find which candidate submission IDs have not yet been projected to Electric.
+	 * Returns unprojected IDs to retry and published IDs to cache.
+	 */
+	checkSettlementProjections(submissionIds: readonly string[]): {
+		unprojected: string[];
+		published: string[];
+	} {
+		if (submissionIds.length === 0) return { unprojected: [], published: [] };
+		this.#ensure();
+		const placeholders = submissionIds.map(() => '?').join(', ');
+		const rows = this.#db
+			.prepare(
+				`SELECT submission_id FROM flue_settlement_projections WHERE submission_id IN (${placeholders})`,
+			)
+			.all<{ submission_id: string }>(...submissionIds);
+		const publishedSet = new Set(rows.map((r) => r.submission_id));
+		const published = Array.from(publishedSet);
+		const unprojected = submissionIds.filter((id) => !publishedSet.has(id));
+		return { unprojected, published };
+	}
+
+	/**
 	 * Record that `path` holds events through `head`. Synchronous. Returns
 	 * whether the stream is behind its head afterwards.
 	 */

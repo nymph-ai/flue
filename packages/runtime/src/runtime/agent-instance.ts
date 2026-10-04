@@ -325,14 +325,22 @@ export class FlueAgentInstance implements AgentOperationService {
 
 		if (candidates.size === 0) return;
 
-		const book = await this.#wakeBook();
+		const candidatesToQuery: string[] = [];
 		for (const id of candidates) {
-			if (this.#publishedSettlements.has(id)) continue;
-			if (book.isSettlementPublished(id)) {
-				this.#publishedSettlements.add(id);
-				continue;
+			if (!this.#publishedSettlements.has(id)) {
+				candidatesToQuery.push(id);
 			}
+		}
 
+		if (candidatesToQuery.length === 0) return;
+
+		const book = await this.#wakeBook();
+		const { unprojected, published } = book.checkSettlementProjections(candidatesToQuery);
+		for (const id of published) {
+			this.#publishedSettlements.add(id);
+		}
+
+		for (const id of unprojected) {
 			const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
 			if (settlement) {
 				await this.#publishSettlementEvent({
@@ -559,7 +567,6 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (instance?.uid)
 			await this.#render(host, undefined, context).catch((error) => this.#report(error));
 		await entity?.refreshCursors(context).catch((error) => this.#report(error));
-		await this.#retryUnprojectedSettlements(host).catch((error) => this.#report(error));
 		return { database, host, telemetry, entity, detach };
 	}
 

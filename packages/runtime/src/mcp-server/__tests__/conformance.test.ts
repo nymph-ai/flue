@@ -2203,12 +2203,15 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				acceptedAt: new Date().toISOString(),
 			});
 
-			vi.spyOn(instance, 'settlement').mockResolvedValue({
+			const host = await instance.host();
+			const mockSettlement = {
 				submissionId: 'task-fail-retry-1',
-				outcome: 'completed',
+				outcome: 'completed' as const,
 				result: { resultType: 'complete', content: [{ type: 'text', text: 'done' }] },
 				settledAt: new Date().toISOString(),
-			});
+			};
+			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
+			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
 
 			// Fail Electric append
 			let failAppend = true;
