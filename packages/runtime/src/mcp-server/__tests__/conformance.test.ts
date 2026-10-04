@@ -11,7 +11,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { InMemoryDurableStreamLog } from '../../streams/memory-log.ts';
 import { AppManager } from '../apps.ts';
+import { ElectricEventPort } from '../events.ts';
+import { OperationStore } from '../operations.ts';
+import type { EventPort, OperationPort } from '../ports.ts';
 import { McpCapabilityProjection } from '../projection.ts';
 import { createMcpCapabilityRouter } from '../router.ts';
 import type { CapabilityResult } from '../types.ts';
@@ -21,7 +25,7 @@ import { MCP_2026_07_28 } from '../types.ts';
 // Test Fixture Setup
 // -----------------------------------------------------------------------------
 
-function setupTestProjection(): McpCapabilityProjection {
+async function setupTestProjection(): Promise<McpCapabilityProjection> {
 	const projection = new McpCapabilityProjection({
 		descriptor: {
 			name: 'flue-conformance-server',
@@ -218,11 +222,11 @@ function setupTestProjection(): McpCapabilityProjection {
 	});
 
 	// 8. Event Stream: electric_stream_01
-	projection.eventProjection.appendEvent('electric_stream_01', 'deployment.started', {
+	await projection.eventPort.appendEvent('electric_stream_01', 'deployment.started', {
 		service: 'web',
 		version: '1.0.0',
 	});
-	projection.eventProjection.appendEvent('electric_stream_01', 'deployment.completed', {
+	await projection.eventPort.appendEvent('electric_stream_01', 'deployment.completed', {
 		service: 'web',
 		status: 'healthy',
 	});
@@ -236,7 +240,7 @@ function setupTestProjection(): McpCapabilityProjection {
 
 describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	it('Client A: Strict MCP 2026-07-28 Core Only', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// 1. server/discover
 		const disc = (await projection.handleRequest({
@@ -396,7 +400,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client B: 2026-07-28 + Skills', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const clientCaps = { capabilities: { skills: true } };
 
 		// Native skills/list
@@ -430,7 +434,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client C: 2026-07-28 + Tasks', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const clientCaps = { capabilities: { tasks: true } };
 
 		// Invoking async capability returns native Task reference
@@ -479,7 +483,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client D: 2026-07-28 + Apps', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const clientCaps = { capabilities: { apps: true } };
 
 		// tools/list includes UI definition
@@ -519,7 +523,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client E: 2026-07-28 + Events', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const clientCaps = { capabilities: { events: true } };
 
 		// Native events/list
@@ -558,7 +562,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client F: 2026-07-28 + Variants', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// 1. Variant requested via variant parameter 'compact'
 		const resCompact = (await projection.handleRequest({
@@ -595,7 +599,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 	});
 
 	it('Client G: All Supported Extensions', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const allCaps = {
 			capabilities: {
 				skills: true,
@@ -660,7 +664,7 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 
 describe('Scenario: Deployment skill and launch build across Client Matrix', () => {
 	it('Client A flow: resources/read(skill) -> flue.invoke(deploy) -> job:// fallback', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// 1. Read skill guide via core resource
 		const skill = (await projection.handleRequest({
@@ -699,7 +703,7 @@ describe('Scenario: Deployment skill and launch build across Client Matrix', () 
 	});
 
 	it('Client B flow: skills/get -> flue.invoke(deploy) -> job:// fallback', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const caps = { capabilities: { skills: true } };
 
 		// 1. skills/get
@@ -730,7 +734,7 @@ describe('Scenario: Deployment skill and launch build across Client Matrix', () 
 	});
 
 	it('Client C flow: resources/read(skill) -> flue.invoke(deploy) -> native task', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const caps = { capabilities: { tasks: true } };
 
 		// 1. Read skill via resources/read
@@ -771,7 +775,7 @@ describe('Scenario: Deployment skill and launch build across Client Matrix', () 
 	});
 
 	it('Client G flow: skills/get -> tools/call -> native task -> events verify', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const allCaps = {
 			capabilities: { skills: true, tasks: true, events: true, apps: true },
 		};
@@ -829,7 +833,7 @@ function invokeAsyncHasJob(res: any): boolean {
 
 describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', () => {
 	it('Invariant 1: Flue does not remember unsupported client extension capabilities across requests', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Request 1: Client sends tasks=true
 		const res1 = (await projection.handleRequest({
@@ -861,7 +865,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 2: Search does not mutate tools/list as a side effect', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// 1. Get initial tools list
 		const initialTools = (await projection.handleRequest({
@@ -906,7 +910,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 3: Extension metadata disappears cleanly for core clients', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Client A tools list
 		const toolsA = (await projection.handleRequest({
@@ -933,7 +937,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 4: Every App-backed tool is useful without rendering', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Call linear.project.view without UI extension
 		const callRes = (await projection.handleRequest({
@@ -958,7 +962,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 5: Every Skill remains readable as a Resource', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		const res = (await projection.handleRequest({
 			jsonrpc: '2.0',
@@ -972,7 +976,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 6: Every async Operation remains observable without Tasks', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Trigger operation via core fallback
 		const invokeRes = (await projection.handleRequest({
@@ -1003,10 +1007,10 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 7: Every durable event remains replayable without Events', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Append new event
-		projection.eventProjection.appendEvent('electric_stream_01', 'custom.event', { foo: 'bar' });
+		await projection.eventPort.appendEvent('electric_stream_01', 'custom.event', { foo: 'bar' });
 
 		// Read from beginning using zero offset
 		const replayRes = (await projection.handleRequest({
@@ -1024,7 +1028,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 8: A client ignoring action/trust metadata cannot bypass server policy', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// 1. Destructive tool without confirmation -> MRTR input_required
 		const destructiveRes = (await projection.handleRequest({
@@ -1102,7 +1106,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it("Invariant 9: Duplicated or reordered event wakeups are harmless because Electric's cursor is authoritative", async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Two distinct reads from the same cursor produce deterministic slices
 		const read1 = (await projection.handleRequest({
@@ -1126,7 +1130,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 	});
 
 	it('Invariant 10: A protocol projection cannot create semantics absent from canonical registry/state', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 
 		// Attempting to invoke unregistered capability returns error
 		const res = await projection.handleRequest({
@@ -1150,7 +1154,7 @@ describe('Architectural Invariants (docs/mcp-capability-projection.md § 18)', (
 
 describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 	it('GET /.well-known/mcp/server-card.json returns valid Server Card', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const app = createMcpCapabilityRouter(projection);
 
 		const res = await app.request('/.well-known/mcp/server-card.json');
@@ -1163,7 +1167,7 @@ describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 	});
 
 	it('OPTIONS /mcp returns CORS preflight 204', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const app = createMcpCapabilityRouter(projection);
 
 		const res = await app.request('/mcp', { method: 'OPTIONS' });
@@ -1173,7 +1177,7 @@ describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 	});
 
 	it('GET /mcp rejects legacy SSE with HTTP 400', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const app = createMcpCapabilityRouter(projection);
 
 		const res = await app.request('/mcp', {
@@ -1186,7 +1190,7 @@ describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 	});
 
 	it('GET /mcp without SSE returns server info', async () => {
-		const projection = setupTestProjection();
+		const projection = await setupTestProjection();
 		const app = createMcpCapabilityRouter(projection);
 
 		const res = await app.request('/mcp', { method: 'GET' });
@@ -1197,8 +1201,8 @@ describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 	});
 
 	it('POST /mcp handles JSON-RPC request and executes projection', async () => {
-		const projection = setupTestProjection();
-		const app = createMcpCapabilityRouter(projection);
+		const projection = await setupTestProjection();
+		const app = createMcpCapabilityRouter(projection, { defaultScopes: ['linear:write'] });
 
 		const reqBody = {
 			jsonrpc: '2.0',
@@ -1221,5 +1225,121 @@ describe('Pre-connection Server Cards and Streamable HTTP Router', () => {
 		expect(json.jsonrpc).toBe('2.0');
 		expect(json.id).toBe(42);
 		expect(json.result.structuredContent.title).toBe('HTTP Router Test Issue');
+	});
+});
+
+describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authority', () => {
+	it('Accepts explicitly injected OperationPort and EventPort', async () => {
+		const streamLog = new InMemoryDurableStreamLog();
+		const customEventPort = new ElectricEventPort({ streamLog });
+		const customOpPort = new OperationStore();
+
+		const projection = new McpCapabilityProjection({
+			operationPort: customOpPort,
+			eventPort: customEventPort,
+		});
+
+		expect(projection.operationPort).toBe(customOpPort);
+		expect(projection.eventPort).toBe(customEventPort);
+
+		// Append event through port
+		const evt = await projection.eventPort.appendEvent('orders', 'order.placed', {
+			orderId: 'ORD-1',
+		});
+		expect(evt.streamId).toBe('orders');
+		expect(evt.cursor).toBeDefined();
+
+		// Read back directly through streamLog
+		const readRes = await projection.eventPort.readEvents('orders');
+		expect(readRes.events.length).toBe(1);
+		expect(readRes.events[0].name).toBe('order.placed');
+		expect(readRes.events[0].cursor).toBe(evt.cursor);
+	});
+
+	it('Electric is source of truth: no mcp_events table and cursors come from streamLog', async () => {
+		const streamLog = new InMemoryDurableStreamLog();
+		const executedSqlQueries: string[] = [];
+		const mockSql = {
+			exec: (query: string, ..._bindings: unknown[]) => {
+				executedSqlQueries.push(query);
+				return { toArray: () => [] };
+			},
+		};
+
+		const eventPort = new ElectricEventPort({
+			sql: mockSql as any,
+			streamLog,
+		});
+
+		// Verify mcp_events is never created in schema
+		const hasMcpEventsSchema = executedSqlQueries.some((q) => q.includes('mcp_events'));
+		expect(hasMcpEventsSchema).toBe(false);
+
+		// Append event
+		const evt = await eventPort.appendEvent('world_stream', 'entity.moved', { x: 10, y: 20 });
+		// Cursor must be the opaque format from streamLog, not manufactured 0000000000000001_0000000000000001
+		expect(evt.cursor).toMatch(/^\d{16}_\d{16}$/);
+
+		// Read head cursor directly from streamLog
+		const head = await eventPort.getHeadCursor('world_stream');
+		expect(head).toBe(evt.cursor);
+
+		// Read slice directly from streamLog
+		const slice = await eventPort.readEvents('world_stream');
+		expect(slice.events.length).toBe(1);
+		expect(slice.headCursor).toBe(evt.cursor);
+	});
+
+	it('Auth hardening: default anonymous caller has empty scopes and cannot execute scoped capabilities', async () => {
+		const projection = await setupTestProjection();
+		// Router without defaultScopes grants empty scopes []
+		const app = createMcpCapabilityRouter(projection);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: {
+					name: 'linear.issue.create',
+					arguments: { title: 'Unauthorized Test', teamId: 'ENG' },
+				},
+			}),
+		});
+
+		expect(res.status).toBe(200);
+		const json = (await res.json()) as any;
+		expect(json.error).toBeDefined();
+		expect(json.error.message).toContain('Permission denied');
+		expect(json.error.message).toContain('linear:write');
+	});
+
+	it('Inspection endpoints: require authentication when authenticator is configured', async () => {
+		const projection = await setupTestProjection();
+		const app = createMcpCapabilityRouter(projection, {
+			authenticate: async (c) => {
+				const auth = c.req.header('authorization');
+				if (auth === 'Bearer valid-admin-token') {
+					return { principal: 'admin', actor: 'admin', scopes: ['*'] };
+				}
+				return null;
+			},
+		});
+
+		// 1. Unauthenticated request to /tasks/xyz -> 401
+		const resTask = await app.request('/tasks/task-123');
+		expect(resTask.status).toBe(401);
+
+		// 2. Unauthenticated request to /audit-logs -> 401
+		const resAudit = await app.request('/audit-logs');
+		expect(resAudit.status).toBe(401);
+
+		// 3. Authenticated request to /audit-logs -> 200
+		const resAuditAuthed = await app.request('/audit-logs', {
+			headers: { Authorization: 'Bearer valid-admin-token' },
+		});
+		expect(resAuditAuthed.status).toBe(200);
 	});
 });

@@ -67,11 +67,19 @@ export interface OperationPort {
 		state?: Operation['state'];
 		capabilityId?: string;
 	}): Promise<Operation[]> | Operation[];
+
+	onOperationUpdated?(listener: (op: Operation) => void): () => void;
+	readJobResource?(
+		jobUri: string,
+	): Promise<{ content: string; mimeType: string }> | { content: string; mimeType: string };
+	projectJobFallbackResult?(op: Operation): CapabilityResult;
 }
 
 export interface SubscriptionStorePort {
 	saveSubscription(sub: EventSubscription): Promise<void> | void;
-	getSubscription(id: string): Promise<EventSubscription | undefined> | EventSubscription | undefined;
+	getSubscription(
+		id: string,
+	): Promise<EventSubscription | undefined> | EventSubscription | undefined;
 	deleteSubscription(id: string): Promise<boolean> | boolean;
 	listSubscriptions(): Promise<EventSubscription[]> | EventSubscription[];
 }
@@ -95,11 +103,27 @@ export interface EventPort {
 	getHeadCursor(streamId: string): Promise<string | null> | string | null;
 
 	listStreams(): Promise<string[]> | string[];
+
+	readHeadResource?(
+		streamId: string,
+	): Promise<{ content: string; mimeType: string }> | { content: string; mimeType: string };
+	readAfterResource?(
+		streamId: string,
+		afterCursor: string,
+		limit?: number,
+	): Promise<{ content: string; mimeType: string }> | { content: string; mimeType: string };
+
+	saveSubscription?(sub: EventSubscription): Promise<void> | void;
+	getSubscription?(
+		id: string,
+	): Promise<EventSubscription | undefined> | EventSubscription | undefined;
+	deleteSubscription?(id: string): Promise<boolean> | boolean;
+	listSubscriptions?(): Promise<EventSubscription[]> | EventSubscription[];
+	getDeliveryLogs?(): Promise<readonly WebhookDeliveryRecord[]> | readonly WebhookDeliveryRecord[];
+	getAuditLogs?(limit?: number): Promise<AuditLogEntry[]> | AuditLogEntry[];
 }
 
 export interface McpAuditLogPort {
 	logAudit(category: string, details: Record<string, unknown>): Promise<void> | void;
-	getAuditLogs(
-		limit?: number,
-	): Promise<AuditLogEntry[]> | AuditLogEntry[];
+	getAuditLogs(limit?: number): Promise<AuditLogEntry[]> | AuditLogEntry[];
 }

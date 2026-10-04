@@ -59,8 +59,7 @@ export class AppManager {
 		if (result.uiUri) {
 			const hasText = result.content?.some((c) => c.type === 'text' && c.text.trim().length > 0);
 			const hasStructured =
-				result.structuredContent !== undefined &&
-				Object.keys(result.structuredContent).length > 0;
+				result.structuredContent !== undefined && Object.keys(result.structuredContent).length > 0;
 
 			if (!hasText && !hasStructured) {
 				throw new Error(

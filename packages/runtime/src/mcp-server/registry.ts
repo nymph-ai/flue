@@ -7,12 +7,7 @@
  * Reference: docs/mcp-capability-projection.md § 3
  */
 
-import type {
-	Capability,
-	CapabilityKind,
-	CapabilityResource,
-	CapabilitySkill,
-} from './types.ts';
+import type { Capability, CapabilityKind, CapabilityResource, CapabilitySkill } from './types.ts';
 
 export interface ResourceTemplateDescriptor {
 	uriTemplate: string;
@@ -45,7 +40,8 @@ export class CapabilityRegistry {
 		{
 			uriTemplate: 'skill://{skill}/{path}',
 			name: 'Skill Document or Script',
-			description: 'Obsidian markdown, shell script, or reference document belonging to a skill package.',
+			description:
+				'Obsidian markdown, shell script, or reference document belonging to a skill package.',
 			mimeType: 'text/markdown',
 		},
 		{

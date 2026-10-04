@@ -53,9 +53,7 @@ export class OperationStore implements OperationPort {
 				created_at TEXT NOT NULL,
 				updated_at TEXT NOT NULL
 			)`);
-			this.sql.exec(
-				`CREATE INDEX IF NOT EXISTS idx_mcp_tasks_status ON mcp_tasks(status)`,
-			);
+			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_tasks_status ON mcp_tasks(status)`);
 			this.sql.exec(
 				`CREATE INDEX IF NOT EXISTS idx_mcp_tasks_correlation ON mcp_tasks(correlation_id)`,
 			);
@@ -78,8 +76,7 @@ export class OperationStore implements OperationPort {
 		const now = new Date().toISOString();
 		const state = params.state ?? 'running';
 		const summary =
-			params.initialSummary ??
-			`Operation ${operationId} started for ${params.capabilityId}`;
+			params.initialSummary ?? `Operation ${operationId} started for ${params.capabilityId}`;
 
 		const op: Operation = {
 			operationId,
@@ -124,9 +121,7 @@ export class OperationStore implements OperationPort {
 	getOperation(operationId: string): Operation | undefined {
 		if (this.sql) {
 			try {
-				const rows = this.sql
-					.exec(`SELECT * FROM mcp_tasks WHERE id = ?`, operationId)
-					.toArray();
+				const rows = this.sql.exec(`SELECT * FROM mcp_tasks WHERE id = ?`, operationId).toArray();
 				const r = rows[0];
 				if (!r) return undefined;
 				return {
@@ -135,7 +130,9 @@ export class OperationStore implements OperationPort {
 					state: r.status as Operation['state'],
 					revision: Number(r.revision),
 					summary: r.summary ? String(r.summary) : undefined,
-					payload: r.payload ? (JSON.parse(String(r.payload)) as Record<string, unknown>) : undefined,
+					payload: r.payload
+						? (JSON.parse(String(r.payload)) as Record<string, unknown>)
+						: undefined,
 					result: r.result ? (JSON.parse(String(r.result)) as CapabilityResult) : undefined,
 					error: r.error ? (JSON.parse(String(r.error)) as Operation['error']) : undefined,
 					createdAt: String(r.created_at),
@@ -174,7 +171,8 @@ export class OperationStore implements OperationPort {
 		const summary = update.summary ?? existing.summary;
 		const result = update.result !== undefined ? update.result : existing.result;
 		const error = update.error !== undefined ? update.error : existing.error;
-		const inputRequests = update.inputRequests !== undefined ? update.inputRequests : existing.inputRequests;
+		const inputRequests =
+			update.inputRequests !== undefined ? update.inputRequests : existing.inputRequests;
 
 		const op: Operation = {
 			...existing,
@@ -216,7 +214,11 @@ export class OperationStore implements OperationPort {
 	cancelOperation(operationId: string, reason = 'Cancelled by caller'): boolean {
 		const existing = this.getOperation(operationId);
 		if (!existing) return false;
-		if (existing.state === 'completed' || existing.state === 'failed' || existing.state === 'cancelled') {
+		if (
+			existing.state === 'completed' ||
+			existing.state === 'failed' ||
+			existing.state === 'cancelled'
+		) {
 			return false;
 		}
 
@@ -239,7 +241,9 @@ export class OperationStore implements OperationPort {
 			throw new Error(`Operation '${operationId}' not found.`);
 		}
 		if (op.state !== 'input_required') {
-			throw new Error(`Operation '${operationId}' is in state '${op.state}', not 'input_required'.`);
+			throw new Error(
+				`Operation '${operationId}' is in state '${op.state}', not 'input_required'.`,
+			);
 		}
 
 		return this.updateOperation(operationId, {
@@ -273,7 +277,9 @@ export class OperationStore implements OperationPort {
 					state: r.status as Operation['state'],
 					revision: Number(r.revision),
 					summary: r.summary ? String(r.summary) : undefined,
-					payload: r.payload ? (JSON.parse(String(r.payload)) as Record<string, unknown>) : undefined,
+					payload: r.payload
+						? (JSON.parse(String(r.payload)) as Record<string, unknown>)
+						: undefined,
 					result: r.result ? (JSON.parse(String(r.result)) as CapabilityResult) : undefined,
 					error: r.error ? (JSON.parse(String(r.error)) as Operation['error']) : undefined,
 					createdAt: String(r.created_at),

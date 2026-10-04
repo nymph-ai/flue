@@ -16,7 +16,11 @@ import {
 	signStandardWebhook,
 	verifyStandardWebhook,
 } from './events.ts';
-import type { McpCapabilityProjection, McpJsonRpcRequest, McpJsonRpcResponse } from './projection.ts';
+import type {
+	McpCapabilityProjection,
+	McpJsonRpcRequest,
+	McpJsonRpcResponse,
+} from './projection.ts';
 import type { AuthContext } from './types.ts';
 import { MCP_2026_07_28 } from './types.ts';
 
@@ -145,40 +149,65 @@ export function createMcpCapabilityRouter(
 	app.get('/mcp', handleMcpGet);
 	app.get(`${basePath}/`, handleMcpGet);
 
+	// Helper to enforce auth on inspection endpoints when an authenticator is provided
+	const requireInspectionAuth = async (c: any) => {
+		if (options?.authenticate) {
+			const verified = await options.authenticate(c);
+			if (!verified) {
+				return c.json({ error: 'unauthorized', message: 'Authentication required' }, 401);
+			}
+		}
+		return null;
+	};
+
 	// -------------------------------------------------------------------------
 	// REST Inspection Endpoints (Tasks, Results, Events, Deliveries)
 	// -------------------------------------------------------------------------
-	app.get(`${basePath}/tasks/:id`, (c: any) => {
-		const task = projection.operationStore.getOperation(c.req.param('id'));
+	app.get(`${basePath}/tasks/:id`, async (c: any) => {
+		const unauthorized = await requireInspectionAuth(c);
+		if (unauthorized) return unauthorized;
+		const task = await projection.operationPort.getOperation(c.req.param('id'));
 		if (!task) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		return c.json(task);
 	});
 
-	app.get(`${basePath}/results/:id`, (c: any) => {
-		const task = projection.operationStore.getOperation(c.req.param('id'));
+	app.get(`${basePath}/results/:id`, async (c: any) => {
+		const unauthorized = await requireInspectionAuth(c);
+		if (unauthorized) return unauthorized;
+		const task = await projection.operationPort.getOperation(c.req.param('id'));
 		if (!task || !task.result) {
 			return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		}
 		return c.json(task.result);
 	});
 
-	app.get(`${basePath}/events`, (c: any) => {
+	app.get(`${basePath}/events`, async (c: any) => {
+		const unauthorized = await requireInspectionAuth(c);
+		if (unauthorized) return unauthorized;
 		const streamId = c.req.query('streamId') ?? 'task_events';
 		const cursor = c.req.query('cursor');
-		const events = projection.eventProjection.readEvents(streamId, cursor);
+		const events = await projection.eventPort.readEvents(streamId, cursor);
 		return c.json(events);
 	});
 
-	app.get(`${basePath}/deliveries/:taskId`, (c: any) => {
-		const deliveries = projection.eventProjection.getDeliveryLogs();
+	app.get(`${basePath}/deliveries/:taskId`, async (c: any) => {
+		const unauthorized = await requireInspectionAuth(c);
+		if (unauthorized) return unauthorized;
+		const deliveries = projection.eventPort.getDeliveryLogs
+			? await projection.eventPort.getDeliveryLogs()
+			: [];
 		const taskId = c.req.param('taskId');
 		const filtered = deliveries.filter((d) => d.taskId === taskId);
 		return c.json({ total: filtered.length, deliveries: filtered });
 	});
 
-	app.get(`${basePath}/audit-logs`, (c: any) => {
+	app.get(`${basePath}/audit-logs`, async (c: any) => {
+		const unauthorized = await requireInspectionAuth(c);
+		if (unauthorized) return unauthorized;
 		const limit = Number(c.req.query('limit')) || 50;
-		const logs = projection.eventProjection.getAuditLogs(limit);
+		const logs = projection.eventPort.getAuditLogs
+			? await projection.eventPort.getAuditLogs(limit)
+			: [];
 		return c.json({ total: logs.length, logs }, 200, {
 			'access-control-allow-origin': '*',
 		});
@@ -199,7 +228,9 @@ export function createMcpCapabilityRouter(
 		let signatureValid: boolean | undefined = undefined;
 		const subIdHeader = c.req.header('x-mcp-subscription-id');
 		if (subIdHeader) {
-			const sub = projection.eventProjection.getSubscription(subIdHeader);
+			const sub = projection.eventPort.getSubscription
+				? await projection.eventPort.getSubscription(subIdHeader)
+				: undefined;
 			const secret = sub?.secret;
 			if (secret) {
 				const standardSig = c.req.header('webhook-signature');
@@ -285,14 +316,12 @@ export function createMcpCapabilityRouter(
 		}
 
 		if (!auth) {
-			const authHeader = c.req.header('authorization');
-			const principal = authHeader
-				? authHeader.replace(/^Bearer\s+/i, '')
-				: (c.req.header('x-principal') ?? 'anonymous');
+			const principal = c.req.header('x-principal') ?? 'anonymous';
 			const actor = c.req.header('x-actor') ?? principal;
 			const delegator = c.req.header('x-delegator');
 
-			const scopes = options?.defaultScopes ?? ['*'];
+			// Safe default: empty scopes unless explicitly configured
+			const scopes = options?.defaultScopes ?? [];
 
 			auth = {
 				principal,
@@ -313,12 +342,7 @@ export function createMcpCapabilityRouter(
 		if (Array.isArray(body)) {
 			const responses = await Promise.all(
 				body.map((req) =>
-					projection.handleRequest(
-						req as McpJsonRpcRequest,
-						c.req.raw.headers,
-						auth,
-						queryProfile,
-					),
+					projection.handleRequest(req as McpJsonRpcRequest, c.req.raw.headers, auth, queryProfile),
 				),
 			);
 			return c.json(responses, 200);

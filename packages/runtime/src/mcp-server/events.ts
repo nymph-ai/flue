@@ -10,7 +10,15 @@
  */
 
 import type { DurableStreamLog } from '../streams/log.ts';
-import type { DurableObjectStateLike, EventPort, McpAuditLogPort, SqlStorageLike } from './ports.ts';
+import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
+import { asStreamOffset, STREAM_START } from '../streams/offset.ts';
+import type {
+	DurableObjectStateLike,
+	EventPort,
+	McpAuditLogPort,
+	SqlStorageLike,
+	SubscriptionStorePort,
+} from './ports.ts';
 import type {
 	AuditLogEntry,
 	ElectricEvent,
@@ -184,11 +192,7 @@ export async function signPayload(secret: string, payload: string): Promise<stri
 		false,
 		['sign'],
 	);
-	const signature = await crypto.subtle.sign(
-		'HMAC',
-		key,
-		encoder.encode(payload) as BufferSource,
-	);
+	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload) as BufferSource);
 	const hex = Array.from(new Uint8Array(signature))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
@@ -232,21 +236,20 @@ export interface EventProjectionOptions {
 	streamLog?: DurableStreamLog;
 }
 
-export class EventProjection implements EventPort, McpAuditLogPort {
-	private readonly streams = new Map<string, ElectricEvent[]>();
+export class ElectricEventPort implements EventPort, McpAuditLogPort, SubscriptionStorePort {
 	private readonly subscriptions = new Map<string, EventSubscription>();
 	private readonly deliveryLogs: WebhookDeliveryRecord[] = [];
 	private readonly auditLogs: AuditLogEntry[] = [];
-	private nextOffset = 1;
+	private readonly knownStreams = new Set<string>();
 
 	private readonly sql?: SqlStorageLike;
 	private readonly ctx?: DurableObjectStateLike;
-	private readonly streamLog?: DurableStreamLog;
+	public readonly streamLog: DurableStreamLog;
 
 	constructor(options?: EventProjectionOptions) {
 		this.sql = options?.sql;
 		this.ctx = options?.ctx;
-		this.streamLog = options?.streamLog;
+		this.streamLog = options?.streamLog ?? new InMemoryDurableStreamLog();
 
 		if (this.sql) {
 			this.initSchema();
@@ -275,17 +278,6 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 				cursor TEXT,
 				created_at TEXT NOT NULL
 			)`);
-			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_events (
-				event_id TEXT PRIMARY KEY,
-				stream_id TEXT NOT NULL,
-				name TEXT NOT NULL,
-				cursor TEXT NOT NULL,
-				timestamp TEXT NOT NULL,
-				data TEXT NOT NULL
-			)`);
-			this.sql.exec(
-				`CREATE INDEX IF NOT EXISTS idx_mcp_events_stream ON mcp_events(stream_id, cursor)`,
-			);
 			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_deliveries (
 				id TEXT PRIMARY KEY,
 				event_id TEXT NOT NULL,
@@ -375,19 +367,29 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 
 	/**
 	 * Append an event to a durable stream and dispatch webhook notifications.
+	 * Electric is the sole source of truth for events.
 	 */
-	appendEvent(
+	async appendEvent(
 		streamId: string,
 		name: string,
 		data: unknown,
 		customCursor?: string,
-	): ElectricEvent {
-		const offset = this.nextOffset++;
-		const cursor =
-			customCursor ??
-			`${String(offset).padStart(16, '0')}_0000000000000001`;
+	): Promise<ElectricEvent> {
+		this.knownStreams.add(streamId);
 		const eventId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const timestamp = new Date().toISOString();
+
+		await this.streamLog.ensure(streamId);
+		const message = {
+			eventId,
+			streamId,
+			name,
+			timestamp,
+			data,
+		};
+
+		const appendResult = await this.streamLog.append(streamId, [message]);
+		const cursor = customCursor ?? appendResult.nextOffset;
 
 		const event: ElectricEvent = {
 			eventId,
@@ -398,40 +400,11 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 			data,
 		};
 
-		if (this.sql) {
-			try {
-				this.sql.exec(
-					`INSERT INTO mcp_events (event_id, stream_id, name, cursor, timestamp, data)
-					 VALUES (?, ?, ?, ?, ?, ?)`,
-					eventId,
-					streamId,
-					name,
-					cursor,
-					timestamp,
-					JSON.stringify(data),
-				);
-			} catch (e) {
-				console.error('[flue:events] Failed to insert event into SQLite:', e);
-			}
-		} else {
-			let stream = this.streams.get(streamId);
-			if (!stream) {
-				stream = [];
-				this.streams.set(streamId, stream);
-			}
-			stream.push(event);
-		}
-
-		// Also mirror to DurableStreamLog if provided
-		if (this.streamLog) {
-			const promise = this.streamLog.append(streamId, [event]);
-			if (this.ctx?.waitUntil) {
-				this.ctx.waitUntil(promise);
-			}
-		}
-
 		// Dispatch to active subscribers
-		this.dispatchToSubscribers(event);
+		const dispatchPromise = this.dispatchToSubscribers(event);
+		if (this.ctx?.waitUntil) {
+			this.ctx.waitUntil(dispatchPromise);
+		}
 
 		return event;
 	}
@@ -439,11 +412,12 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 	/**
 	 * Deliver an event to all matching subscriptions.
 	 */
-	private dispatchToSubscribers(event: ElectricEvent): void {
+	private async dispatchToSubscribers(event: ElectricEvent): Promise<void> {
 		const subs = this.listSubscriptions();
-		const eventData = (event.data && typeof event.data === 'object'
-			? event.data
-			: {}) as Record<string, unknown>;
+		const eventData = (event.data && typeof event.data === 'object' ? event.data : {}) as Record<
+			string,
+			unknown
+		>;
 
 		const taskId = (eventData.taskId ?? eventData.id) as string | undefined;
 		const correlationId = eventData.correlationId as string | undefined;
@@ -491,9 +465,10 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 			'user-agent': 'NymphAI-Flue/2.2.2 (MCP 2026-07-28)',
 		};
 
-		const eventData = (event.data && typeof event.data === 'object'
-			? event.data
-			: {}) as Record<string, unknown>;
+		const eventData = (event.data && typeof event.data === 'object' ? event.data : {}) as Record<
+			string,
+			unknown
+		>;
 		if (eventData.taskId) {
 			headers['x-mcp-task-id'] = String(eventData.taskId);
 		}
@@ -624,108 +599,61 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 	}
 
 	/**
-	 * Read events from stream after a given cursor.
+	 * Read events from stream after a given cursor directly from DurableStreamLog (Electric).
 	 */
-	readEvents(
+	async readEvents(
 		streamId: string,
 		afterCursor?: string,
 		limit = 50,
-	): { events: ElectricEvent[]; nextCursor: string | null; headCursor: string | null } {
-		if (this.sql) {
-			try {
-				let query = `SELECT * FROM mcp_events WHERE stream_id = ?`;
-				const bindings: unknown[] = [streamId];
-				if (afterCursor) {
-					query += ` AND cursor > ?`;
-					bindings.push(afterCursor);
+	): Promise<{ events: ElectricEvent[]; nextCursor: string | null; headCursor: string | null }> {
+		try {
+			this.knownStreams.add(streamId);
+			const fromOffset = afterCursor ? asStreamOffset(afterCursor) : STREAM_START;
+			const batch = await this.streamLog.read(streamId, fromOffset);
+			const head = await this.streamLog.head(streamId);
+
+			const events: ElectricEvent[] = [];
+			for (const msg of batch.messages) {
+				if (msg && typeof msg === 'object') {
+					const m = msg as Record<string, unknown>;
+					events.push({
+						eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+						streamId: String(m.streamId ?? streamId),
+						name: String(m.name ?? ''),
+						cursor: String(m.cursor ?? batch.nextOffset),
+						timestamp: String(m.timestamp ?? new Date().toISOString()),
+						data: m.data,
+					});
 				}
-				query += ` ORDER BY cursor ASC LIMIT ?`;
-				bindings.push(limit);
-
-				const rows = this.sql.exec(query, ...bindings).toArray();
-				const events: ElectricEvent[] = rows.map((r) => ({
-					eventId: String(r.event_id),
-					streamId: String(r.stream_id),
-					name: String(r.name),
-					cursor: String(r.cursor),
-					timestamp: String(r.timestamp),
-					data: r.data ? JSON.parse(String(r.data)) : null,
-				}));
-
-				const headCursor = this.getHeadCursor(streamId);
-				const nextCursor =
-					events.length > 0 ? (events[events.length - 1]?.cursor ?? null) : afterCursor ?? null;
-
-				return { events, nextCursor, headCursor };
-			} catch {
-				return { events: [], nextCursor: null, headCursor: null };
+				if (events.length >= limit) break;
 			}
-		}
 
-		const stream = this.streams.get(streamId) ?? [];
-		if (stream.length === 0) {
+			const headCursor = head ? head.nextOffset : null;
+			const nextCursor = batch.nextOffset;
+
+			return { events, nextCursor, headCursor };
+		} catch (_err) {
 			return { events: [], nextCursor: null, headCursor: null };
 		}
-
-		const headCursor = stream[stream.length - 1]?.cursor ?? null;
-
-		let startIndex = 0;
-		if (afterCursor) {
-			const idx = stream.findIndex((e) => e.cursor === afterCursor);
-			if (idx >= 0) {
-				startIndex = idx + 1;
-			}
-		}
-
-		const slice = stream.slice(startIndex, startIndex + limit);
-		const nextCursor =
-			slice.length > 0 ? (slice[slice.length - 1]?.cursor ?? null) : afterCursor ?? null;
-
-		return {
-			events: slice,
-			nextCursor,
-			headCursor,
-		};
 	}
 
 	/**
-	 * Get head cursor for stream.
+	 * Get head cursor for stream directly from DurableStreamLog (Electric).
 	 */
-	getHeadCursor(streamId: string): string | null {
-		if (this.sql) {
-			try {
-				const rows = this.sql
-					.exec(
-						`SELECT cursor FROM mcp_events WHERE stream_id = ? ORDER BY cursor DESC LIMIT 1`,
-						streamId,
-					)
-					.toArray();
-				return rows[0]?.cursor ? String(rows[0].cursor) : null;
-			} catch {
-				return null;
-			}
+	async getHeadCursor(streamId: string): Promise<string | null> {
+		try {
+			const head = await this.streamLog.head(streamId);
+			return head ? head.nextOffset : null;
+		} catch {
+			return null;
 		}
-
-		const stream = this.streams.get(streamId);
-		if (!stream || stream.length === 0) return null;
-		return stream[stream.length - 1]?.cursor ?? null;
 	}
 
 	/**
 	 * List active stream IDs.
 	 */
 	listStreams(): string[] {
-		if (this.sql) {
-			try {
-				const rows = this.sql
-					.exec(`SELECT DISTINCT stream_id FROM mcp_events ORDER BY stream_id ASC`)
-					.toArray();
-				return rows.map((r) => String(r.stream_id));
-			} catch {
-				return [];
-			}
-		}
-		return Array.from(this.streams.keys()).sort();
+		return Array.from(this.knownStreams).sort();
 	}
 
 	// --------------------------------------------------------------------------
@@ -747,9 +675,7 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 		skipVerification?: boolean;
 	}): Promise<{ subscription: EventSubscription; refreshBefore: string }> {
 		const delivery = params.delivery ?? {};
-		const callbackUrl = String(
-			delivery.url ?? params.callbackUrl ?? '',
-		);
+		const callbackUrl = String(delivery.url ?? params.callbackUrl ?? '');
 		if (!callbackUrl) {
 			throw new Error('Missing delivery.url or callbackUrl for events/subscribe');
 		}
@@ -809,61 +735,45 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 		return { subscription, refreshBefore };
 	}
 
-	private replayPastEvents(
-		sub: EventSubscription,
-		cursor?: string,
-		fromRevision?: number,
-	): void {
+	private replayPastEvents(sub: EventSubscription, cursor?: string, fromRevision?: number): void {
 		const replay = async () => {
-			let eventsToReplay: ElectricEvent[] = [];
-			if (this.sql) {
+			const streamIds = sub.streamId ? [sub.streamId] : Array.from(this.knownStreams);
+			const fromOffset = cursor ? asStreamOffset(cursor) : STREAM_START;
+
+			for (const streamId of streamIds) {
 				try {
-					let query = `SELECT * FROM mcp_events WHERE 1=1`;
-					const bindings: unknown[] = [];
-					if (sub.streamId) {
-						query += ` AND stream_id = ?`;
-						bindings.push(sub.streamId);
+					const batch = await this.streamLog.read(streamId, fromOffset);
+					for (const msg of batch.messages) {
+						if (!msg || typeof msg !== 'object') continue;
+						const m = msg as Record<string, unknown>;
+						const evt: ElectricEvent = {
+							eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+							streamId: String(m.streamId ?? streamId),
+							name: String(m.name ?? ''),
+							cursor: String(m.cursor ?? batch.nextOffset),
+							timestamp: String(m.timestamp ?? new Date().toISOString()),
+							data: m.data,
+						};
+
+						const data = (evt.data && typeof evt.data === 'object' ? evt.data : {}) as Record<
+							string,
+							unknown
+						>;
+						if (sub.filter?.taskId && data.taskId !== sub.filter.taskId) continue;
+						if (sub.filter?.correlationId && data.correlationId !== sub.filter.correlationId)
+							continue;
+						if (
+							fromRevision !== undefined &&
+							typeof data.revision === 'number' &&
+							data.revision < fromRevision
+						) {
+							continue;
+						}
+						await this.deliverWebhook(sub, evt);
 					}
-					if (cursor) {
-						query += ` AND cursor >= ?`;
-						bindings.push(cursor);
-					}
-					query += ` ORDER BY cursor ASC`;
-					const rows = this.sql.exec(query, ...bindings).toArray();
-					eventsToReplay = rows.map((r) => ({
-						eventId: String(r.event_id),
-						streamId: String(r.stream_id),
-						name: String(r.name),
-						cursor: String(r.cursor),
-						timestamp: String(r.timestamp),
-						data: r.data ? JSON.parse(String(r.data)) : null,
-					}));
 				} catch {
-					// continue
+					// stream read error or missing
 				}
-			} else {
-				const stream = sub.streamId
-					? this.streams.get(sub.streamId) ?? []
-					: Array.from(this.streams.values()).flat();
-
-				eventsToReplay = stream.filter((e) => {
-					if (cursor && e.cursor < cursor) return false;
-					return true;
-				});
-			}
-
-			// Filter by task/correlation if applicable
-			for (const evt of eventsToReplay) {
-				const data = (evt.data && typeof evt.data === 'object' ? evt.data : {}) as Record<
-					string,
-					unknown
-				>;
-				if (sub.filter?.taskId && data.taskId !== sub.filter.taskId) continue;
-				if (sub.filter?.correlationId && data.correlationId !== sub.filter.correlationId) continue;
-				if (fromRevision !== undefined && typeof data.revision === 'number' && data.revision < fromRevision) {
-					continue;
-				}
-				await this.deliverEvent(sub, evt);
 			}
 		};
 
@@ -1001,8 +911,8 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 	/**
 	 * Read eventstream://head resource.
 	 */
-	readHeadResource(streamId: string): { content: string; mimeType: string } {
-		const headCursor = this.getHeadCursor(streamId);
+	async readHeadResource(streamId: string): Promise<{ content: string; mimeType: string }> {
+		const headCursor = await this.getHeadCursor(streamId);
 		const payload = {
 			streamId,
 			headCursor,
@@ -1017,15 +927,17 @@ export class EventProjection implements EventPort, McpAuditLogPort {
 	/**
 	 * Read eventstream://after/<cursor> resource.
 	 */
-	readAfterResource(
+	async readAfterResource(
 		streamId: string,
 		afterCursor: string,
 		limit = 50,
-	): { content: string; mimeType: string } {
-		const result = this.readEvents(streamId, afterCursor, limit);
+	): Promise<{ content: string; mimeType: string }> {
+		const result = await this.readEvents(streamId, afterCursor, limit);
 		return {
 			content: JSON.stringify(result, null, 2),
 			mimeType: 'application/json',
 		};
 	}
 }
+
+export { ElectricEventPort as EventProjection };

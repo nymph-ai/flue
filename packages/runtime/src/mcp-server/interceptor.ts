@@ -27,9 +27,7 @@ import type {
 function findInputResponse(context: RequestContext, requestId: string): unknown {
 	if (!context.inputResponses) return undefined;
 	if (Array.isArray(context.inputResponses)) {
-		const found = context.inputResponses.find(
-			(r: McpInputResponse) => r.id === requestId,
-		);
+		const found = context.inputResponses.find((r: McpInputResponse) => r.id === requestId);
 		return found ? found.response : undefined;
 	}
 	return (context.inputResponses as Record<string, unknown>)[requestId];
@@ -216,10 +214,11 @@ export class PolicyInterceptorPipeline {
 					schema: {
 						type: 'object',
 						properties: {
-							[reqKey]:
-								(capability.inputSchema?.properties as Record<string, unknown>)?.[reqKey] ?? {
-									type: 'string',
-								},
+							[reqKey]: (capability.inputSchema?.properties as Record<string, unknown>)?.[
+								reqKey
+							] ?? {
+								type: 'string',
+							},
 						},
 						required: [reqKey],
 					},

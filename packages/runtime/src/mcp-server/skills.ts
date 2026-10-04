@@ -88,7 +88,12 @@ export class SkillManager {
 	/**
 	 * Collect all skill resource descriptors for core resources/list.
 	 */
-	listSkillResources(): Array<{ uri: string; name: string; description: string; mimeType: string }> {
+	listSkillResources(): Array<{
+		uri: string;
+		name: string;
+		description: string;
+		mimeType: string;
+	}> {
 		const result: Array<{ uri: string; name: string; description: string; mimeType: string }> = [];
 		const skills = this.registry.getAllSkills();
 
