@@ -89,6 +89,8 @@ export type FlueReceiptState = {
 	 * (`pi/projection.ts` `DisplayMessage`).
 	 */
 	message?: JsonValue;
+	/** Whether this submission's settlement has been projected outward to Electric. */
+	settlementPublished?: boolean;
 };
 
 export const FlueReceipts = defineDocFamily<FlueReceiptState, null>({

@@ -1989,5 +1989,184 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			expect(questions.length).toBe(1);
 			expect(questions[0]?.id).toBe('q-owned');
 		});
+
+		it('Settlement Projection: 100 getTask calls project exactly one semantic settlement event to Electric', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+			const streamLog = new InMemoryDurableStreamLog();
+
+			const instance = new FlueAgentInstance({
+				agentName: 'alice',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async () => {},
+				attachments: new InMemoryAttachmentStore(),
+				entities: { log: streamLog },
+			});
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-dedup-100',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date().toISOString(),
+			});
+
+			vi.spyOn(instance, 'settlement').mockResolvedValue({
+				submissionId: 'task-dedup-100',
+				outcome: 'completed',
+				result: { hello: 'world' },
+				settledAt: new Date().toISOString(),
+			});
+
+			// Execute 100 calls to getTask on the active instance
+			for (let i = 0; i < 100; i++) {
+				const op = await instance.getTask('task-dedup-100');
+				expect(op?.state).toBe('completed');
+			}
+
+			// Read Electric stream: exactly 1 event should be present
+			const streamPath = 'flue/v1/alice/1/events';
+			const batch = await streamLog.read(streamPath, '0');
+			expect(batch.messages.length).toBe(1);
+			const event = batch.messages[0] as any;
+			expect(event?.id).toBe('task-settled:task-dedup-100');
+			expect(event?.name).toBe('task_changed');
+
+			// Simulate DO eviction/restart: create a new instance on the same SQLite database
+			const restartedInstance = new FlueAgentInstance({
+				agentName: 'alice',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async () => {},
+				attachments: new InMemoryAttachmentStore(),
+				entities: { log: streamLog },
+			});
+			vi.spyOn(restartedInstance, 'settlement').mockResolvedValue({
+				submissionId: 'task-dedup-100',
+				outcome: 'completed',
+				result: { hello: 'world' },
+				settledAt: new Date().toISOString(),
+			});
+
+			// Execute 100 more calls on the new instance
+			for (let i = 0; i < 100; i++) {
+				const op = await restartedInstance.getTask('task-dedup-100');
+				expect(op?.state).toBe('completed');
+			}
+
+			// Still exactly 1 event in Electric because durable marker persisted
+			const batchAfterRestart = await streamLog.read(streamPath, '0');
+			expect(batchAfterRestart.messages.length).toBe(1);
+		});
+
+		it('ElectricEventPort: replayPastEvents preserves m.id as eventId for deterministic settlement records', async () => {
+			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+			const streamLog = new InMemoryDurableStreamLog();
+			const eventPort = new ElectricEventPort({ streamLog });
+
+			await streamLog.append('test-stream', [
+				{
+					id: 'task-settled:sub-1234',
+					name: 'task_changed',
+					timestamp: new Date().toISOString(),
+					data: { taskId: 'sub-1234', status: 'completed', revision: 2 },
+				},
+			]);
+
+			const delivered: ElectricEvent[] = [];
+			vi.spyOn(eventPort as any, 'deliverEvent').mockImplementation(async (_sub, evt) => {
+				delivered.push(evt as ElectricEvent);
+			});
+
+			await eventPort.subscribe({
+				callbackUrl: 'https://webhook.example.com/events',
+				streamId: 'test-stream',
+				fromRevision: 1,
+				skipVerification: true,
+			});
+
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(delivered.length).toBe(1);
+			expect(delivered[0]?.eventId).toBe('task-settled:sub-1234');
+		});
+
+		it('AgentOperationService: questionsForTask fails closed when piSubmissionId is known but ancestry does not match', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { ROOT_CONVERSATION_ID } = await import('@earendil-works/pi-durable');
+			const { FlueQuestions } = await import('../../pi/questions.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async () => {},
+				attachments: new InMemoryAttachmentStore(),
+			});
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-1',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date().toISOString(),
+			});
+
+			const host = await instance.host();
+			// Commit question with null callTaskId into Pi
+			await host.harness.commit(
+				async (tx) => {
+					const doc = await tx.doc(FlueQuestions, 'q-no-task', null);
+					doc.status = 'pending';
+					doc.question = { kind: 'test' };
+					doc.conversationId = ROOT_CONVERSATION_ID;
+					doc.callTaskId = null;
+				},
+				{ abortSignal: undefined as any },
+			);
+
+			vi.spyOn(instance, 'pendingQuestions').mockResolvedValue([
+				{
+					id: 'q-no-task',
+					question: { kind: 'test' } as any,
+					askedAt: 1,
+					conversationId: ROOT_CONVERSATION_ID,
+				},
+			]);
+
+			// Provide receipt with a known piSubmissionId
+			const questions = await instance.questionsForTask('task-1', {
+				status: 'admitted',
+				conversationId: ROOT_CONVERSATION_ID,
+				piSubmissionId: 42,
+				kind: 'direct',
+				digest: 'd',
+				acceptedAt: '',
+				uid: '',
+				whenBusy: 'steer',
+				content: '',
+				attempts: 1,
+			});
+
+			// Since callTaskId is null, fails closed and rejects the question
+			expect(questions.length).toBe(0);
+		});
 	});
 });

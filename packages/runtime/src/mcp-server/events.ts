@@ -939,7 +939,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 						if (!msg || typeof msg !== 'object') continue;
 						const m = msg as Record<string, unknown>;
 						const evt: ElectricEvent = {
-							eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+							eventId: String(m.id ?? m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
 							streamId: String(m.streamId ?? streamId),
 							name: String(m.name ?? ''),
 							cursor: String(m.cursor ?? batch.nextOffset),

@@ -188,6 +188,8 @@ export class FlueAgentInstance implements AgentOperationService {
 	/** State values as of the last render, overlaid by pending writes. */
 	#stateSnapshot = new Map<string, unknown>();
 	#renderChain: Promise<unknown> = Promise.resolve();
+	#publishedSettlements = new Set<string>();
+	#publishingSettlements = new Map<string, Promise<void>>();
 	/** The resolved sandbox and the factory/cwd it came from. */
 	#sandbox: {
 		factory: SandboxFactory | undefined;
@@ -253,7 +255,7 @@ export class FlueAgentInstance implements AgentOperationService {
 
 	// ─── Events ─────────────────────────────────────────────────────────────
 
-	#publishSettlementEvent(settlement: {
+	async #publishSettlementEvent(settlement: {
 		submissionId: string;
 		outcome: 'completed' | 'failed' | 'aborted';
 		error?: unknown;
@@ -261,14 +263,54 @@ export class FlueAgentInstance implements AgentOperationService {
 		summary?: string;
 		correlationId?: string;
 		artifactRefs?: string[];
-	}): void {
+	}): Promise<void> {
 		if (!this.#options.entities) return;
-		const self = { type: this.agentName, id: this.instanceId };
-		const path = eventsPath(self);
-		const domainEvent = projectSettlementToElectricEvent(settlement);
-		void appendCreating(this.#options.entities.log, path, domainEvent, undefined).catch((err) =>
-			this.#report(err),
-		);
+
+		if (this.#publishedSettlements.has(settlement.submissionId)) {
+			return;
+		}
+
+		const inFlight = this.#publishingSettlements.get(settlement.submissionId);
+		if (inFlight) {
+			await inFlight;
+			return;
+		}
+
+		const publishPromise = (async () => {
+			const { host } = await this.#open();
+			const receipt = await host.harness.snapshot(
+				FlueReceipts,
+				settlement.submissionId,
+				BACKGROUND_CONTEXT,
+			);
+			if (receipt?.settlementPublished) {
+				this.#publishedSettlements.add(settlement.submissionId);
+				return;
+			}
+
+			const self = { type: this.agentName, id: this.instanceId };
+			const path = eventsPath(self);
+			const domainEvent = projectSettlementToElectricEvent(settlement);
+			await appendCreating(this.#options.entities!.log, path, domainEvent, undefined).catch((err) =>
+				this.#report(err),
+			);
+
+			await host.harness
+				.commit(async (tx) => {
+					const record = await tx.doc(FlueReceipts, settlement.submissionId, null);
+					record.settlementPublished = true;
+				}, BACKGROUND_CONTEXT)
+				.catch((err) => this.#report(err));
+
+			this.#publishedSettlements.add(settlement.submissionId);
+		})();
+
+		this.#publishingSettlements.set(settlement.submissionId, publishPromise);
+		try {
+			await publishPromise;
+		} finally {
+			this.#publishingSettlements.delete(settlement.submissionId);
+		}
 	}
 
 	#emit(event: FlueEventInput, observation?: FlueObservationDetail): void {
@@ -279,11 +321,11 @@ export class FlueAgentInstance implements AgentOperationService {
 		}
 
 		if (event.type === 'submission_settled') {
-			this.#publishSettlementEvent({
+			void this.#publishSettlementEvent({
 				submissionId: event.submissionId,
 				outcome: event.outcome,
 				error: event.error,
-			});
+			}).catch((err) => this.#report(err));
 		}
 	}
 
@@ -1023,16 +1065,19 @@ export class FlueAgentInstance implements AgentOperationService {
 					continue;
 				}
 
-				if (targetReceipt.piSubmissionId !== undefined && record.callTaskId !== null) {
+				if (targetReceipt.piSubmissionId !== undefined) {
+					if (record.callTaskId === null || record.callTaskId === undefined) {
+						continue;
+					}
 					let curr: number | undefined = record.callTaskId;
-					let matchesSubmission = true;
+					let matchesSubmission = false;
 					while (curr !== undefined) {
 						const task = taskOwnerMap.get(curr);
 						if (task) {
 							const subId = (task.record as Record<string, unknown>).submissionId;
 							if (typeof subId === 'number') {
-								if (subId !== targetReceipt.piSubmissionId) {
-									matchesSubmission = false;
+								if (subId === targetReceipt.piSubmissionId) {
+									matchesSubmission = true;
 								}
 								break;
 							}
@@ -1052,7 +1097,7 @@ export class FlueAgentInstance implements AgentOperationService {
 	async getTask(taskId: string): Promise<Operation | undefined> {
 		const settlement = await this.settlement(taskId);
 		if (settlement) {
-			this.#publishSettlementEvent({
+			await this.#publishSettlementEvent({
 				submissionId: settlement.submissionId,
 				outcome: settlement.outcome,
 				result: settlement.result,
