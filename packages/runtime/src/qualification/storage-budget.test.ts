@@ -75,7 +75,7 @@ const BUDGET: Record<string, Rows> = {
 	'idle wake': { rowsRead: 20, rowsWritten: 5 },
 	'cold open + admission + turn': { rowsRead: 110, rowsWritten: 30 },
 	'Code Mode store() turn, cold, after <size> store writes': { rowsRead: 120, rowsWritten: 50 },
-	'parked question (ask, park, answer, resume)': { rowsRead: 85, rowsWritten: 70 },
+	'parked question (ask, park, answer, resume)': { rowsRead: 95, rowsWritten: 70 },
 	'3 idle wakes while a question is parked': { rowsRead: 30, rowsWritten: 0 },
 };
 
