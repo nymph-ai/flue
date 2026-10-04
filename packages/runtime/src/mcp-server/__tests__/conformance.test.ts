@@ -1867,7 +1867,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const instance = new FlueAgentInstance({
 				agentName: 'test-agent',
 				instanceId: '1',
-				agent: { name: 'test-agent', handle: async () => {} } as any,
+				agent: (() => 'test instructions') as any,
 				database: () => database,
 				events: { emitEvent: () => {} } as any,
 				mcp: createMcpConnectionCache(),
@@ -1902,7 +1902,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const instance = new FlueAgentInstance({
 				agentName: 'test-agent',
 				instanceId: '1',
-				agent: { name: 'test-agent', handle: async () => {} } as any,
+				agent: (() => 'test instructions') as any,
 				database: () => database,
 				events: { emitEvent: () => {} } as any,
 				mcp: createMcpConnectionCache(),
@@ -1949,12 +1949,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
 			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { ROOT_CONVERSATION_ID } = await import('@earendil-works/pi-durable');
 
 			const database = await openNodeSqliteDatabase(':memory:');
 			const instance = new FlueAgentInstance({
 				agentName: 'test-agent',
 				instanceId: '1',
-				agent: { name: 'test-agent', handle: async () => {} } as any,
+				agent: (() => 'test instructions') as any,
 				database: () => database,
 				events: { emitEvent: () => {} } as any,
 				mcp: createMcpConnectionCache(),
@@ -1970,8 +1971,18 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			});
 
 			vi.spyOn(instance, 'pendingQuestions').mockResolvedValue([
-				{ id: 'q-owned', question: { kind: 'test' } as any, askedAt: 1, conversationId: 0 },
-				{ id: 'q-other', question: { kind: 'test' } as any, askedAt: 2, conversationId: 99 },
+				{
+					id: 'q-owned',
+					question: { kind: 'test' } as any,
+					askedAt: 1,
+					conversationId: ROOT_CONVERSATION_ID,
+				},
+				{
+					id: 'q-other',
+					question: { kind: 'test' } as any,
+					askedAt: 2,
+					conversationId: (ROOT_CONVERSATION_ID as number) + 99,
+				},
 			]);
 
 			const questions = await instance.questionsForTask('task-1');
