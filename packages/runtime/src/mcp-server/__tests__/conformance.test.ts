@@ -1252,8 +1252,8 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 		// Read back directly through streamLog
 		const readRes = await projection.eventPort.readEvents('orders');
 		expect(readRes.events.length).toBe(1);
-		expect(readRes.events[0].name).toBe('order.placed');
-		expect(readRes.events[0].cursor).toBe(evt.cursor);
+		expect(readRes.events[0]?.name).toBe('order.placed');
+		expect(readRes.events[0]?.cursor).toBe(evt.cursor);
 	});
 
 	it('Electric is source of truth: no mcp_events table and cursors come from streamLog', async () => {

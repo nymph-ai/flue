@@ -343,7 +343,7 @@ export class McpCapabilityProjection {
 				return this.handleToolsCall(params, context);
 
 			case 'resources/list':
-				return this.handleResourcesList(params, context);
+				return await this.handleResourcesList(params, context);
 
 			case 'resources/read':
 				return this.handleResourcesRead(params, context);
@@ -387,7 +387,7 @@ export class McpCapabilityProjection {
 					throw { code: -32601, message: `Method not found: ${method}` };
 				}
 				const taskId = String(params.taskId ?? params.id ?? '');
-				const op = this.operationStore.getOperation(taskId);
+				const op = await this.operationPort.getOperation(taskId);
 				if (!op) throw new Error(`Task '${taskId}' not found.`);
 				return { resultType: 'complete', task: op };
 			}
@@ -398,7 +398,7 @@ export class McpCapabilityProjection {
 				}
 				const taskId = String(params.taskId ?? params.id ?? '');
 				const reason = String(params.reason ?? 'Cancelled by caller');
-				const ok = this.operationStore.cancelOperation(taskId, reason);
+				const ok = await this.operationPort.cancelOperation(taskId, reason);
 				return { resultType: 'complete', success: ok };
 			}
 
@@ -746,7 +746,7 @@ export class McpCapabilityProjection {
 		if (name === 'flue.job.cancel') {
 			const jobId = String(args.jobId ?? '');
 			const reason = String(args.reason ?? 'Cancelled by user');
-			const ok = this.operationStore.cancelOperation(jobId, reason);
+			const ok = await this.operationPort.cancelOperation(jobId, reason);
 			return {
 				resultType: 'complete',
 				content: [
@@ -762,7 +762,7 @@ export class McpCapabilityProjection {
 		if (name === 'flue.job.respond') {
 			const jobId = String(args.jobId ?? '');
 			const input = args.input;
-			const op = this.operationStore.respondOperation(jobId, { input });
+			const op = await this.operationPort.respondOperation(jobId, { input });
 			return {
 				resultType: 'complete',
 				content: [
@@ -777,7 +777,7 @@ export class McpCapabilityProjection {
 
 		if (name === 'flue.events.open') {
 			const streamId = String(args.streamId ?? '');
-			const headCursor = this.eventProjection.getHeadCursor(streamId);
+			const headCursor = await this.eventPort.getHeadCursor(streamId);
 			const headUri = `eventstream://${streamId}/head`;
 			return {
 				resultType: 'complete',
@@ -808,7 +808,7 @@ export class McpCapabilityProjection {
 
 		// Handle asynchronous capabilities
 		if (cap.asyncPolicy === 'async') {
-			const op = this.operationStore.createOperation({
+			const op = await this.operationPort.createOperation({
 				capabilityId: cap.id,
 				payload: args,
 				state: 'running',
@@ -819,7 +819,7 @@ export class McpCapabilityProjection {
 				try {
 					if (cap.invoke) {
 						const res = await cap.invoke(args, context);
-						const current = this.operationStore.getOperation(op.operationId);
+						const current = await this.operationPort.getOperation(op.operationId);
 						if (current?.state === 'cancelled') {
 							return;
 						}
@@ -880,7 +880,25 @@ export class McpCapabilityProjection {
 			}
 
 			// Core fallback: return job:// resource handle
-			return this.operationStore.projectJobFallbackResult(op);
+			if (this.operationPort.projectJobFallbackResult) {
+				return this.operationPort.projectJobFallbackResult(op);
+			}
+			return {
+				resultType: 'complete',
+				content: [
+					{
+						type: 'text',
+						text: `Operation '${op.operationId}' scheduled in background. Track progress at job://${op.operationId}`,
+					},
+				],
+				structuredContent: {
+					operationId: op.operationId,
+					state: op.state,
+					jobUri: `job://${op.operationId}`,
+				},
+				resourceLinks: [`job://${op.operationId}`],
+				operationId: op.operationId,
+			};
 		}
 
 		// Execute through the common policy interceptor pipeline
@@ -889,10 +907,10 @@ export class McpCapabilityProjection {
 		return result;
 	}
 
-	private handleResourcesList(
+	private async handleResourcesList(
 		_params: Record<string, unknown>,
 		context: RequestContext,
-	): { resultType: 'complete'; resources: Array<Record<string, unknown>> } {
+	): Promise<{ resultType: 'complete'; resources: Array<Record<string, unknown>> }> {
 		const resources: Array<Record<string, unknown>> = [];
 
 		// 1. Skill resources (canonical SKILL.md and assets)
@@ -930,7 +948,8 @@ export class McpCapabilityProjection {
 		}
 
 		// 5. Active jobs (job://<id>)
-		for (const op of this.operationStore.listOperations()) {
+		const ops = await this.operationPort.listOperations();
+		for (const op of ops) {
 			resources.push({
 				uri: `job://${op.operationId}`,
 				name: `Job: ${op.operationId}`,
@@ -940,7 +959,8 @@ export class McpCapabilityProjection {
 		}
 
 		// 6. Active event streams (eventstream://<streamId>/head)
-		for (const streamId of this.eventProjection.listStreams()) {
+		const streams = await this.eventPort.listStreams();
+		for (const streamId of streams) {
 			resources.push({
 				uri: `eventstream://${streamId}/head`,
 				name: `EventStream Head: ${streamId}`,

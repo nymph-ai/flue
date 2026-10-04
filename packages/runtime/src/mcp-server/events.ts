@@ -705,27 +705,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			await this.verifyWebhookHandshake(callbackUrl, secret, subId);
 		}
 
-		if (this.sql) {
-			try {
-				this.sql.exec(
-					`INSERT INTO mcp_subscriptions (id, callback_url, secret, stream_id, filter_task_id, filter_correlation_id, cursor, created_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-					 ON CONFLICT(id) DO UPDATE SET callback_url = excluded.callback_url, secret = excluded.secret, stream_id = excluded.stream_id, filter_task_id = excluded.filter_task_id, filter_correlation_id = excluded.filter_correlation_id, cursor = excluded.cursor`,
-					subId,
-					callbackUrl,
-					secret ?? null,
-					streamId ?? null,
-					filter?.taskId ? String(filter.taskId) : null,
-					filter?.correlationId ? String(filter.correlationId) : null,
-					params.cursor ?? null,
-					now,
-				);
-			} catch (e) {
-				console.error('[flue:events] Failed to save subscription in SQLite:', e);
-			}
-		} else {
-			this.subscriptions.set(subId, subscription);
-		}
+		this.saveSubscription(subscription);
 
 		// Replay past events if cursor or fromRevision was specified
 		this.replayPastEvents(subscription, params.cursor, params.fromRevision);
@@ -733,6 +713,34 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		// Refresh before 24 hours
 		const refreshBefore = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 		return { subscription, refreshBefore };
+	}
+
+	saveSubscription(sub: EventSubscription): void {
+		if (this.sql) {
+			try {
+				this.sql.exec(
+					`INSERT INTO mcp_subscriptions (id, callback_url, secret, stream_id, filter_task_id, filter_correlation_id, cursor, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+					 ON CONFLICT(id) DO UPDATE SET callback_url = excluded.callback_url, secret = excluded.secret, stream_id = excluded.stream_id, filter_task_id = excluded.filter_task_id, filter_correlation_id = excluded.filter_correlation_id, cursor = excluded.cursor`,
+					sub.id,
+					sub.callbackUrl,
+					sub.secret ?? null,
+					sub.streamId ?? null,
+					sub.filter?.taskId ? String(sub.filter.taskId) : null,
+					sub.filter?.correlationId ? String(sub.filter.correlationId) : null,
+					sub.cursor ?? null,
+					sub.createdAt,
+				);
+			} catch (e) {
+				console.error('[flue:events] Failed to save subscription in SQLite:', e);
+			}
+		} else {
+			this.subscriptions.set(sub.id, sub);
+		}
+	}
+
+	deleteSubscription(subscriptionId: string): boolean {
+		return this.unsubscribe(subscriptionId);
 	}
 
 	private replayPastEvents(sub: EventSubscription, cursor?: string, fromRevision?: number): void {
@@ -769,7 +777,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 						) {
 							continue;
 						}
-						await this.deliverWebhook(sub, evt);
+						await this.deliverEvent(sub, evt);
 					}
 				} catch {
 					// stream read error or missing
