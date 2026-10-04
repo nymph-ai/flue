@@ -45,7 +45,7 @@ import { appendCreating } from '../entity/append.ts';
 import { eventsPath } from '../entity/paths.ts';
 import { projectSettlementToElectricEvent } from '../mcp-server/events.ts';
 import type { AgentOperationService } from '../mcp-server/ports.ts';
-import type { CapabilityResult, Operation } from '../mcp-server/types.ts';
+import type { CapabilityResult, McpInputRequest, Operation } from '../mcp-server/types.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
 import { FlueInstance, FlueReceiptIndex, FlueReceipts, FlueState } from '../pi/docs.ts';
 import {
@@ -1049,12 +1049,42 @@ export class FlueAgentInstance implements AgentOperationService {
 			state = 'running';
 		}
 
-		const inputRequests = hasPendingQuestion
-			? questions.map((q) => ({
-					inputId: q.id,
-					prompt: q.prompt,
-					fields: (q as { fields?: unknown }).fields as never,
-				}))
+		const inputRequests: McpInputRequest[] | undefined = hasPendingQuestion
+			? questions.map((q) => {
+					let prompt = `Question ${q.id}`;
+					let reason: string | undefined;
+					let schema: Record<string, unknown> | undefined;
+
+					if (q.question.kind === 'codemode-approval') {
+						prompt = `Approval required for action: ${q.question.pending.map((p) => p.method).join(', ')}`;
+						reason = 'approval_required';
+						schema = {
+							type: 'object',
+							properties: {
+								decision: { type: 'string', enum: ['approve', 'reject'] },
+								reason: { type: 'string' },
+							},
+							required: ['decision'],
+						};
+					} else if (q.question.kind === 'mcp-input') {
+						prompt = `MCP input required for ${q.question.server}/${q.question.method}`;
+						reason = 'input_required';
+						schema = {
+							type: 'object',
+							properties: {
+								inputResponses: { type: 'object' },
+							},
+							required: ['inputResponses'],
+						};
+					}
+
+					return {
+						id: q.id,
+						prompt,
+						...(schema ? { schema } : {}),
+						...(reason ? { reason } : {}),
+					};
+				})
 			: undefined;
 
 		return {
@@ -1086,7 +1116,21 @@ export class FlueAgentInstance implements AgentOperationService {
 			throw new Error(`No pending question found to respond to for task '${taskId}'.`);
 		}
 
-		const res = await this.answerQuestion(targetQuestion.id, response.input as FlueAnswer);
+		let answer = response.input as FlueAnswer;
+		const expectedKind = (targetQuestion.question as { kind?: string } | null)?.kind;
+		if (
+			typeof response.input === 'object' &&
+			response.input !== null &&
+			!('kind' in response.input) &&
+			expectedKind
+		) {
+			answer = {
+				kind: expectedKind,
+				...response.input,
+			} as FlueAnswer;
+		}
+
+		const res = await this.answerQuestion(targetQuestion.id, answer);
 		if (res.status !== 'accepted') {
 			throw new Error(`Failed to respond to task '${taskId}': answer status '${res.status}'.`);
 		}
