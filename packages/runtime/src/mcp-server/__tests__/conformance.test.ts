@@ -1798,6 +1798,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 					mcpWakes.push({ doorbell });
 				},
 				fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+				now: () => 1000,
 			});
 
 			// 1. Send notice with flue-mcp-events subscription
@@ -1877,7 +1878,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			await instance.admit({
 				kind: 'direct',
 				submissionId: 'task-1',
-				message: { kind: 'signal', type: 'test' },
+				message: { kind: 'signal', type: 'test', body: '' },
 				acceptedAt: new Date().toISOString(),
 			});
 
@@ -1912,7 +1913,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			await instance.admit({
 				kind: 'direct',
 				submissionId: 'task-1',
-				message: { kind: 'signal', type: 'test' },
+				message: { kind: 'signal', type: 'test', body: '' },
 				acceptedAt: new Date().toISOString(),
 			});
 
@@ -1964,7 +1965,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			await instance.admit({
 				kind: 'direct',
 				submissionId: 'task-1',
-				message: { kind: 'signal', type: 'test' },
+				message: { kind: 'signal', type: 'test', body: '' },
 				acceptedAt: new Date().toISOString(),
 			});
 
