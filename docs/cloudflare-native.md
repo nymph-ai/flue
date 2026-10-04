@@ -58,6 +58,75 @@ The fundamental rule governing MCP transport and agent runtime integration is:
 9. **No cross-DO transaction is required for semantic correctness.** Systems coordinate asynchronously through Electric streams and idempotent operations.
 10. **Evicting every in-memory object at any boundary must preserve correctness.** All durable state lives in SQLite or Electric; any DO isolate can terminate at turn boundary without data loss.
 
+## Electric: Semantic Event Fabric, Not Replication
+
+Electric is explicitly an interaction and collaboration fabric, **not an execution or replication log**.
+
+> **Electric carries externally meaningful semantic events, not Pi Durable state changes. Pi's execution history remains private to the agent's durable runtime.**
+
+```text
+Pi Durable / AgentDO
+   │
+   │ private state transitions
+   │ tool replay
+   │ model turns
+   │ compaction
+   │ task internals
+   │ registry changes
+   ▼
+DO SQLite
+   │
+   │ only meaningful externally observable events
+   ▼
+Electric
+```
+
+### The Invariant Test
+
+> **Would another entity behave differently because this happened?**
+
+If no, the state change stays in Pi's local DO SQLite.
+
+### What Stays Local in DO SQLite
+
+The following never hit Electric by default:
+
+- Model tokens and streaming deltas
+- Pi task scheduler transitions
+- Internal retries and recovery attempts
+- Tool-call journal entries
+- Compaction operations
+- Conversation document writes
+- Registry mutations and `setActiveTools`
+- Intermediate reasoning and execution state
+- MCP tool discovery and inspection
+- Cache changes
+- Admission bookkeeping
+- Internal task status fluctuations (e.g. `queued -> running -> retrying -> running`)
+
+### What Goes to Electric
+
+Electric carries domain events where another consumer (an agent, human participant, or external MCP subscriber) needs to react:
+
+- `agent.message.sent`, `agent.message.received`
+- `observation.received`
+- `question.requested`, `question.answered`
+- `task.delegated`, `task.completed`, `task.failed`, `task.cancelled`
+- `artifact.published`
+- `effect.proposed`, `effect.completed`, `effect.failed`
+- `schedule.fired`
+- `agent.status.changed` (only externally meaningful transitions, e.g. `agent.available`)
+- `mcp.task.completed` (where an external MCP subscriber explicitly requested it)
+
+### Projections, Not Commits
+
+Electric receives semantic projections across Flue event projectors, never raw Pi transaction commits:
+
+- **Aggressive Coalescing**: Micro-states within a single turn are coalesced. If status changes multiple times during a turn (`busy`, `thinking`, `using_tool`), only the terminal meaningful transition (`available`) is published. Batch observations are projected as consolidated events (`observation.batch.processed`).
+- **Reference-Only Payloads**: Large payloads (artifacts, code bundles, document bodies) are referenced by opaque URI (`artifact://art_123/7`), never dumped into the stream as multi-megabyte payloads. Electric costs scale with collaboration, not compute.
+- **MCP Event Subscriptions**: MCP subscriptions (such as ChatGPT webhooks for `task_changed`) subscribe to this semantic projection, filtering out routine progress noise: `queued/running` produce no external webhook events; only actionable or terminal states (`input_required`, `completed`, `failed`, `cancelled`) trigger webhook deliveries.
+- **Fabric V4 Role**: Fabric stays out of the critical path and synchronous admission loop. When its semantics settle, Fabric attaches cleanly as an asynchronous consumer/producer over Electric semantic events without modifying AgentDO, Pi, or the MCP projection plane.
+
 ## Rules
 
 1. **Pi is unmodified and unvendored.** Pi Durable runs on its public `Storage`
