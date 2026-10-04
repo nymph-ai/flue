@@ -2168,5 +2168,89 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// Since callTaskId is null, fails closed and rejects the question
 			expect(questions.length).toBe(0);
 		});
+
+		it('FlueAgentInstance: failed Electric append does not mark settlement in SQLite, retries on wake', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { eventsPath } = await import('../../entity/paths.ts');
+			const { STREAM_START } = await import('../../streams/offset.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+			const streamLog = new InMemoryDurableStreamLog();
+			const streamPath = eventsPath({ type: 'test-agent', id: '1' });
+			await streamLog.ensure(streamPath);
+
+			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async () => {},
+				attachments: new InMemoryAttachmentStore(),
+				entities: { log: streamLog },
+			});
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-fail-retry-1',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date().toISOString(),
+			});
+
+			vi.spyOn(instance, 'settlement').mockResolvedValue({
+				submissionId: 'task-fail-retry-1',
+				outcome: 'completed',
+				result: { resultType: 'complete', content: [{ type: 'text', text: 'done' }] },
+				settledAt: new Date().toISOString(),
+			});
+
+			// Fail Electric append
+			let failAppend = true;
+			const originalAppend = streamLog.append.bind(streamLog);
+			vi.spyOn(streamLog, 'append').mockImplementation(async (path, messages, headers) => {
+				if (failAppend) {
+					throw new Error('Electric network partition');
+				}
+				return originalAppend(path, messages, headers);
+			});
+
+			// Call getTask while Electric is failing
+			const task = await instance.getTask('task-fail-retry-1');
+			expect(task?.state).toBe('completed');
+
+			// Verify NOT marked as published in SQLite
+			const book = new EntityWakeBook(database);
+			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(false);
+
+			// Verify Electric has 0 messages
+			let batch = await streamLog.read(streamPath, STREAM_START);
+			expect(batch.messages.length).toBe(0);
+
+			// Heal Electric
+			failAppend = false;
+
+			// Trigger wake - should retry the unprojected settlement
+			await instance.wake({ kind: 'live-tasks' });
+
+			// Verify marked as published in SQLite
+			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(true);
+
+			// Verify Electric now has exactly 1 projected event with deterministic id
+			batch = await streamLog.read(streamPath, STREAM_START);
+			expect(batch.messages.length).toBe(1);
+			expect(batch.messages[0]?.id).toBe('task-settled:task-fail-retry-1');
+			expect(batch.messages[0]?.name).toBe('task.completed');
+
+			// Trigger another wake - deduplication ensures no duplicate event is appended
+			await instance.wake({ kind: 'live-tasks' });
+			batch = await streamLog.read(streamPath, STREAM_START);
+			expect(batch.messages.length).toBe(1);
+		});
 	});
 });

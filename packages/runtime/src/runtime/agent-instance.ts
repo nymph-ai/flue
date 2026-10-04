@@ -287,9 +287,12 @@ export class FlueAgentInstance implements AgentOperationService {
 			const self = { type: this.agentName, id: this.instanceId };
 			const path = eventsPath(self);
 			const domainEvent = projectSettlementToElectricEvent(settlement);
-			await appendCreating(entities.log, path, domainEvent, undefined).catch((err) =>
-				this.#report(err),
-			);
+			try {
+				await appendCreating(entities.log, path, domainEvent, undefined);
+			} catch (err) {
+				this.#report(err);
+				return;
+			}
 
 			book.markSettlementPublished(settlement.submissionId);
 			this.#publishedSettlements.add(settlement.submissionId);
@@ -300,6 +303,47 @@ export class FlueAgentInstance implements AgentOperationService {
 			await publishPromise;
 		} finally {
 			this.#publishingSettlements.delete(settlement.submissionId);
+		}
+	}
+
+	async #retryUnprojectedSettlements(): Promise<void> {
+		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
+		if (!this.#opened && !hasPiState(await this.#db())) return;
+
+		const { host } = await this.#open();
+		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
+		if (!index) return;
+
+		const candidates = new Set<string>();
+		for (const id of Object.keys(index.live ?? {})) {
+			candidates.add(id);
+		}
+		for (const id of index.admitting ?? []) {
+			candidates.add(id);
+		}
+		for (const id of Object.values(index.byPiSubmission ?? {})) {
+			candidates.add(id);
+		}
+
+		if (candidates.size === 0) return;
+
+		const book = await this.#wakeBook();
+		for (const id of candidates) {
+			if (this.#publishedSettlements.has(id)) continue;
+			if (book.isSettlementPublished(id)) {
+				this.#publishedSettlements.add(id);
+				continue;
+			}
+
+			const settlement = await this.settlement(id);
+			if (settlement) {
+				await this.#publishSettlementEvent({
+					submissionId: settlement.submissionId,
+					outcome: settlement.outcome,
+					result: settlement.result,
+					error: settlement.error,
+				});
+			}
 		}
 	}
 
@@ -517,6 +561,7 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (instance?.uid)
 			await this.#render(host, undefined, context).catch((error) => this.#report(error));
 		await entity?.refreshCursors(context).catch((error) => this.#report(error));
+		await this.#retryUnprojectedSettlements().catch((error) => this.#report(error));
 		return { database, host, telemetry, entity, detach };
 	}
 
@@ -843,6 +888,7 @@ export class FlueAgentInstance implements AgentOperationService {
 		} else {
 			await opened.host.wake(reason, context);
 		}
+		await this.#retryUnprojectedSettlements().catch((error) => this.#report(error));
 		return { behind: pump?.behind ?? false, ...(pump ? { pump } : {}) };
 	}
 
