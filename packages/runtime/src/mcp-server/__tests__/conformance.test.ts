@@ -2337,7 +2337,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
 			const { eventsPath } = await import('../../entity/paths.ts');
 			const { STREAM_START } = await import('../../streams/offset.ts');
-			const { FlueReceiptIndex } = await import('../../pi/receipts.ts');
+			const { FlueReceiptIndex } = await import('../../pi/docs.ts');
 			const { BACKGROUND_CONTEXT } = await import('@earendil-works/chord/context');
 
 			const database = await openNodeSqliteDatabase(':memory:');
