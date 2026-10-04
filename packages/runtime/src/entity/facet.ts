@@ -58,6 +58,8 @@ export interface EntitySubscriptionPort {
 	unobserve(entity: EntityRef, stream: string): Promise<void>;
 }
 
+import type { SemanticEmitter } from '../reactor/reactor.ts';
+
 export interface EntityFacetOptions {
 	readonly host: FluePiHost;
 	readonly entity: EntityRef;
@@ -68,6 +70,8 @@ export interface EntityFacetOptions {
 	readonly subscriptions?: EntitySubscriptionPort;
 	/** Filled in by the facet: republishes `EntityObservation.cursors` from the Pi docs. */
 	readonly cursorSink?: { refresh?: (context: Context) => Promise<void> };
+	/** Semantic emitter for outbox-backed durable delivery. */
+	readonly emitter?: SemanticEmitter;
 }
 
 export class EntityServiceError extends Error {
@@ -131,7 +135,18 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			message: entityMessageJson(message),
 			...(directive === undefined ? {} : { directive }),
 		};
-		await appendCreating(log, inboxPath(target), event, context.abortSignal);
+		if (options.emitter) {
+			await options.emitter.emitSemantic(
+				{
+					id: messageId,
+					stream: inboxPath(target),
+					event,
+				},
+				{ signal: context.abortSignal, immediate: true },
+			);
+		} else {
+			await appendCreating(log, inboxPath(target), event, context.abortSignal);
+		}
 		return {
 			messageId,
 			submissionId: await deriveKeyedSubmissionId(target.type, target.id, messageId),
@@ -153,7 +168,18 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				eventId,
 				event,
 			};
-			await appendCreating(log, eventsPath(self), published, context.abortSignal);
+			if (options.emitter) {
+				await options.emitter.emitSemantic(
+					{
+						id: eventId,
+						stream: eventsPath(self),
+						event: published,
+					},
+					{ signal: context.abortSignal, immediate: true },
+				);
+			} else {
+				await appendCreating(log, eventsPath(self), published, context.abortSignal);
+			}
 			return { eventId };
 		},
 		async answer(target, questionId, answer, answerOptions, context) {

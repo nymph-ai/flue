@@ -231,6 +231,8 @@ export async function appendAnswer(
 	return { inbox, eventId: input.eventId };
 }
 
+import type { SemanticEmitter } from '../reactor/reactor.ts';
+
 export interface EntityQuestionHandlerOptions {
 	readonly entity: EntityRef;
 	readonly log: DurableStreamLog;
@@ -240,6 +242,8 @@ export interface EntityQuestionHandlerOptions {
 	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	readonly now?: () => number;
 	readonly onReport?: (error: unknown) => void;
+	/** Semantic emitter for outbox-backed durable delivery. */
+	readonly emitter?: SemanticEmitter;
 }
 
 const PUBLISH_ATTEMPTS = 3;
@@ -270,6 +274,26 @@ export function createEntityQuestionHandler(options: EntityQuestionHandlerOption
 		};
 		const targets = [questionsPath(self)];
 		if (settings?.responder) targets.push(inboxPath(settings.responder));
+
+		if (options.emitter) {
+			try {
+				for (const path of targets) {
+					await options.emitter.emitSemantic(
+						{
+							id: `${event.eventId}:${path}`,
+							stream: path,
+							event,
+						},
+						{ signal, immediate: true },
+					);
+				}
+				return true;
+			} catch (error) {
+				report(error);
+				return false;
+			}
+		}
+
 		let failure: unknown;
 		for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt++) {
 			try {

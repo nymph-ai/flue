@@ -334,9 +334,6 @@ export async function completeAdmission(
 		},
 		context,
 	);
-	// Settled receipts leave the live set here, in a commit this admission
-	// makes anyway, rather than in a commit of their own on some later wake.
-	const settled = await settledLive(harness, context);
 	return harness.commit(async (tx) => {
 		const record = await tx.doc(FlueReceipts, submissionId, null);
 		record.status = 'admitted';
@@ -344,7 +341,6 @@ export async function completeAdmission(
 		const index = await tx.doc(FlueReceiptIndex);
 		const at = index.admitting.indexOf(submissionId);
 		if (at !== -1) index.admitting.splice(at, 1);
-		for (const id of settled) delete index.live[id];
 		index.live[submissionId] = submission.id;
 		index.byPiSubmission[String(submission.id)] = submissionId;
 		// Only recent inputs can share a run with a later one: keep a bounded window.
@@ -587,7 +583,7 @@ export async function classifyAndAbort(
 }
 
 /** Receipts in the live set whose Pi submission has settled (or is gone). */
-async function settledLive(harness: Harness, context: Context): Promise<string[]> {
+export async function settledLive(harness: Harness, context: Context): Promise<string[]> {
 	const index = await harness.snapshot(FlueReceiptIndex, context);
 	const settled: string[] = [];
 	for (const [submissionId, piSubmissionId] of Object.entries(index?.live ?? {})) {
@@ -596,6 +592,24 @@ async function settledLive(harness: Harness, context: Context): Promise<string[]
 			settled.push(submissionId);
 	}
 	return settled;
+}
+
+/**
+ * Retire settled receipts from the live set.
+ * MUST only be called after the settlement has been enqueued into the durable outbox.
+ */
+export async function retireSettledReceipts(
+	harness: Harness,
+	submissionIds: readonly string[],
+	context: Context,
+): Promise<void> {
+	if (submissionIds.length === 0) return;
+	await harness.commit(async (tx) => {
+		const index = await tx.doc(FlueReceiptIndex);
+		for (const id of submissionIds) {
+			delete index.live[id];
+		}
+	}, context);
 }
 
 /**

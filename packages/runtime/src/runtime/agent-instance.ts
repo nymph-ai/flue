@@ -40,6 +40,7 @@ import type { EntitySubscriptionPort } from '../entity/facet.ts';
 import { createEntityRuntime, type EntityRuntime } from '../entity/runtime.ts';
 import { type PumpLimits, type PumpResult, pumpEntity } from '../entity/pump.ts';
 import { EntityWakeBook } from '../entity/wake-book.ts';
+import { FlueReactor, type FlueReactorStore } from '../reactor/index.ts';
 import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
 import { appendCreating } from '../entity/append.ts';
@@ -188,8 +189,7 @@ export class FlueAgentInstance implements AgentOperationService {
 	/** State values as of the last render, overlaid by pending writes. */
 	#stateSnapshot = new Map<string, unknown>();
 	#renderChain: Promise<unknown> = Promise.resolve();
-	#publishedSettlements = new Set<string>();
-	#publishingSettlements = new Map<string, Promise<void>>();
+	readonly #reactor: FlueReactor;
 	/** The resolved sandbox and the factory/cwd it came from. */
 	#sandbox: {
 		factory: SandboxFactory | undefined;
@@ -211,6 +211,21 @@ export class FlueAgentInstance implements AgentOperationService {
 		this.instanceId = options.instanceId;
 		this.#now = options.now ?? Date.now;
 		this.logPath = agentStreamPath(options.agentName, options.instanceId);
+		const selfRef: EntityRef = { type: options.agentName, id: options.instanceId };
+		this.#reactor = new FlueReactor({
+			entityRef: selfRef,
+			store: () => this.#wakeBook(),
+			host: async () => (await this.#open()).host,
+			entity: async () => (await this.#open()).entity,
+			log: options.entities && typeof options.entities === 'object' ? options.entities.log : undefined,
+			armWake: (atMs) => this.#options.armWake(atMs, { kind: 'live-tasks' }),
+			now: this.#now,
+			onReport: (err) => this.#report(err),
+			pumpLimits:
+				options.entities && typeof options.entities === 'object'
+					? options.entities.pump
+					: undefined,
+		});
 		const cache = () => this.#conversationCache();
 		this.source = {
 			meta: async (signal) => (await cache()).meta(signal),
@@ -247,6 +262,10 @@ export class FlueAgentInstance implements AgentOperationService {
 		});
 	}
 
+	get reactor(): FlueReactor {
+		return this.#reactor;
+	}
+
 	/** The sandbox proxy; throws, like `harness.sandbox` always did, when the agent declared none. */
 	#liveSandbox(): Sandbox {
 		if (!this.#sandbox.current) throw new Error(NO_SANDBOX);
@@ -254,109 +273,6 @@ export class FlueAgentInstance implements AgentOperationService {
 	}
 
 	// ─── Events ─────────────────────────────────────────────────────────────
-
-	async #publishSettlementEvent(settlement: {
-		submissionId: string;
-		outcome: 'completed' | 'failed' | 'aborted';
-		error?: unknown;
-		result?: unknown;
-		summary?: string;
-		correlationId?: string;
-		artifactRefs?: string[];
-	}): Promise<void> {
-		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
-		const entities = this.#options.entities;
-
-		if (this.#publishedSettlements.has(settlement.submissionId)) {
-			return;
-		}
-
-		const inFlight = this.#publishingSettlements.get(settlement.submissionId);
-		if (inFlight) {
-			await inFlight;
-			return;
-		}
-
-		const publishPromise = (async () => {
-			const book = await this.#wakeBook();
-			if (book.isSettlementPublished(settlement.submissionId)) {
-				this.#publishedSettlements.add(settlement.submissionId);
-				return;
-			}
-
-			// Record durable pending state before attempting Electric append
-			book.recordSettlementPending(settlement.submissionId);
-
-			const self = { type: this.agentName, id: this.instanceId };
-			const path = eventsPath(self);
-			const domainEvent = projectSettlementToElectricEvent(settlement);
-			try {
-				await appendCreating(entities.log, path, domainEvent, undefined);
-			} catch (err) {
-				this.#report(err);
-				await Promise.resolve(
-					this.#options.armWake(this.#now() + 5000, { kind: 'live-tasks' }),
-				).catch((wakeErr) => this.#report(wakeErr));
-				return;
-			}
-
-			book.markSettlementPublished(settlement.submissionId);
-			this.#publishedSettlements.add(settlement.submissionId);
-		})();
-
-		this.#publishingSettlements.set(settlement.submissionId, publishPromise);
-		try {
-			await publishPromise;
-		} finally {
-			this.#publishingSettlements.delete(settlement.submissionId);
-		}
-	}
-
-	async #retryUnprojectedSettlements(host: FluePiHost, reason: WakeReason): Promise<void> {
-		if (reason.kind !== 'live-tasks') return;
-		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
-
-		const book = await this.#wakeBook();
-
-		// Step 1: Discover any settled live receipts in index.live not yet represented
-		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
-		if (index?.live) {
-			const candidatesToQuery: string[] = [];
-			for (const id of Object.keys(index.live)) {
-				if (!this.#publishedSettlements.has(id)) {
-					candidatesToQuery.push(id);
-				}
-			}
-
-			if (candidatesToQuery.length > 0) {
-				const { unprojected, published } = book.checkSettlementProjections(candidatesToQuery);
-				for (const id of published) {
-					this.#publishedSettlements.add(id);
-				}
-
-				for (const id of unprojected) {
-					const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
-					if (settlement) {
-						book.recordSettlementPending(id);
-					}
-				}
-			}
-		}
-
-		// Step 2: Query pending settlement IDs from durable storage
-		const pendingIds = book.pendingSettlementIds();
-		for (const id of pendingIds) {
-			const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
-			if (settlement) {
-				await this.#publishSettlementEvent({
-					submissionId: settlement.submissionId,
-					outcome: settlement.outcome,
-					result: settlement.result,
-					error: settlement.error,
-				});
-			}
-		}
-	}
 
 	#emit(event: FlueEventInput, observation?: FlueObservationDetail): void {
 		try {
@@ -366,11 +282,11 @@ export class FlueAgentInstance implements AgentOperationService {
 		}
 
 		if (event.type === 'submission_settled') {
-			void this.#publishSettlementEvent({
-				submissionId: event.submissionId,
-				outcome: event.outcome,
-				error: event.error,
-			}).catch((err) => this.#report(err));
+			void this.#open()
+				.then(({ host }) =>
+					this.#reactor.reconcileSettlements(host).then(() => this.#reactor.flushOutbox()),
+				)
+				.catch((err) => this.#report(err));
 		}
 	}
 
@@ -548,6 +464,7 @@ export class FlueAgentInstance implements AgentOperationService {
 					host: this.#renderingBeforeAdmission(host),
 					entity: { type: this.agentName, id: this.instanceId },
 					log: options.entities.log,
+					emitter: this.#reactor,
 					armWake: async (atMs, reason) => {
 						await options.armWake(atMs, reason);
 					},
@@ -881,27 +798,11 @@ export class FlueAgentInstance implements AgentOperationService {
 	 * wake; the caller re-arms while it is set.
 	 */
 	async wake(
-		reason: WakeReason,
+		reason: WakeReason = { kind: 'live-tasks' },
 	): Promise<{ readonly behind: boolean; readonly pump?: PumpResult }> {
-		const opened = await this.#open();
-		const context = BACKGROUND_CONTEXT;
-		let pump: PumpResult | undefined;
-		if (opened.entity && this.#options.entities) {
-			const book = await this.#wakeBook();
-			if (book.behind()) {
-				pump = await pumpEntity(opened.entity, book, context, {
-					...(this.#options.entities.pump ? { limits: this.#options.entities.pump } : {}),
-					now: this.#now,
-				});
-			}
-			await opened.entity.wake(reason, context);
-		} else {
-			await opened.host.wake(reason, context);
-		}
-		await this.#retryUnprojectedSettlements(opened.host, reason).catch((error) =>
-			this.#report(error),
-		);
-		return { behind: pump?.behind ?? false, ...(pump ? { pump } : {}) };
+		await this.#open();
+		const result = await this.#reactor.tick({ reason });
+		return { behind: result.behind, ...(result.pump ? { pump: result.pump } : {}) };
 	}
 
 	/** Abort every session's work. `true` when there was work to abort. */
@@ -1145,13 +1046,6 @@ export class FlueAgentInstance implements AgentOperationService {
 	async getTask(taskId: string): Promise<Operation | undefined> {
 		const settlement = await this.settlement(taskId);
 		if (settlement) {
-			await this.#publishSettlementEvent({
-				submissionId: settlement.submissionId,
-				outcome: settlement.outcome,
-				result: settlement.result,
-				error: settlement.error,
-			});
-
 			const state: Operation['state'] =
 				settlement.outcome === 'completed'
 					? 'completed'

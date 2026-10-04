@@ -2169,13 +2169,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			expect(questions.length).toBe(0);
 		});
 
-		it('FlueAgentInstance: failed Electric append does not mark settlement in SQLite, retries on wake', async () => {
+		it('FlueAgentInstance: failed Electric append leaves obligation in outbox, retries on wake', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
 			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
 			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
 			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
-			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { FlueReactorStore } = await import('../../reactor/reactor-store.ts');
 			const { eventsPath } = await import('../../entity/paths.ts');
 			const { STREAM_START } = await import('../../streams/offset.ts');
 
@@ -2223,14 +2223,14 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
 
-			// Call getTask while Electric is failing
-			const task = await instance.getTask('task-fail-retry-1');
-			expect(task?.state).toBe('completed');
+			// Wake while Electric is failing -> settlement reconciled into outbox, but append fails
+			await instance.wake({ kind: 'live-tasks' });
 
-			// Verify NOT marked as published in SQLite, but recorded as pending
-			const book = new EntityWakeBook(database);
-			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(false);
-			expect(book.pendingSettlementIds()).toContain('task-fail-retry-1');
+			// Verify row exists in outbox
+			const store = new FlueReactorStore(database);
+			const entry = store.getOutboxEntry('task-settled:task-fail-retry-1');
+			expect(entry).toBeDefined();
+			expect(entry?.attempts).toBe(1);
 
 			// Verify Electric has 0 messages
 			let batch = await streamLog.read(streamPath, STREAM_START);
@@ -2239,12 +2239,11 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// Heal Electric
 			failAppend = false;
 
-			// Trigger wake - should retry the unprojected settlement
+			// Trigger wake - retries the outbox obligation
 			await instance.wake({ kind: 'live-tasks' });
 
-			// Verify marked as published in SQLite and no longer pending
-			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(true);
-			expect(book.pendingSettlementIds()).not.toContain('task-fail-retry-1');
+			// Verify outbox obligation is delivered and deleted
+			expect(store.outboxCount()).toBe(0);
 
 			// Verify Electric now has exactly 1 projected event with deterministic id
 			batch = await streamLog.read(streamPath, STREAM_START);
@@ -2259,13 +2258,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			expect(batch.messages.length).toBe(1);
 		});
 
-		it('FlueAgentInstance: failed Electric append arms delayed live-tasks wake alarm and stores pending state', async () => {
+		it('FlueAgentInstance: failed Electric append arms delayed wake alarm and records outbox retry', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
 			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
 			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
 			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
-			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { FlueReactorStore } = await import('../../reactor/reactor-store.ts');
 			const { eventsPath } = await import('../../entity/paths.ts');
 
 			const database = await openNodeSqliteDatabase(':memory:');
@@ -2310,35 +2309,27 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
 
-			// Call getTask while Electric fails
-			await instance.getTask('task-alarm-1');
+			// Wake while Electric fails
+			await instance.wake();
 
-			const book = new EntityWakeBook(database);
-			expect(book.isSettlementPublished('task-alarm-1')).toBe(false);
-			expect(book.pendingSettlementIds()).toContain('task-alarm-1');
+			const store = new FlueReactorStore(database);
+			const entry = store.getOutboxEntry('task-settled:task-alarm-1');
+			expect(entry).toBeDefined();
+			expect(entry?.retryAt).toBe(now + 5000);
 
-			// Verify retry alarm was armed with { kind: 'live-tasks' } at now + 5000
-			const retryAlarm = armedWakes.find(
-				(w) =>
-					typeof w.reason === 'object' &&
-					w.reason !== null &&
-					(w.reason as { kind?: string }).kind === 'live-tasks' &&
-					w.atMs === now + 5000,
-			);
+			// Verify retry alarm was armed at now + 5000
+			const retryAlarm = armedWakes.find((w) => w.atMs === now + 5000);
 			expect(retryAlarm).toBeDefined();
 		});
 
-		it('FlueAgentInstance: pending settlement projects from durable state even after task is pruned from index.live by next admission', async () => {
+		it('FlueAgentInstance: getTask is a read-only projection from Pi durable settlements', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
 			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
 			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
 			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
-			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { FlueReactorStore } = await import('../../reactor/reactor-store.ts');
 			const { eventsPath } = await import('../../entity/paths.ts');
-			const { STREAM_START } = await import('../../streams/offset.ts');
-			const { FlueReceiptIndex } = await import('../../pi/docs.ts');
-			const { BACKGROUND_CONTEXT } = await import('@earendil-works/chord/context');
 
 			const database = await openNodeSqliteDatabase(':memory:');
 			const streamLog = new InMemoryDurableStreamLog();
@@ -2357,119 +2348,50 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				entities: { log: streamLog },
 			});
 
-			// Fail Electric append
-			let failAppend = true;
-			const originalAppend = streamLog.append.bind(streamLog);
-			vi.spyOn(streamLog, 'append').mockImplementation(async (path: string, messages: readonly unknown[]) => {
-				if (failAppend) {
-					throw new Error('Electric network partition');
-				}
-				return originalAppend(path, messages);
-			});
-
-			// Admit Task A
-			await instance.admit({
-				kind: 'direct',
-				submissionId: 'task-A',
-				message: { kind: 'signal', type: 'test', body: '' },
-				acceptedAt: new Date().toISOString(),
-			});
-
 			const host = await instance.host();
-			const mockSettlementA = {
-				submissionId: 'task-A',
+			const mockSettlement = {
+				submissionId: 'task-ro-1',
 				outcome: 'completed' as const,
-				result: { resultType: 'complete', content: [{ type: 'text', text: 'result A' }] },
+				result: { resultType: 'complete', content: [{ type: 'text', text: 'result ro' }] },
 				settledAt: new Date().toISOString(),
 			};
-			vi.spyOn(host, 'settlement').mockImplementation(async (id) => {
-				if (id === 'task-A') return mockSettlementA;
-				return undefined;
-			});
-			vi.spyOn(instance, 'settlement').mockImplementation(async (id) => {
-				if (id === 'task-A') return mockSettlementA;
-				return undefined;
-			});
+			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
+			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
 
-			// Settle Task A while Electric fails -> enters durable pending state
-			await instance.getTask('task-A');
+			// getTask returns the operation projection
+			const task = await instance.getTask('task-ro-1');
+			expect(task?.state).toBe('completed');
+			expect(task?.response?.resultRef).toBe('job://test-agent/1/task-ro-1');
 
-			const book = new EntityWakeBook(database);
-			expect(book.isSettlementPublished('task-A')).toBe(false);
-			expect(book.pendingSettlementIds()).toEqual(['task-A']);
-
-			// Simulate Task B admission pruning Task A from index.live
-			await host.harness.commit(async (tx) => {
-				const index = await tx.doc(FlueReceiptIndex);
-				delete index.live['task-A'];
-				index.live['task-B'] = 999;
-			}, BACKGROUND_CONTEXT);
-
-			// Assert Task A is completely absent from index.live
-			const liveSnapshot = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
-			expect(liveSnapshot?.live?.['task-A']).toBeUndefined();
-
-			// Electric heals
-			failAppend = false;
-
-			// Alarm / wake({ kind: 'live-tasks' }) triggers
-			await instance.wake({ kind: 'live-tasks' });
-
-			// Assert Task A was successfully projected to Electric from durable pending state
-			expect(book.isSettlementPublished('task-A')).toBe(true);
-			expect(book.pendingSettlementIds()).toEqual([]);
-
-			const batch = await streamLog.read(streamPath, STREAM_START);
-			expect(batch.messages.length).toBe(1);
-			const msg = batch.messages[0] as { id?: string; name?: string } | undefined;
-			expect(msg?.id).toBe('task-settled:task-A');
-			expect(msg?.name).toBe('task.completed');
+			// Assert getTask does NOT touch outbox or append to Electric
+			const store = new FlueReactorStore(database);
+			expect(store.outboxCount()).toBe(0);
 		});
 
-		it('EntityWakeBook: migrates old one-column schema, preserves published state, creates partial index, and supports pending APIs', async () => {
+		it('FlueReactorStore: initializes streams and outbox tables, cleans up legacy projections table', async () => {
 			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
-			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { FlueReactorStore } = await import('../../reactor/reactor-store.ts');
 
 			const database = await openNodeSqliteDatabase(':memory:');
 
-			// 1. Explicitly construct the old one-column schema from previous release
-			database.prepare(`CREATE TABLE entity_wake_book (
-				stream TEXT PRIMARY KEY,
-				cursor TEXT NOT NULL
-			)`).run();
-			database.prepare(`CREATE TABLE flue_settlement_projections (
-				submission_id TEXT PRIMARY KEY
-			)`).run();
+			// Create legacy table
+			database.prepare(`CREATE TABLE flue_settlement_projections (submission_id TEXT PRIMARY KEY)`).run();
 
-			// 2. Insert an old settled submission row
-			database.prepare(`INSERT INTO flue_settlement_projections (submission_id) VALUES (?)`).run('old-task-1');
+			// Instantiate FlueReactorStore
+			const store = new FlueReactorStore(database);
 
-			// 3. Instantiate EntityWakeBook (triggers #ensure migration)
-			const book = new EntityWakeBook(database);
+			// Verify flue_entity_streams and flue_outbox exist
+			store.ring('test/stream', '100');
+			expect(store.behind()).toBe(true);
 
-			// 4. Assert old published rows have state='published'
-			expect(book.isSettlementPublished('old-task-1')).toBe(true);
-			const rawRow = database
-				.prepare('SELECT submission_id, state FROM flue_settlement_projections WHERE submission_id = ?')
-				.get<{ submission_id: string; state: string }>('old-task-1');
-			expect(rawRow?.state).toBe('published');
+			store.enqueue({ id: 'evt-1', stream: 'test/stream', event: { hello: 'world' } });
+			expect(store.outboxCount()).toBe(1);
 
-			// 5. Assert partial index creation succeeded
-			const indexRow = database
-				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_flue_settlement_projections_pending'")
-				.get<{ name: string; sql: string }>();
-			expect(indexRow).toBeDefined();
-			expect(indexRow?.name).toBe('idx_flue_settlement_projections_pending');
-			expect(indexRow?.sql).toContain("WHERE state = 'pending'");
-
-			// 6. Assert pending APIs work on the migrated table
-			book.recordSettlementPending('new-pending-task');
-			expect(book.isSettlementPublished('new-pending-task')).toBe(false);
-			expect(book.pendingSettlementIds()).toEqual(['new-pending-task']);
-
-			book.markSettlementPublished('new-pending-task');
-			expect(book.isSettlementPublished('new-pending-task')).toBe(true);
-			expect(book.pendingSettlementIds()).toEqual([]);
+			// Verify legacy table is dropped
+			const legacyTable = database
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'flue_settlement_projections'")
+				.get();
+			expect(legacyTable).toBeUndefined();
 		});
 	});
 });

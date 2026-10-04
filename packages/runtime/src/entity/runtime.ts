@@ -28,6 +28,8 @@ import {
 } from './services.ts';
 import { createEntityToolsFacet } from './tools-facet.ts';
 
+import type { SemanticEmitter } from '../reactor/reactor.ts';
+
 export interface EntityRuntimeOptions {
 	readonly host: FluePiHost;
 	readonly entity: EntityRef;
@@ -38,6 +40,8 @@ export interface EntityRuntimeOptions {
 	readonly subscriptions?: EntitySubscriptionPort;
 	readonly now?: () => number;
 	readonly onReport?: (error: unknown) => void;
+	/** Semantic emitter for outbox-backed durable delivery. */
+	readonly emitter?: SemanticEmitter;
 }
 
 export interface EntityRuntime {
@@ -63,7 +67,7 @@ export interface EntityRuntime {
 export async function createEntityRuntime(options: EntityRuntimeOptions): Promise<EntityRuntime> {
 	const now = options.now ?? Date.now;
 	const onReport = options.onReport ?? (() => {});
-	const { host, entity, log } = options;
+	const { host, entity, log, emitter } = options;
 	// Questions to people are entity events (rule 9): this instance's handler.
 	host.setQuestionHandler(
 		createEntityQuestionHandler({
@@ -73,6 +77,7 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 			armWake: options.armWake,
 			now,
 			onReport,
+			emitter,
 		}),
 	);
 	const schedules = new ScheduleBook({ host, now, armWake: options.armWake, onReport });
@@ -96,6 +101,7 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 				schedules,
 				cursorSink,
 				...(options.subscriptions ? { subscriptions: options.subscriptions } : {}),
+				emitter,
 			}),
 			createEntityToolsFacet({ registry: host.registry, entity, now }),
 		],
