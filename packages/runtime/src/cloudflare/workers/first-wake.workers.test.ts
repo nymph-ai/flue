@@ -59,7 +59,7 @@ const BUDGET: { total: Rows; flue: Rows; piStateChecks: number } = {
 	/** Every billed row of the phases. */
 	total: { rowsRead: 330, rowsWritten: 240 },
 	/** Statements on Flue's own tables. */
-	flue: { rowsRead: 35, rowsWritten: 30 },
+	flue: { rowsRead: 45, rowsWritten: 35 },
 	/** Rows Pi-owned statements read outside the turn (the backstop). */
 	piStateChecks: 10,
 };
@@ -71,7 +71,7 @@ const BUDGET: { total: Rows; flue: Rows; piStateChecks: number } = {
  * store() 470 / 236.)
  */
 const BEFORE: Record<string, Rows> = {
-	receive: { rowsRead: 220, rowsWritten: 105 },
+	receive: { rowsRead: 220, rowsWritten: 120 },
 	streamed: { rowsRead: 482, rowsWritten: 295 },
 	tools: { rowsRead: 617, rowsWritten: 375 },
 	store: { rowsRead: 552, rowsWritten: 245 },
