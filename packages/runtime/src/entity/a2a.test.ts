@@ -575,7 +575,7 @@ describe('entity lifecycle', () => {
 		await h.world.runAlarms();
 		const bob = h.world.entity(BOB);
 		const key = relayedScheduleKey(ALICE, 's1');
-		expect(bob.wakes.some((w) => w.atMs === at)).toBe(true);
+		expect(await (await bob.open()).schedules.next(context)).toBe(at);
 		expect(bob.calls).toBe(0);
 		await bob.close();
 		h.world.clock.now = at;

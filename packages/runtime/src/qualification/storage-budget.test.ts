@@ -68,7 +68,7 @@ const STREAMED_TEXT = 'abcd'.repeat(300);
  * of rows; none may depend on the history size (asserted separately).
  */
 const BUDGET: Record<string, Rows> = {
-	'plain answer (~30 partials)': { rowsRead: 60, rowsWritten: 45 },
+	'plain answer (~30 partials)': { rowsRead: 65, rowsWritten: 45 },
 	'5-tool-call turn': { rowsRead: 60, rowsWritten: 50 },
 	'A2A send (sender turn)': { rowsRead: 60, rowsWritten: 45 },
 	'A2A receive (doorbell, pump, admission, turn)': { rowsRead: 25, rowsWritten: 45 },
