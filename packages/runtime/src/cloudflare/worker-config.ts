@@ -162,6 +162,7 @@ export function createCloudflareWorkerConfig(
 	};
 
 	let inboxSubscription: Promise<unknown> | undefined;
+	let mcpEventsSubscription: Promise<unknown> | undefined;
 	let wakeRoute: { fetch(request: Request): Response | Promise<Response> } | undefined;
 	const streamsWake: CloudflareWorkerConfig['streamsWake'] = async (request, reqEnv, ctx) => {
 		const bindingEnv = (reqEnv ?? env) as Record<string, unknown>;
@@ -172,11 +173,24 @@ export function createCloudflareWorkerConfig(
 		if (!inboxSubscription) {
 			// One shared inbox subscription per deployment, delivering to this Worker.
 			const webhookUrl = streams.webhook?.url ?? `${url.origin}${ENTITY_WAKE_ROUTE_PATH}`;
-			const ensuring = streamsSubscriptions(streams, webhookUrl).ensureInbox();
+			const subs = streamsSubscriptions(streams, webhookUrl);
+			const ensuring = subs.ensureInbox();
 			inboxSubscription = ensuring;
 			ensuring.catch((error) => {
 				console.error('[flue] Could not ensure the entity inbox subscription:', error);
 				if (inboxSubscription === ensuring) inboxSubscription = undefined;
+			});
+			ctx?.waitUntil?.(ensuring.catch(() => {}));
+		}
+		if (!mcpEventsSubscription && (options.mcpWake || options.mcpStub)) {
+			// One shared MCP events subscription per deployment when MCP subscriptions are enabled.
+			const webhookUrl = streams.webhook?.url ?? `${url.origin}${ENTITY_WAKE_ROUTE_PATH}`;
+			const subs = streamsSubscriptions(streams, webhookUrl);
+			const ensuring = subs.ensureMcpEvents();
+			mcpEventsSubscription = ensuring;
+			ensuring.catch((error) => {
+				console.error('[flue] Could not ensure the MCP events subscription:', error);
+				if (mcpEventsSubscription === ensuring) mcpEventsSubscription = undefined;
 			});
 			ctx?.waitUntil?.(ensuring.catch(() => {}));
 		}

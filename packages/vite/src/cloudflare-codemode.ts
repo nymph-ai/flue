@@ -22,13 +22,19 @@ import { glob } from 'tinyglobby';
 export const MCP_AUTH_BINDING = 'FLUE_MCP_AUTH';
 export const MCP_AUTH_CLASS_NAME = 'FlueMcpAuth';
 
+/** Matches `@flue/runtime`'s `MCP_SUBSCRIPTION_BINDING` and `MCP_SUBSCRIPTION_CLASS_NAME`. */
+export const MCP_SUBSCRIPTION_BINDING = 'FLUE_MCP_SUBSCRIPTIONS';
+export const MCP_SUBSCRIPTION_CLASS_NAME = 'FlueMcpSubscription';
+
 const CODE_MODE_CALL = /\buseCodeMode\s*\(/;
 const MCP_OAUTH_CALL = /\bmcpOAuth\s*\(/;
+const MCP_SUBSCRIPTIONS_CALL =
+	/\b(createMcpRouter|mcpServer|mcpSubscriptions)\s*\(|['"]@flue\/runtime\/mcp(-server)?['"]/;
 
 /** Which Cloudflare-specific features the modules under `sourceRoot` use. */
 export async function scanCloudflareFeatures(
 	sourceRoot: string,
-): Promise<{ codeMode: boolean; mcpOAuth: boolean }> {
+): Promise<{ codeMode: boolean; mcpOAuth: boolean; mcpSubscriptions: boolean }> {
 	const files = await glob(['**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'], {
 		cwd: sourceRoot,
 		absolute: true,
@@ -36,16 +42,23 @@ export async function scanCloudflareFeatures(
 	});
 	let codeMode = false;
 	let mcpOAuth = false;
+	let mcpSubscriptions = false;
 	for (const file of files.sort()) {
 		const code = await fs.readFile(file, 'utf8').catch(() => '');
 		codeMode ||= CODE_MODE_CALL.test(code);
 		mcpOAuth ||= MCP_OAUTH_CALL.test(code);
-		if (codeMode && mcpOAuth) break;
+		mcpSubscriptions ||= MCP_SUBSCRIPTIONS_CALL.test(code);
+		if (codeMode && mcpOAuth && mcpSubscriptions) break;
 	}
-	return { codeMode, mcpOAuth };
+	return { codeMode, mcpOAuth, mcpSubscriptions };
 }
 
 /** The `FlueMcpAuth` Durable Object binding, unless the config already declares it. */
 export function mcpAuthBinding(): { name: string; class_name: string } {
 	return { name: MCP_AUTH_BINDING, class_name: MCP_AUTH_CLASS_NAME };
+}
+
+/** The `FlueMcpSubscription` Durable Object binding, unless the config already declares it. */
+export function mcpSubscriptionBinding(): { name: string; class_name: string } {
+	return { name: MCP_SUBSCRIPTION_BINDING, class_name: MCP_SUBSCRIPTION_CLASS_NAME };
 }

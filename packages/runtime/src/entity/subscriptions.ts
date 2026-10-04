@@ -27,6 +27,8 @@ import type { EntitySubscriptionPort } from './facet.ts';
 import {
 	INBOX_PATTERN,
 	INBOX_SUBSCRIPTION_ID,
+	MCP_EVENTS_PATTERN,
+	MCP_EVENTS_SUBSCRIPTION_ID,
 	observeSubscriptionId,
 	wakeAnchorPath,
 	wirePath,
@@ -44,6 +46,7 @@ export interface EntitySubscriptionsOptions {
 	/** Lease of an unacked wake (server bounds: 1 000–600 000 ms). */
 	readonly leaseTtlMs?: number;
 	readonly inboxSubscriptionId?: string;
+	readonly mcpEventsSubscriptionId?: string;
 	/** Delete and recreate a subscription whose stored configuration differs. Default false. */
 	readonly replaceOnConflict?: boolean;
 }
@@ -67,6 +70,8 @@ export class EntitySubscriptionsError extends Error {
 export interface EntitySubscriptions extends EntitySubscriptionPort {
 	/** Ensure the shared `flue/v1/*\/*\/inbox` subscription. */
 	ensureInbox(): Promise<EnsuredSubscription>;
+	/** Ensure the shared `flue/v1/*\/*\/events` subscription for MCP subscribers. */
+	ensureMcpEvents(): Promise<EnsuredSubscription>;
 	/** Ensure an entity's observe subscription exists (no streams added). */
 	ensureObserver(entity: EntityRef): Promise<EnsuredSubscription>;
 }
@@ -146,6 +151,11 @@ export function createEntitySubscriptions(
 			put(
 				options.inboxSubscriptionId ?? INBOX_SUBSCRIPTION_ID,
 				subscriptionBody(INBOX_PATTERN, 'flue entity inboxes'),
+			),
+		ensureMcpEvents: () =>
+			put(
+				options.mcpEventsSubscriptionId ?? MCP_EVENTS_SUBSCRIPTION_ID,
+				subscriptionBody(MCP_EVENTS_PATTERN, 'flue entity events (mcp)'),
 			),
 		ensureObserver,
 		async observe(entity, streams) {

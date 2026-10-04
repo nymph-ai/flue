@@ -1583,6 +1583,8 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				artifactRefs: ['file:///artifact/1'],
 			});
 			expect(c.name).toBe('task.completed');
+			expect(c.id).toBe('task-settled:sub-1');
+			expect(c.data.id).toBe('task-settled:sub-1');
 			expect(c.data.status).toBe('completed');
 			expect(c.data.taskId).toBe('sub-1');
 			expect(c.data.resultRef).toBe('job://sub-1');
@@ -1595,6 +1597,8 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				error: 'Timeout',
 			});
 			expect(f.name).toBe('task.failed');
+			expect(f.id).toBe('task-settled:sub-2');
+			expect(f.data.id).toBe('task-settled:sub-2');
 			expect(f.data.status).toBe('failed');
 			expect(f.data.error).toBe('Timeout');
 			expect(f.data.resultRef).toBe('job://sub-2');
@@ -1605,6 +1609,8 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				outcome: 'aborted',
 			});
 			expect(a.name).toBe('task.cancelled');
+			expect(a.id).toBe('task-settled:sub-3');
+			expect(a.data.id).toBe('task-settled:sub-3');
 			expect(a.data.status).toBe('cancelled');
 			expect(a.data.resultRef).toBe('job://sub-3');
 		});
@@ -1754,7 +1760,10 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 		it('FlueMcpSubscription DO: __mcpWake pumps subscriptions via processDoorbell', async () => {
 			const streamLog = new InMemoryDurableStreamLog();
 			class MockDO {
-				constructor(public ctx: any, public env: any) {}
+				constructor(
+					public ctx: any,
+					public env: any,
+				) {}
 			}
 			const SubDOClass = createFlueMcpSubscriptionClass({
 				DurableObject: MockDO as any,
@@ -1764,8 +1773,193 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const subDO = new SubDOClass({ storage: {} } as any, {});
 			expect(subDO.__mcpWake).toBeDefined();
 
-			const res = await subDO.__mcpWake({ stream: 'test-stream', head: '0000000000000001_0000000000000001' });
+			const res = await subDO.__mcpWake({
+				stream: 'test-stream',
+				head: '0000000000000001_0000000000000001',
+			});
 			expect(res.recorded).toBe(true);
+		});
+
+		it('MCP Doorbell Wake: createEntityWakeRoute strictly separates flue-inbox from flue-mcp-events', async () => {
+			const { WebhookSigner, durableStreamsWakeBody } =
+				await import('../../entity/a2a-test-support.ts');
+			const { staticWebhookKeys } = await import('../../entity/webhook.ts');
+			const signer = await WebhookSigner.generate();
+
+			const agentWakes: Array<{ entity: unknown; doorbell: unknown }> = [];
+			const mcpWakes: Array<{ doorbell: unknown }> = [];
+
+			const route = createEntityWakeRoute({
+				keys: staticWebhookKeys({ keys: [signer.jwk] }),
+				wake: async (entity, doorbell) => {
+					agentWakes.push({ entity, doorbell });
+				},
+				mcpWake: async (doorbell) => {
+					mcpWakes.push({ doorbell });
+				},
+				fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+			});
+
+			// 1. Send notice with flue-mcp-events subscription
+			const mcpBody = durableStreamsWakeBody({
+				subscriptionId: 'flue-mcp-events',
+				generation: 1,
+				streams: [{ path: 'flue/v1/alice/1/events', tailOffset: '100', pending: true }],
+			});
+			const mcpReq = await signer.request(
+				'https://flue.invalid/__flue/streams/wake',
+				mcpBody,
+				1000,
+			);
+			const mcpRes = await route.fetch(mcpReq);
+			expect(mcpRes.status).toBe(200);
+			expect(mcpWakes.length).toBe(1);
+			expect(agentWakes.length).toBe(0);
+
+			// 2. Send notice with flue-inbox subscription
+			const inboxBody = durableStreamsWakeBody({
+				subscriptionId: 'flue-inbox',
+				generation: 2,
+				streams: [{ path: 'flue/v1/alice/1/inbox', tailOffset: '101', pending: true }],
+			});
+			const inboxReq = await signer.request(
+				'https://flue.invalid/__flue/streams/wake',
+				inboxBody,
+				1001,
+			);
+			const inboxRes = await route.fetch(inboxReq);
+			expect(inboxRes.status).toBe(200);
+			expect(agentWakes.length).toBe(1);
+			expect(mcpWakes.length).toBe(1); // Still 1, not called for inbox
+		});
+
+		it('EntitySubscriptions: ensureMcpEvents registers flue/v1/*/*/events with flue-mcp-events', async () => {
+			const { createEntitySubscriptions } = await import('../../entity/subscriptions.ts');
+			let capturedUrl = '';
+			let capturedBody: any = null;
+
+			const subs = createEntitySubscriptions({
+				root: 'https://streams.example.com',
+				webhookUrl: 'https://worker.example.com/__flue/streams/wake',
+				fetch: async (url, init) => {
+					capturedUrl = url;
+					capturedBody = JSON.parse(String(init?.body));
+					return new Response(JSON.stringify({ ok: true }), { status: 200 });
+				},
+			});
+
+			const res = await subs.ensureMcpEvents();
+			expect(res.id).toBe('flue-mcp-events');
+			expect(capturedUrl).toBe('https://streams.example.com/__ds/subscriptions/flue-mcp-events');
+			expect(capturedBody.type).toBe('webhook');
+			expect(capturedBody.pattern).toBe('flue/v1/*/*/events');
+			expect(capturedBody.webhook.url).toBe('https://worker.example.com/__flue/streams/wake');
+		});
+
+		it('AgentOperationService: respondTask refuses omitted inputId when multiple questions are pending', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const instance = new FlueAgentInstance({
+				agent: { name: 'test-agent', handle: async () => {} } as any,
+				storage: {} as any,
+				events: { emitEvent: () => {} } as any,
+				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				armWake: async () => {},
+				attachments: { put: async () => '', get: async () => undefined },
+			});
+
+			vi.spyOn(instance as any, '#open').mockResolvedValue({
+				host: {
+					harness: {
+						snapshot: async () => ({ status: 'admitted', conversationId: 1 }),
+					},
+				},
+			});
+			vi.spyOn(instance, 'questionsForTask').mockResolvedValue([
+				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 1 },
+				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 1 },
+			]);
+
+			await expect(instance.respondTask('task-1', { input: { value: 42 } })).rejects.toThrow(
+				/Multiple pending questions are waiting for task 'task-1'; 'inputId' is required to disambiguate/,
+			);
+		});
+
+		it('AgentOperationService: respondTask selects the targeted question when inputId is provided', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const instance = new FlueAgentInstance({
+				agent: { name: 'test-agent', handle: async () => {} } as any,
+				storage: {} as any,
+				events: { emitEvent: () => {} } as any,
+				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				armWake: async () => {},
+				attachments: { put: async () => '', get: async () => undefined },
+			});
+
+			vi.spyOn(instance as any, '#open').mockResolvedValue({
+				host: {
+					harness: {
+						snapshot: async () => ({ status: 'admitted', conversationId: 1 }),
+					},
+				},
+			});
+			vi.spyOn(instance, 'questionsForTask').mockResolvedValue([
+				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 1 },
+				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 1 },
+			]);
+			const answerSpy = vi
+				.spyOn(instance, 'answerQuestion')
+				.mockResolvedValue({ status: 'accepted', eventId: 'evt-1' });
+			vi.spyOn(instance, 'getTask').mockResolvedValue({
+				operationId: 'task-1',
+				capabilityId: 'agent.run',
+				state: 'running',
+				revision: 2,
+				createdAt: '',
+				updatedAt: '',
+			});
+
+			const updated = await instance.respondTask('task-1', {
+				inputId: 'q-2',
+				input: { value: 99 },
+			});
+			expect(updated.state).toBe('running');
+			expect(answerSpy).toHaveBeenCalledWith(
+				'q-2',
+				expect.objectContaining({ kind: 'test', value: 99 }),
+			);
+		});
+
+		it('AgentOperationService: questionsForTask filters out questions from different conversations', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const instance = new FlueAgentInstance({
+				agent: { name: 'test-agent', handle: async () => {} } as any,
+				storage: {} as any,
+				events: { emitEvent: () => {} } as any,
+				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				armWake: async () => {},
+				attachments: { put: async () => '', get: async () => undefined },
+			});
+
+			vi.spyOn(instance as any, '#db').mockResolvedValue({});
+			vi.spyOn(instance as any, '#open').mockResolvedValue({
+				host: {
+					harness: {
+						snapshot: async (_doc: any, key: any) => {
+							if (key === 'task-1') return { status: 'admitted', conversationId: 10 };
+							return null;
+						},
+						inspect: async () => ({ tasks: [] }),
+					},
+				},
+			});
+			vi.spyOn(instance, 'pendingQuestions').mockResolvedValue([
+				{ id: 'q-owned', question: { kind: 'test' } as any, askedAt: 1, conversationId: 10 },
+				{ id: 'q-other', question: { kind: 'test' } as any, askedAt: 2, conversationId: 99 },
+			]);
+
+			const questions = await instance.questionsForTask('task-1');
+			expect(questions.length).toBe(1);
+			expect(questions[0].id).toBe('q-owned');
 		});
 	});
 });

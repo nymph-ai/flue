@@ -239,7 +239,7 @@ export function projectSettlementToElectricEvent(settlement: {
 	summary?: string;
 	correlationId?: string;
 	artifactRefs?: string[];
-}): { name: string; data: Record<string, unknown> } {
+}): { id: string; name: string; data: Record<string, unknown> } {
 	const statusMap = {
 		completed: 'task.completed',
 		failed: 'task.failed',
@@ -248,10 +248,13 @@ export function projectSettlementToElectricEvent(settlement: {
 
 	const name = statusMap[settlement.outcome] ?? 'task.completed';
 	const status = settlement.outcome === 'aborted' ? 'cancelled' : settlement.outcome;
+	const id = `task-settled:${settlement.submissionId}`;
 
 	return {
+		id,
 		name,
 		data: {
+			id,
 			taskId: settlement.submissionId,
 			status,
 			summary: settlement.summary,
@@ -452,12 +455,19 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		name: string,
 		data: unknown,
 		customCursor?: string,
+		customEventId?: string,
 	): Promise<ElectricEvent> {
 		this.recordStream(streamId);
-		const eventId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+		const dataRecord = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+		const eventId =
+			customEventId ??
+			(typeof dataRecord.id === 'string' && dataRecord.id.length > 0
+				? dataRecord.id
+				: `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`);
 		const timestamp = new Date().toISOString();
 
 		const message = {
+			id: eventId,
 			eventId,
 			streamId,
 			name,
@@ -517,7 +527,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 					if (!msg || typeof msg !== 'object') continue;
 					const m = msg as Record<string, unknown>;
 					const evt: ElectricEvent = {
-						eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+						eventId: String(m.id ?? m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
 						streamId: String(m.streamId ?? streamId),
 						name: String(m.name ?? ''),
 						cursor: String(m.cursor ?? batch.nextOffset),
@@ -593,9 +603,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		}
 
 		const mcpEventName =
-			event.name.startsWith('task.') || event.name === 'task_changed'
-				? 'task_changed'
-				: event.name;
+			event.name.startsWith('task.') || event.name === 'task_changed' ? 'task_changed' : event.name;
 
 		const normalizedData: Record<string, unknown> = {
 			...eventData,
@@ -777,7 +785,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				if (msg && typeof msg === 'object') {
 					const m = msg as Record<string, unknown>;
 					events.push({
-						eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+						eventId: String(m.id ?? m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
 						streamId: String(m.streamId ?? streamId),
 						name: String(m.name ?? ''),
 						cursor: String(m.cursor ?? batch.nextOffset),

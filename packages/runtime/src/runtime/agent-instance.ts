@@ -21,6 +21,7 @@ import {
 	GenerationTask,
 	hook,
 	ROOT_CONVERSATION_ID,
+	type TaskInspection,
 	type ToolRegistration,
 	type Tx,
 } from '@earendil-works/pi-durable';
@@ -47,7 +48,13 @@ import { projectSettlementToElectricEvent } from '../mcp-server/events.ts';
 import type { AgentOperationService } from '../mcp-server/ports.ts';
 import type { CapabilityResult, McpInputRequest, Operation } from '../mcp-server/types.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
-import { FlueInstance, FlueReceiptIndex, FlueReceipts, FlueState } from '../pi/docs.ts';
+import {
+	FlueInstance,
+	FlueReceiptIndex,
+	FlueReceipts,
+	type FlueReceiptState,
+	FlueState,
+} from '../pi/docs.ts';
 import {
 	listPendingQuestions,
 	onlyParked,
@@ -246,6 +253,24 @@ export class FlueAgentInstance implements AgentOperationService {
 
 	// ─── Events ─────────────────────────────────────────────────────────────
 
+	#publishSettlementEvent(settlement: {
+		submissionId: string;
+		outcome: 'completed' | 'failed' | 'aborted';
+		error?: unknown;
+		result?: unknown;
+		summary?: string;
+		correlationId?: string;
+		artifactRefs?: string[];
+	}): void {
+		if (!this.#options.entities) return;
+		const self = { type: this.agentName, id: this.instanceId };
+		const path = eventsPath(self);
+		const domainEvent = projectSettlementToElectricEvent(settlement);
+		void appendCreating(this.#options.entities.log, path, domainEvent, undefined).catch((err) =>
+			this.#report(err),
+		);
+	}
+
 	#emit(event: FlueEventInput, observation?: FlueObservationDetail): void {
 		try {
 			this.#options.events.emitEvent(event, observation);
@@ -253,17 +278,12 @@ export class FlueAgentInstance implements AgentOperationService {
 			// Event delivery never breaks agent work.
 		}
 
-		if (event.type === 'submission_settled' && this.#options.entities) {
-			const self = { type: this.agentName, id: this.instanceId };
-			const path = eventsPath(self);
-			const domainEvent = projectSettlementToElectricEvent({
+		if (event.type === 'submission_settled') {
+			this.#publishSettlementEvent({
 				submissionId: event.submissionId,
 				outcome: event.outcome,
 				error: event.error,
 			});
-			void appendCreating(this.#options.entities.log, path, domainEvent, undefined).catch(
-				(err) => this.#report(err),
-			);
 		}
 	}
 
@@ -843,7 +863,10 @@ export class FlueAgentInstance implements AgentOperationService {
 	async #settledOrParked(host: FluePiHost): Promise<boolean> {
 		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
 		if (inspection.tasks.length === 0) return inspection.submissions.length === 0;
-		return onlyParked(inspection.tasks, await parkedQuestionTasks(host.harness, BACKGROUND_CONTEXT));
+		return onlyParked(
+			inspection.tasks,
+			await parkedQuestionTasks(host.harness, BACKGROUND_CONTEXT),
+		);
 	}
 
 	/** Live work exists, and all of it waits on parked questions. */
@@ -960,9 +983,82 @@ export class FlueAgentInstance implements AgentOperationService {
 		return { taskId: submissionId, state: 'running' };
 	}
 
+	async questionsForTask(taskId: string, receipt?: FlueReceiptState): Promise<PendingQuestion[]> {
+		if (!this.#opened && !hasPiState(await this.#db())) {
+			return [];
+		}
+		const { host } = await this.#open();
+		const targetReceipt =
+			receipt ?? (await host.harness.snapshot(FlueReceipts, taskId, BACKGROUND_CONTEXT));
+		if (!targetReceipt || targetReceipt.status === 'absent') {
+			return [];
+		}
+
+		const allQuestions = await this.pendingQuestions();
+		if (allQuestions.length === 0) return [];
+
+		const inspection = await host.harness.inspect(BACKGROUND_CONTEXT);
+		const parentOf = new Map<number, number>();
+		const taskOwnerMap = new Map<number, TaskInspection>();
+		for (const t of inspection.tasks) {
+			const tid = Number(t.record.id);
+			taskOwnerMap.set(tid, t);
+			if (t.record.owner !== undefined) {
+				parentOf.set(tid, Number(t.record.owner));
+			}
+		}
+
+		const filtered: PendingQuestion[] = [];
+		for (const q of allQuestions) {
+			if (q.conversationId !== null && q.conversationId !== targetReceipt.conversationId) {
+				continue;
+			}
+
+			const record = await readQuestion(host.harness, q.id, BACKGROUND_CONTEXT);
+			if (record) {
+				if (
+					record.conversationId !== null &&
+					record.conversationId !== targetReceipt.conversationId
+				) {
+					continue;
+				}
+
+				if (targetReceipt.piSubmissionId !== undefined && record.callTaskId !== null) {
+					let curr: number | undefined = record.callTaskId;
+					let matchesSubmission = true;
+					while (curr !== undefined) {
+						const task = taskOwnerMap.get(curr);
+						if (task) {
+							const subId = (task.record as Record<string, unknown>).submissionId;
+							if (typeof subId === 'number') {
+								if (subId !== targetReceipt.piSubmissionId) {
+									matchesSubmission = false;
+								}
+								break;
+							}
+						}
+						curr = parentOf.get(curr);
+					}
+					if (!matchesSubmission) continue;
+				}
+			}
+
+			filtered.push(q);
+		}
+
+		return filtered;
+	}
+
 	async getTask(taskId: string): Promise<Operation | undefined> {
 		const settlement = await this.settlement(taskId);
 		if (settlement) {
+			this.#publishSettlementEvent({
+				submissionId: settlement.submissionId,
+				outcome: settlement.outcome,
+				result: settlement.result,
+				error: settlement.error,
+			});
+
 			const state: Operation['state'] =
 				settlement.outcome === 'completed'
 					? 'completed'
@@ -1037,7 +1133,7 @@ export class FlueAgentInstance implements AgentOperationService {
 			capabilityId = (receipt.message.attributes as Record<string, unknown>).capabilityId as string;
 		}
 
-		const questions = await this.pendingQuestions();
+		const questions = await this.questionsForTask(taskId, receipt);
 		const hasPendingQuestion = questions.length > 0;
 
 		let state: Operation['state'];
@@ -1107,7 +1203,23 @@ export class FlueAgentInstance implements AgentOperationService {
 		taskId: string,
 		response: { inputId?: string; input: unknown },
 	): Promise<Operation> {
-		const questions = await this.pendingQuestions();
+		const { host } = await this.#open();
+		const receipt = await host.harness.snapshot(FlueReceipts, taskId, BACKGROUND_CONTEXT);
+		if (!receipt || receipt.status === 'absent') {
+			throw new Error(`Task '${taskId}' not found.`);
+		}
+
+		const questions = await this.questionsForTask(taskId, receipt);
+		if (questions.length === 0) {
+			throw new Error(`No pending question found to respond to for task '${taskId}'.`);
+		}
+
+		if (!response.inputId && questions.length > 1) {
+			throw new Error(
+				`Multiple pending questions are waiting for task '${taskId}'; 'inputId' is required to disambiguate.`,
+			);
+		}
+
 		const targetQuestion = response.inputId
 			? questions.find((q) => q.id === response.inputId)
 			: questions[0];

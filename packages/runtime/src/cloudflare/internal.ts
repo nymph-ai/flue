@@ -28,6 +28,8 @@ export { installDefaultCloudflareTracing } from './tracing/index.ts';
 export {
 	createFlueMcpSubscriptionClass,
 	type CreateFlueMcpSubscriptionClassOptions,
+	MCP_SUBSCRIPTION_BINDING,
+	MCP_SUBSCRIPTION_CLASS_NAME,
 	type McpSubscriptionStub,
 } from './mcp-subscription.ts';
 export type {

@@ -41,7 +41,12 @@
  * its own `flue()` instance, concurrent Vite servers in one process never
  * cross-talk.
  */
-import { MCP_AUTH_CLASS_NAME, mcpAuthBinding } from './cloudflare-codemode.ts';
+import {
+	MCP_AUTH_CLASS_NAME,
+	mcpAuthBinding,
+	MCP_SUBSCRIPTION_CLASS_NAME,
+	mcpSubscriptionBinding,
+} from './cloudflare-codemode.ts';
 import { stackless } from './diagnostics.ts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -76,6 +81,8 @@ export interface FlueWorkerConfigSource {
 	readonly doBindings: readonly FlueDoBinding[];
 	/** Whether a module under the source root calls `mcpOAuth()`. */
 	readonly mcpOAuth?: boolean;
+	/** Whether a module under the source root uses MCP subscriptions/server. */
+	readonly mcpSubscriptions?: boolean;
 	/** Set by the customizer so `configResolved` can diagnose missing wiring. */
 	customizerInvoked: boolean;
 }
@@ -137,11 +144,12 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		applyFlueWorkerConfig(
-			config as Record<string, unknown>,
-			source.mcpOAuth ? [...source.doBindings, mcpAuthBinding()] : source.doBindings,
-		);
+		const bindings = [...source.doBindings];
+		if (source.mcpOAuth) bindings.push(mcpAuthBinding());
+		if (source.mcpSubscriptions) bindings.push(mcpSubscriptionBinding());
+		applyFlueWorkerConfig(config as Record<string, unknown>, bindings);
 		if (source.mcpOAuth) assertMcpAuthMigration(config as Record<string, unknown>);
+		if (source.mcpSubscriptions) assertMcpSubscriptionMigration(config as Record<string, unknown>);
 	};
 }
 
@@ -216,6 +224,25 @@ function assertMcpAuthMigration(config: Record<string, unknown>): void {
 		new Error(
 			`[flue] An agent module calls mcpOAuth(), so the Worker binds the ${MCP_AUTH_CLASS_NAME} Durable Object, which holds MCP OAuth credentials. ` +
 				`Add it to your wrangler config's migrations: { "tag": "<new tag>", "new_sqlite_classes": ["${MCP_AUTH_CLASS_NAME}"] }.`,
+		),
+	);
+}
+
+/**
+ * The `FlueMcpSubscription` class is SQLite-backed like every Flue Durable Object,
+ * and wrangler refuses a bound class with no migration.
+ */
+function assertMcpSubscriptionMigration(config: Record<string, unknown>): void {
+	const migrations = Array.isArray(config.migrations) ? (config.migrations as unknown[]) : [];
+	const declared = migrations.some((migration) => {
+		const classes = (migration as { new_sqlite_classes?: unknown })?.new_sqlite_classes;
+		return Array.isArray(classes) && classes.includes(MCP_SUBSCRIPTION_CLASS_NAME);
+	});
+	if (declared) return;
+	throw stackless(
+		new Error(
+			`[flue] An agent or route uses MCP, so the Worker binds the ${MCP_SUBSCRIPTION_CLASS_NAME} Durable Object, which holds MCP subscriptions and delivery logs. ` +
+				`Add it to your wrangler config's migrations: { "tag": "<new tag>", "new_sqlite_classes": ["${MCP_SUBSCRIPTION_CLASS_NAME}"] }.`,
 		),
 	);
 }

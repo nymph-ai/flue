@@ -1,6 +1,10 @@
 /** Global, isolate-scoped subscription to live Flue runtime activity. */
 
+import { appendCreating } from '../entity/append.ts';
+import { eventsPath } from '../entity/paths.ts';
+import { projectSettlementToElectricEvent } from '../mcp-server/events.ts';
 import { createObservation, type FlueObservationSubscriber } from '../observation.ts';
+import { configuredStreamsLog } from './streams-config.ts';
 import type {
 	FlueEvent,
 	FlueEventContext,
@@ -135,6 +139,22 @@ export function createCoordinatorEventEmitter(scope: {
 				timestamp: new Date().toISOString(),
 			};
 			dispatchGlobalEvent(decorated, ctx, detail);
+
+			if (event.type === 'submission_settled' && scope.agentName && scope.instanceId) {
+				const streamLog = configuredStreamsLog(scope.env);
+				if (streamLog) {
+					const self = { type: scope.agentName, id: scope.instanceId };
+					const path = eventsPath(self);
+					const domainEvent = projectSettlementToElectricEvent({
+						submissionId: event.submissionId,
+						outcome: event.outcome,
+						error: event.error,
+					});
+					void appendCreating(streamLog, path, domainEvent, undefined).catch((err) => {
+						console.error('[flue:events] Coordinator failed to append settlement event:', err);
+					});
+				}
+			}
 		} catch (error) {
 			try {
 				reportSubscriberFailure(error);

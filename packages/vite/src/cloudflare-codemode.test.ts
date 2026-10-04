@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	MCP_AUTH_BINDING,
 	MCP_AUTH_CLASS_NAME,
+	MCP_SUBSCRIPTION_BINDING,
+	MCP_SUBSCRIPTION_CLASS_NAME,
 	scanCloudflareFeatures,
 } from './cloudflare-codemode.ts';
 import { flueWorkerConfig } from './cloudflare-worker-config.ts';
@@ -48,16 +50,28 @@ describe('Code Mode detection', () => {
 			'node_modules/dep/index.ts': 'useCodeMode({});\n',
 			'types.d.ts': 'declare function useCodeMode(options: unknown): void;\n',
 		});
-		expect(await scanCloudflareFeatures(root)).toEqual({ codeMode: false, mcpOAuth: false });
+		expect(await scanCloudflareFeatures(root)).toEqual({
+			codeMode: false,
+			mcpOAuth: false,
+			mcpSubscriptions: false,
+		});
 		await writeFiles(root, {
 			'hooks/tools.ts': 'export const useTools = () => useCodeMode ( { maxOutputTokens: 1 } );\n',
 		});
-		expect(await scanCloudflareFeatures(root)).toEqual({ codeMode: true, mcpOAuth: false });
+		expect(await scanCloudflareFeatures(root)).toEqual({
+			codeMode: true,
+			mcpOAuth: false,
+			mcpSubscriptions: false,
+		});
 		await writeFiles(root, {
 			'mcp.ts':
 				"export const auth = mcpOAuth({ principal: 'p', redirectUrl: 'https://a.test/cb' });\n",
 		});
-		expect(await scanCloudflareFeatures(root)).toMatchObject({ codeMode: true, mcpOAuth: true });
+		expect(await scanCloudflareFeatures(root)).toMatchObject({
+			codeMode: true,
+			mcpOAuth: true,
+			mcpSubscriptions: false,
+		});
 	});
 });
 
@@ -230,5 +244,31 @@ describe('Cloudflare Worker bundle', () => {
 		expect(bindings).toContainEqual({ name: MCP_AUTH_BINDING, class_name: MCP_AUTH_CLASS_NAME });
 		// The class is exported from the Worker, and the callback route is served.
 		expect(findings(output, /\/__flue\/mcp\/oauth\/callback/).length).toBeGreaterThan(0);
+	}, 180_000);
+
+	it('binds the FlueMcpSubscription Durable Object when an app uses MCP server / subscriptions', async () => {
+		const source = [
+			"'use agent';",
+			"import { createMcpRouter, useModel } from '@flue/runtime';",
+			'',
+			'export function Researcher() {',
+			"\tuseModel('anthropic/claude-sonnet-4-6');",
+			'\tcreateMcpRouter();',
+			"\treturn 'Answer.';",
+			'}',
+			'',
+		].join('\n');
+		await expect(buildCloudflareFixture(source)).rejects.toThrow(
+			/new_sqlite_classes.*FlueMcpSubscription/s,
+		);
+		const output = await buildCloudflareFixture(source, [MCP_SUBSCRIPTION_CLASS_NAME]);
+		const config = deployConfigOf(output);
+		const bindings =
+			(config.durable_objects as { bindings?: { name: string; class_name: string }[] }).bindings ??
+			[];
+		expect(bindings).toContainEqual({
+			name: MCP_SUBSCRIPTION_BINDING,
+			class_name: MCP_SUBSCRIPTION_CLASS_NAME,
+		});
 	}, 180_000);
 });

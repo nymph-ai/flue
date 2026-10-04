@@ -187,6 +187,8 @@ interface FluePluginState {
 	codeMode: boolean;
 	/** Whether a module under the source root calls `mcpOAuth()` (Cloudflare: binds the FlueMcpAuth Durable Object). */
 	mcpOAuth: boolean;
+	/** Whether a module under the source root uses MCP subscriptions/server (Cloudflare: binds the FlueMcpSubscription Durable Object). */
+	mcpSubscriptions: boolean;
 	/** Serializes and coalesces watcher-driven re-scans. */
 	watchQueue: WatchQueue;
 	resolved: FlueResolvedProjectInfo | undefined;
@@ -211,6 +213,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		cloudflarePrepared: false,
 		codeMode: false,
 		mcpOAuth: false,
+		mcpSubscriptions: false,
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
@@ -236,6 +239,9 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		},
 		get mcpOAuth() {
 			return state.mcpOAuth;
+		},
+		get mcpSubscriptions() {
+			return state.mcpSubscriptions;
 		},
 		customizerInvoked: false,
 	};
@@ -363,6 +369,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				const features = await scanCloudflareFeatures(project.sourceRoot);
 				state.codeMode = features.codeMode;
 				state.mcpOAuth = features.mcpOAuth;
+				state.mcpSubscriptions = features.mcpSubscriptions;
 				state.cloudflarePrepared = true;
 				workerConfigSource.configReady = true;
 				// The dependency resolver stays inert (root unset): the Worker

@@ -27,6 +27,7 @@ import {
 	entityOfInboxPath,
 	entityOfObserveSubscription,
 	logPathFromWire,
+	MCP_EVENTS_SUBSCRIPTION_ID,
 } from './paths.ts';
 import type { EntityRef } from './services.ts';
 import {
@@ -52,6 +53,8 @@ export interface EntityWakeRouteOptions {
 	readonly wake: (entity: EntityRef, doorbell: EntityDoorbell) => Promise<unknown>;
 	/** Ring MCP subscription doorbell: `stub.__mcpWake({ stream, head })`. */
 	readonly mcpWake?: (doorbell: EntityDoorbell) => Promise<unknown>;
+	/** The subscription ID for MCP events (default: MCP_EVENTS_SUBSCRIPTION_ID). */
+	readonly mcpEventsSubscriptionId?: string;
 	/** For callback acks. */
 	readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 	readonly now?: () => number;
@@ -109,18 +112,26 @@ export function createEntityWakeRoute(options: EntityWakeRouteOptions): Hono {
 		});
 		if (!received.ok) return c.json({ error: received.reason }, received.status);
 		const { notice } = received;
-		const { targets } = routeWakeNotice(notice);
+		const mcpSubscriptionId = options.mcpEventsSubscriptionId ?? MCP_EVENTS_SUBSCRIPTION_ID;
+		const isMcpNotice = notice.subscriptionId === mcpSubscriptionId;
 
-		const wakePromises: Promise<unknown>[] = targets.flatMap((target) =>
-			target.doorbells.map((doorbell) => options.wake(target.entity, doorbell)),
-		);
+		let wakePromises: Promise<unknown>[] = [];
+		let entities: string[] = [];
 
-		if (options.mcpWake) {
-			for (const stream of notice.streams) {
-				if (!stream.pending) continue;
-				const path = logPathFromWire(stream.path);
-				wakePromises.push(options.mcpWake({ stream: path, head: stream.tailOffset }));
+		if (isMcpNotice) {
+			if (options.mcpWake) {
+				for (const stream of notice.streams) {
+					if (!stream.pending) continue;
+					const path = logPathFromWire(stream.path);
+					wakePromises.push(options.mcpWake({ stream: path, head: stream.tailOffset }));
+				}
 			}
+		} else {
+			const { targets } = routeWakeNotice(notice);
+			wakePromises = targets.flatMap((target) =>
+				target.doorbells.map((doorbell) => options.wake(target.entity, doorbell)),
+			);
+			entities = targets.map((target) => entityKey(target.entity));
 		}
 
 		const settled = await Promise.allSettled(wakePromises);
@@ -136,7 +147,6 @@ export function createEntityWakeRoute(options: EntityWakeRouteOptions): Hono {
 		for (const stream of notice.streams) {
 			if (stream.pending) acks.push({ stream: stream.path, offset: stream.tailOffset });
 		}
-		const entities = targets.map((target) => entityKey(target.entity));
 		const acked = await ackOrReport(notice, acks, options, report);
 		const outcome: EntityWakeRouteOutcome = { entities, acked };
 		return c.json({ ok: true, ...outcome });

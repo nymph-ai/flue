@@ -51,6 +51,9 @@ export function wakeAnchorPath(entity: EntityAddress): string {
 /** The pattern of the shared inbox subscription, in wire form. */
 export const INBOX_PATTERN = 'flue/v1/*/*/inbox';
 
+/** The pattern of the shared MCP events subscription, in wire form. */
+export const MCP_EVENTS_PATTERN = 'flue/v1/*/*/events';
+
 /** Log path → wire path: each segment percent-encoded once more. */
 export function wirePath(logPath: string): string {
 	return logPath
@@ -140,3 +143,6 @@ export function entityOfObserveSubscription(subscriptionId: string): EntityAddre
 
 /** The default id of the shared inbox subscription. */
 export const INBOX_SUBSCRIPTION_ID = 'flue-inbox';
+
+/** The default id of the shared MCP events subscription. */
+export const MCP_EVENTS_SUBSCRIPTION_ID = 'flue-mcp-events';
