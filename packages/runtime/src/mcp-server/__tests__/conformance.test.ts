@@ -2196,6 +2196,16 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				entities: { log: streamLog },
 			});
 
+			// Fail Electric append
+			let failAppend = true;
+			const originalAppend = streamLog.append.bind(streamLog);
+			vi.spyOn(streamLog, 'append').mockImplementation(async (path: string, messages: readonly unknown[]) => {
+				if (failAppend) {
+					throw new Error('Electric network partition');
+				}
+				return originalAppend(path, messages);
+			});
+
 			await instance.admit({
 				kind: 'direct',
 				submissionId: 'task-fail-retry-1',
@@ -2212,16 +2222,6 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			};
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
-
-			// Fail Electric append
-			let failAppend = true;
-			const originalAppend = streamLog.append.bind(streamLog);
-			vi.spyOn(streamLog, 'append').mockImplementation(async (path: string, messages: readonly unknown[]) => {
-				if (failAppend) {
-					throw new Error('Electric network partition');
-				}
-				return originalAppend(path, messages);
-			});
 
 			// Call getTask while Electric is failing
 			const task = await instance.getTask('task-fail-retry-1');

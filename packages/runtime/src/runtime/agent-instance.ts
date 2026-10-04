@@ -310,23 +310,10 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
 
 		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
-		if (!index) return;
-
-		const candidates = new Set<string>();
-		for (const id of Object.keys(index.live ?? {})) {
-			candidates.add(id);
-		}
-		for (const id of index.admitting ?? []) {
-			candidates.add(id);
-		}
-		for (const id of Object.values(index.byPiSubmission ?? {})) {
-			candidates.add(id);
-		}
-
-		if (candidates.size === 0) return;
+		if (!index?.live) return;
 
 		const candidatesToQuery: string[] = [];
-		for (const id of candidates) {
+		for (const id of Object.keys(index.live)) {
 			if (!this.#publishedSettlements.has(id)) {
 				candidatesToQuery.push(id);
 			}
