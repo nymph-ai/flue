@@ -26,8 +26,10 @@ const SCHEMA = [
 		cursor TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS flue_settlement_projections (
-		submission_id TEXT PRIMARY KEY
+		submission_id TEXT PRIMARY KEY,
+		state TEXT NOT NULL DEFAULT 'published'
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_flue_settlement_projections_pending ON flue_settlement_projections (submission_id) WHERE state = 'pending'`,
 ];
 
 export interface WakeStreamState {
@@ -50,6 +52,24 @@ export class EntityWakeBook {
 		for (const statement of SCHEMA) {
 			this.#db.prepare(statement).run();
 		}
+		try {
+			this.#db
+				.prepare(
+					"ALTER TABLE flue_settlement_projections ADD COLUMN state TEXT NOT NULL DEFAULT 'published'",
+				)
+				.run();
+		} catch {
+			// Column already exists or table was freshly created with state column
+		}
+		try {
+			this.#db
+				.prepare(
+					"CREATE INDEX IF NOT EXISTS idx_flue_settlement_projections_pending ON flue_settlement_projections (submission_id) WHERE state = 'pending'",
+				)
+				.run();
+		} catch {
+			// Index already exists
+		}
 		this.#schema = true;
 	}
 
@@ -57,17 +77,40 @@ export class EntityWakeBook {
 	isSettlementPublished(submissionId: string): boolean {
 		this.#ensure();
 		const row = this.#db
-			.prepare('SELECT 1 FROM flue_settlement_projections WHERE submission_id = ?')
+			.prepare(
+				"SELECT 1 FROM flue_settlement_projections WHERE submission_id = ? AND state = 'published'",
+			)
 			.get(submissionId);
 		return Boolean(row);
+	}
+
+	/** Record that a submission's settlement is pending outward projection to Electric. */
+	recordSettlementPending(submissionId: string): void {
+		this.#ensure();
+		this.#db
+			.prepare(
+				"INSERT OR IGNORE INTO flue_settlement_projections (submission_id, state) VALUES (?, 'pending')",
+			)
+			.run(submissionId);
 	}
 
 	/** Mark a submission's settlement as projected outward to Electric. */
 	markSettlementPublished(submissionId: string): void {
 		this.#ensure();
 		this.#db
-			.prepare('INSERT OR IGNORE INTO flue_settlement_projections (submission_id) VALUES (?)')
+			.prepare(
+				"INSERT INTO flue_settlement_projections (submission_id, state) VALUES (?, 'published') ON CONFLICT (submission_id) DO UPDATE SET state = 'published'",
+			)
 			.run(submissionId);
+	}
+
+	/** Submission IDs that have settled but not yet successfully projected to Electric. */
+	pendingSettlementIds(): string[] {
+		this.#ensure();
+		const rows = this.#db
+			.prepare("SELECT submission_id FROM flue_settlement_projections WHERE state = 'pending'")
+			.all<{ submission_id: string }>();
+		return rows.map((r) => r.submission_id);
 	}
 
 	/**
@@ -83,10 +126,12 @@ export class EntityWakeBook {
 		const placeholders = submissionIds.map(() => '?').join(', ');
 		const rows = this.#db
 			.prepare(
-				`SELECT submission_id FROM flue_settlement_projections WHERE submission_id IN (${placeholders})`,
+				`SELECT submission_id, state FROM flue_settlement_projections WHERE submission_id IN (${placeholders})`,
 			)
-			.all<{ submission_id: string }>(...submissionIds);
-		const publishedSet = new Set(rows.map((r) => r.submission_id));
+			.all<{ submission_id: string; state: string }>(...submissionIds);
+		const publishedSet = new Set(
+			rows.filter((r) => r.state === 'published').map((r) => r.submission_id),
+		);
 		const published = Array.from(publishedSet);
 		const unprojected = submissionIds.filter((id) => !publishedSet.has(id));
 		return { unprojected, published };

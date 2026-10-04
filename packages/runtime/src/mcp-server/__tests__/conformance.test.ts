@@ -2227,9 +2227,10 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const task = await instance.getTask('task-fail-retry-1');
 			expect(task?.state).toBe('completed');
 
-			// Verify NOT marked as published in SQLite
+			// Verify NOT marked as published in SQLite, but recorded as pending
 			const book = new EntityWakeBook(database);
 			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(false);
+			expect(book.pendingSettlementIds()).toContain('task-fail-retry-1');
 
 			// Verify Electric has 0 messages
 			let batch = await streamLog.read(streamPath, STREAM_START);
@@ -2241,8 +2242,9 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// Trigger wake - should retry the unprojected settlement
 			await instance.wake({ kind: 'live-tasks' });
 
-			// Verify marked as published in SQLite
+			// Verify marked as published in SQLite and no longer pending
 			expect(book.isSettlementPublished('task-fail-retry-1')).toBe(true);
+			expect(book.pendingSettlementIds()).not.toContain('task-fail-retry-1');
 
 			// Verify Electric now has exactly 1 projected event with deterministic id
 			batch = await streamLog.read(streamPath, STREAM_START);
@@ -2255,6 +2257,173 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			await instance.wake({ kind: 'live-tasks' });
 			batch = await streamLog.read(streamPath, STREAM_START);
 			expect(batch.messages.length).toBe(1);
+		});
+
+		it('FlueAgentInstance: failed Electric append arms delayed live-tasks wake alarm and stores pending state', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { eventsPath } = await import('../../entity/paths.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+			const streamLog = new InMemoryDurableStreamLog();
+			const streamPath = eventsPath({ type: 'test-agent', id: '1' });
+			await streamLog.ensure(streamPath);
+
+			const armedWakes: { atMs: number; reason: unknown }[] = [];
+			const now = Date.now();
+
+			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async (atMs, reason) => {
+					armedWakes.push({ atMs, reason });
+				},
+				now: () => now,
+				attachments: new InMemoryAttachmentStore(),
+				entities: { log: streamLog },
+			});
+
+			vi.spyOn(streamLog, 'append').mockRejectedValue(new Error('Electric unreachable'));
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-alarm-1',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date(now).toISOString(),
+			});
+
+			const host = await instance.host();
+			const mockSettlement = {
+				submissionId: 'task-alarm-1',
+				outcome: 'completed' as const,
+				result: { resultType: 'complete', content: [{ type: 'text', text: 'done' }] },
+				settledAt: new Date(now).toISOString(),
+			};
+			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
+			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
+
+			// Call getTask while Electric fails
+			await instance.getTask('task-alarm-1');
+
+			const book = new EntityWakeBook(database);
+			expect(book.isSettlementPublished('task-alarm-1')).toBe(false);
+			expect(book.pendingSettlementIds()).toContain('task-alarm-1');
+
+			// Verify retry alarm was armed with { kind: 'live-tasks' } at now + 5000
+			const retryAlarm = armedWakes.find(
+				(w) =>
+					typeof w.reason === 'object' &&
+					w.reason !== null &&
+					(w.reason as { kind?: string }).kind === 'live-tasks' &&
+					w.atMs === now + 5000,
+			);
+			expect(retryAlarm).toBeDefined();
+		});
+
+		it('FlueAgentInstance: pending settlement projects from durable state even after task is pruned from index.live by next admission', async () => {
+			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+			const { eventsPath } = await import('../../entity/paths.ts');
+			const { STREAM_START } = await import('../../streams/offset.ts');
+			const { FlueReceiptIndex } = await import('../../pi/receipts.ts');
+			const { BACKGROUND_CONTEXT } = await import('@earendil-works/chord/context');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+			const streamLog = new InMemoryDurableStreamLog();
+			const streamPath = eventsPath({ type: 'test-agent', id: '1' });
+			await streamLog.ensure(streamPath);
+
+			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
+				agent: (() => 'test instructions') as any,
+				database: () => database,
+				events: { emitEvent: () => {} } as any,
+				mcp: createMcpConnectionCache(),
+				armWake: async () => {},
+				attachments: new InMemoryAttachmentStore(),
+				entities: { log: streamLog },
+			});
+
+			// Fail Electric append
+			let failAppend = true;
+			const originalAppend = streamLog.append.bind(streamLog);
+			vi.spyOn(streamLog, 'append').mockImplementation(async (path: string, messages: readonly unknown[]) => {
+				if (failAppend) {
+					throw new Error('Electric network partition');
+				}
+				return originalAppend(path, messages);
+			});
+
+			// Admit Task A
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-A',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date().toISOString(),
+			});
+
+			const host = await instance.host();
+			const mockSettlementA = {
+				submissionId: 'task-A',
+				outcome: 'completed' as const,
+				result: { resultType: 'complete', content: [{ type: 'text', text: 'result A' }] },
+				settledAt: new Date().toISOString(),
+			};
+			vi.spyOn(host, 'settlement').mockImplementation(async (id) => {
+				if (id === 'task-A') return mockSettlementA;
+				return undefined;
+			});
+			vi.spyOn(instance, 'settlement').mockImplementation(async (id) => {
+				if (id === 'task-A') return mockSettlementA;
+				return undefined;
+			});
+
+			// Settle Task A while Electric fails -> enters durable pending state
+			await instance.getTask('task-A');
+
+			const book = new EntityWakeBook(database);
+			expect(book.isSettlementPublished('task-A')).toBe(false);
+			expect(book.pendingSettlementIds()).toEqual(['task-A']);
+
+			// Simulate Task B admission pruning Task A from index.live
+			await host.harness.commit(async (tx) => {
+				const index = await tx.doc(FlueReceiptIndex);
+				delete index.live['task-A'];
+				index.live['task-B'] = 999;
+			}, BACKGROUND_CONTEXT);
+
+			// Assert Task A is completely absent from index.live
+			const liveSnapshot = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
+			expect(liveSnapshot?.live?.['task-A']).toBeUndefined();
+
+			// Electric heals
+			failAppend = false;
+
+			// Alarm / wake({ kind: 'live-tasks' }) triggers
+			await instance.wake({ kind: 'live-tasks' });
+
+			// Assert Task A was successfully projected to Electric from durable pending state
+			expect(book.isSettlementPublished('task-A')).toBe(true);
+			expect(book.pendingSettlementIds()).toEqual([]);
+
+			const batch = await streamLog.read(streamPath, STREAM_START);
+			expect(batch.messages.length).toBe(1);
+			const msg = batch.messages[0] as { id?: string; name?: string } | undefined;
+			expect(msg?.id).toBe('task-settled:task-A');
+			expect(msg?.name).toBe('task.completed');
 		});
 	});
 });

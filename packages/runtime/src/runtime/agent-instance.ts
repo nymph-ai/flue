@@ -284,6 +284,9 @@ export class FlueAgentInstance implements AgentOperationService {
 				return;
 			}
 
+			// Record durable pending state before attempting Electric append
+			book.recordSettlementPending(settlement.submissionId);
+
 			const self = { type: this.agentName, id: this.instanceId };
 			const path = eventsPath(self);
 			const domainEvent = projectSettlementToElectricEvent(settlement);
@@ -291,6 +294,9 @@ export class FlueAgentInstance implements AgentOperationService {
 				await appendCreating(entities.log, path, domainEvent, undefined);
 			} catch (err) {
 				this.#report(err);
+				await Promise.resolve(
+					this.#options.armWake(this.#now() + 5000, { kind: 'live-tasks' }),
+				).catch((wakeErr) => this.#report(wakeErr));
 				return;
 			}
 
@@ -310,25 +316,36 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (reason.kind !== 'live-tasks') return;
 		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
 
-		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
-		if (!index?.live) return;
+		const book = await this.#wakeBook();
 
-		const candidatesToQuery: string[] = [];
-		for (const id of Object.keys(index.live)) {
-			if (!this.#publishedSettlements.has(id)) {
-				candidatesToQuery.push(id);
+		// Step 1: Discover any settled live receipts in index.live not yet represented
+		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
+		if (index?.live) {
+			const candidatesToQuery: string[] = [];
+			for (const id of Object.keys(index.live)) {
+				if (!this.#publishedSettlements.has(id)) {
+					candidatesToQuery.push(id);
+				}
+			}
+
+			if (candidatesToQuery.length > 0) {
+				const { unprojected, published } = book.checkSettlementProjections(candidatesToQuery);
+				for (const id of published) {
+					this.#publishedSettlements.add(id);
+				}
+
+				for (const id of unprojected) {
+					const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
+					if (settlement) {
+						book.recordSettlementPending(id);
+					}
+				}
 			}
 		}
 
-		if (candidatesToQuery.length === 0) return;
-
-		const book = await this.#wakeBook();
-		const { unprojected, published } = book.checkSettlementProjections(candidatesToQuery);
-		for (const id of published) {
-			this.#publishedSettlements.add(id);
-		}
-
-		for (const id of unprojected) {
+		// Step 2: Query pending settlement IDs from durable storage
+		const pendingIds = book.pendingSettlementIds();
+		for (const id of pendingIds) {
 			const settlement = await host.settlement(id, BACKGROUND_CONTEXT);
 			if (settlement) {
 				await this.#publishSettlementEvent({
