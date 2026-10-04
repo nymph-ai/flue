@@ -769,6 +769,10 @@ export class FlueAgentInstance implements AgentOperationService {
 		);
 		telemetry.queued(input.submissionId, input.kind);
 		await host.wake({ kind: 'dispatch' }, context);
+		if (!this.#closed) {
+			await this.#reactor.reconcileSettlements(host).catch((err) => this.#report(err));
+			await this.#reactor.flushOutbox().catch((err) => this.#report(err));
+		}
 		return { receipt, offset };
 	}
 

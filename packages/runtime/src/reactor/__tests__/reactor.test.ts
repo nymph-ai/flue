@@ -65,6 +65,9 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		const env = await setupEnvironment();
 		const host = await env.instance.host();
 
+		// [CRASH SIMULATION]: Process terminates before reconciliation
+		vi.spyOn(env.instance.reactor, 'reconcileSettlements').mockImplementation(async () => 0);
+
 		// Admit task-1
 		await env.instance.admit({
 			kind: 'direct',
@@ -119,6 +122,9 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		const env = await setupEnvironment();
 		const host = await env.instance.host();
 
+		// [CRASH SIMULATION]: Process terminates before reconciliation
+		vi.spyOn(env.instance.reactor, 'reconcileSettlements').mockImplementation(async () => 0);
+
 		// Admit task-2
 		await env.instance.admit({
 			kind: 'direct',
@@ -172,6 +178,9 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 	it('Boundary 3: Pi live retirement -> [CRASH] -> restart delivers durable outbox obligation', async () => {
 		const env = await setupEnvironment();
 		const host = await env.instance.host();
+
+		// [CRASH SIMULATION]: Process terminates before reconciliation
+		vi.spyOn(env.instance.reactor, 'reconcileSettlements').mockImplementation(async () => 0);
 
 		// Admit task-3
 		await env.instance.admit({
