@@ -10,7 +10,7 @@
 import type { DurableStreamLog } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
 import { AppManager } from './apps.ts';
-import { CANONICAL_EVENT_DEFINITIONS, ElectricEventPort, EventProjection } from './events.ts';
+import { CANONICAL_EVENT_DEFINITIONS, ElectricEventPort } from './events.ts';
 import { PolicyInterceptorPipeline } from './interceptor.ts';
 import { OperationStore } from './operations.ts';
 import type {

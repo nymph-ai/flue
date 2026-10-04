@@ -10,12 +10,7 @@
  */
 
 import { Hono } from 'hono';
-import {
-	constantTimeEqual,
-	signPayload,
-	signStandardWebhook,
-	verifyStandardWebhook,
-} from './events.ts';
+import { verifyStandardWebhook } from './events.ts';
 import type {
 	McpCapabilityProjection,
 	McpJsonRpcRequest,
@@ -175,7 +170,7 @@ export function createMcpCapabilityRouter(
 		const unauthorized = await requireInspectionAuth(c);
 		if (unauthorized) return unauthorized;
 		const task = await projection.operationPort.getOperation(c.req.param('id'));
-		if (!task || !task.result) {
+		if (!task?.result) {
 			return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
 		}
 		return c.json(task.result);
@@ -225,7 +220,7 @@ export function createMcpCapabilityRouter(
 			payload = rawText;
 		}
 
-		let signatureValid: boolean | undefined = undefined;
+		let signatureValid: boolean | undefined;
 		const subIdHeader = c.req.header('x-mcp-subscription-id');
 		if (subIdHeader) {
 			const sub = projection.eventPort.getSubscription
@@ -309,7 +304,7 @@ export function createMcpCapabilityRouter(
 		}
 
 		// Resolve AuthContext
-		let auth: Partial<AuthContext> | undefined = undefined;
+		let auth: Partial<AuthContext> | undefined;
 		if (options?.authenticate) {
 			const verified = await options.authenticate(c);
 			if (verified) auth = verified;

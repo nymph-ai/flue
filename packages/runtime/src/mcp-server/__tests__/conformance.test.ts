@@ -15,7 +15,6 @@ import { InMemoryDurableStreamLog } from '../../streams/memory-log.ts';
 import { AppManager } from '../apps.ts';
 import { ElectricEventPort } from '../events.ts';
 import { OperationStore } from '../operations.ts';
-import type { EventPort, OperationPort } from '../ports.ts';
 import { McpCapabilityProjection } from '../projection.ts';
 import { createMcpCapabilityRouter } from '../router.ts';
 import type { CapabilityResult } from '../types.ts';
