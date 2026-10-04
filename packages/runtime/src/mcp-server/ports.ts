@@ -173,11 +173,11 @@ export class CloudflareAgentOperationPort implements OperationPort {
 			operationId: res.taskId,
 			capabilityId: params.capabilityId,
 			state: res.state,
+			revision: 1,
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
 			summary: params.initialSummary,
 			payload: params.payload,
-			correlationId: params.correlationId,
 		};
 	}
 
