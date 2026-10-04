@@ -127,3 +127,98 @@ export interface McpAuditLogPort {
 	logAudit(category: string, details: Record<string, unknown>): Promise<void> | void;
 	getAuditLogs(limit?: number): Promise<AuditLogEntry[]> | AuditLogEntry[];
 }
+
+/**
+ * Agent-facing operation service interface exposed by an AgentDO via DO RPC.
+ * Flue maps onto Pi's public abstractions inside the AgentDO without the generic
+ * MCP projection reaching through into Pi Durable internals.
+ */
+export interface AgentOperationService {
+	submitTask(params: {
+		capabilityId: string;
+		payload?: Record<string, unknown>;
+		correlationId?: string;
+	}): Promise<{ taskId: string; state: Operation['state'] }>;
+
+	getTask(taskId: string): Promise<Operation | undefined>;
+
+	cancelTask(taskId: string, reason?: string): Promise<boolean>;
+
+	respondTask(taskId: string, response: { inputId?: string; input: unknown }): Promise<Operation>;
+
+	listTasks(filter?: { state?: Operation['state'] }): Promise<Operation[]>;
+}
+
+/**
+ * Cloudflare adapter that connects MCP projection's OperationPort to an AgentDO's
+ * AgentOperationService via DO RPC, preserving the invariant that generic MCP code
+ * never reaches into Pi Durable internals.
+ */
+export class CloudflareAgentOperationPort implements OperationPort {
+	constructor(private readonly agentService: AgentOperationService) {}
+
+	async createOperation(params: {
+		capabilityId: string;
+		payload?: Record<string, unknown>;
+		initialSummary?: string;
+		state?: Operation['state'];
+		correlationId?: string;
+	}): Promise<Operation> {
+		const res = await this.agentService.submitTask({
+			capabilityId: params.capabilityId,
+			payload: params.payload,
+			correlationId: params.correlationId,
+		});
+		return {
+			operationId: res.taskId,
+			capabilityId: params.capabilityId,
+			state: res.state,
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			summary: params.initialSummary,
+			payload: params.payload,
+			correlationId: params.correlationId,
+		};
+	}
+
+	async getOperation(operationId: string): Promise<Operation | undefined> {
+		return await this.agentService.getTask(operationId);
+	}
+
+	async updateOperation(
+		operationId: string,
+		_update: {
+			state?: Operation['state'];
+			summary?: string;
+			result?: CapabilityResult;
+			error?: { code: string; message: string; details?: unknown };
+			inputRequests?: McpInputRequest[];
+		},
+	): Promise<Operation> {
+		const current = await this.agentService.getTask(operationId);
+		if (!current) throw new Error(`Task '${operationId}' not found on AgentDO.`);
+		return current;
+	}
+
+	async cancelOperation(operationId: string, reason?: string): Promise<boolean> {
+		return await this.agentService.cancelTask(operationId, reason);
+	}
+
+	async respondOperation(
+		operationId: string,
+		response: { inputId?: string; input: unknown },
+	): Promise<Operation> {
+		return await this.agentService.respondTask(operationId, response);
+	}
+
+	async listOperations(filter?: {
+		state?: Operation['state'];
+		capabilityId?: string;
+	}): Promise<Operation[]> {
+		const tasks = await this.agentService.listTasks({ state: filter?.state });
+		if (filter?.capabilityId) {
+			return tasks.filter((t) => t.capabilityId === filter.capabilityId);
+		}
+		return tasks;
+	}
+}

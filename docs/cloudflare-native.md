@@ -5,36 +5,58 @@ This is the normative runtime architecture for Flue agents on Cloudflare
 fix one of them in the same change.
 
 ```
-Internet / clients ──► Gateway Worker ── auth, routing, wake doorbell, OAuth callbacks
-                              │ DO RPC
-                              ▼
-                 AgentDO(entity id)     one SQLite-backed Durable Object per entity
-                   ├─ Lifecycle           (agents/lifecycle: name, startup, capability dispatch)
-                   ├─ Pi Durable Harness  (cognition, tasks, compaction, recovery)
-                   ├─ Pi SqliteStorage    (on ctx.storage.sql via Flue's adapter)
-                   ├─ Flue tables         (stream cursors, wake high-water, conversation cache)
-                   ├─ MCP client          (@modelcontextprotocol/client, 2026-07-28 or 2025)
-                   └─ Code Mode           (@earendil-works/pi-codemode: QuickJS in-process,
-                              │                    tools.* and models.* only)
-                              ▼
-                   Electric Durable Streams: entity inboxes, events, world streams
+                         Internet / MCP clients
+                                  │
+                                  ▼
+                           Gateway Worker
+                    auth / routing / protocol
+                      /                    \
+                     /                      \
+                    ▼                        ▼
+          MCP transport plane             AgentDO(entity id)
+      cards / HTTP / listen streams    identity + Pi Durable
+           /          \                 private SQLite state
+          /            \                      │
+         ▼              ▼                     │
+ Subscription DO     Electric ◄───────────────┘
+ (only if needed)       ▲                entity events
+                         │
+                    world streams
 ```
 
 ## Roles
 
-| Piece                       | Owns                                                                | Does not own                    |
-| --------------------------- | ------------------------------------------------------------------- | ------------------------------- |
-| Gateway Worker              | routing, auth, webhook verification, OAuth redirects                | state                           |
-| AgentDO                     | identity, serialization, local durable state, supervision           | a permanently running process   |
-| Pi Durable                  | cognition: sessions, tasks, tool recovery, compaction               | transport, Electric, Cloudflare |
-| DO SQLite                   | Pi's state and Flue's cursors; the agent's record                   | the public coordination history |
-| Electric                    | entity events: inbox messages, published events, world observations | Pi's internal commits           |
-| QuickJS VM (in the AgentDO) | one Code Mode execution, no ambient network                         | anything persistent             |
-| Fabric (later, #3754)       | semantic admission of governed effects                              | agent cognition                 |
+| Piece                                     | Owns                                                                          | Does not own                    |
+| ----------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------- |
+| Gateway Worker                            | routing, auth, webhook verification, OAuth redirects                          | state                           |
+| AgentDO                                   | identity, serialization, local durable state, supervision                     | a permanently running process   |
+| MCP Transport Plane (McpListenDO / SubDO) | cards, HTTP/SSE transport, long-lived listen streams, subscriptions & retries | agent cognition, event truth    |
+| Pi Durable                                | cognition: sessions, tasks, tool recovery, compaction                         | transport, Electric, Cloudflare |
+| DO SQLite                                 | Pi's state and Flue's cursors; the agent's record                             | the public coordination history |
+| Electric                                  | entity events: inbox messages, published events, world observations           | Pi's internal commits           |
+| QuickJS VM (in the AgentDO)               | one Code Mode execution, no ambient network                                   | anything persistent             |
+| Fabric (later, #3754)                     | semantic admission of governed effects                                        | agent cognition                 |
 
 An entity's identity is its Durable Object id, its Electric stream addresses and
 its Pi state. Objects in memory are a projection rebuilt on every wake; eviction
 is uninteresting by design.
+
+## The Cloudflare Invariants
+
+The fundamental rule governing MCP transport and agent runtime integration is:
+
+> **No MCP transport requirement is allowed to change the AgentDO lifecycle.**
+
+1. **AgentDO never holds `subscriptions/listen`.** An SSE or long-lived listener inherently wants to remain connected; AgentDOs hibernate between discrete events.
+2. **AgentDO never stores MCP webhook subscriptions or delivery logs.** Subscriptions, callback URLs, Standard Webhooks signing keys, and delivery attempts belong strictly in the MCP transport/subscription service plane.
+3. **AgentDO never stores a duplicate Electric event history.** Electric's `DurableStreamLog` is the sole authoritative log of events; AgentDO only stores its consumption cursors.
+4. **MCP server never stores a duplicate Pi task journal.** Tasks are executed either via AgentDO (Pi Durable) or bounded service DOs; the MCP projection layer never acts as a shadow execution engine.
+5. **MCP transport objects may remain connected; agent objects must remain hibernatable.** Transport objects exist to serve connections; agent objects wake, do bounded work, persist, and disappear.
+6. **All external ingress terminates at Gateway Worker or a purpose-built transport DO.** Incoming requests are authenticated and normalized before reaching agents or projections.
+7. **MCP → agent execution crosses an explicit DO RPC/service boundary.** The MCP projection consumes `OperationPort`, which invokes `AgentOperationService` on an AgentDO via DO RPC, mapping cleanly onto Pi Durable public abstractions.
+8. **Electric wakeups are high-water doorbells everywhere, including MCP event delivery.** Webhook delivery does not write-couple to event generation; Electric advances, wakes the subscription plane via doorbell, which reads Electric from its durable cursor.
+9. **No cross-DO transaction is required for semantic correctness.** Systems coordinate asynchronously through Electric streams and idempotent operations.
+10. **Evicting every in-memory object at any boundary must preserve correctness.** All durable state lives in SQLite or Electric; any DO isolate can terminate at turn boundary without data loss.
 
 ## Rules
 
