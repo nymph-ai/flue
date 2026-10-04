@@ -35,7 +35,7 @@ fix one of them in the same change.
 | DO SQLite                                 | Pi's state and Flue's cursors; the agent's record                             | the public coordination history |
 | Electric                                  | entity events: inbox messages, published events, world observations           | Pi's internal commits           |
 | QuickJS VM (in the AgentDO)               | one Code Mode execution, no ambient network                                   | anything persistent             |
-| Fabric (later, #3754)                     | semantic admission of governed effects                                        | agent cognition                 |
+| Fabric (future integration)               | future integration boundary over Electric; no current critical-path role      | agent cognition, runtime state  |
 
 An entity's identity is its Durable Object id, its Electric stream addresses and
 its Pi state. Objects in memory are a projection rebuilt on every wake; eviction
@@ -106,17 +106,17 @@ The following never hit Electric by default:
 
 ### What Goes to Electric
 
-Electric carries domain events where another consumer (an agent, human participant, or external MCP subscriber) needs to react:
+Electric carries domain events where another consumer (an agent, human participant, or external subscriber) needs to react:
 
-- `agent.message.sent`, `agent.message.received`
-- `observation.received`
-- `question.requested`, `question.answered`
-- `task.delegated`, `task.completed`, `task.failed`, `task.cancelled`
+- Existing A2A messages (`inbox` stream records) and world observations
+- Questions and input elicitation (`flue.input-requested`, `flue.input-answered`)
+- Protocol-neutral task lifecycle boundaries: `task.completed`, `task.failed`, `task.cancelled`, `task.input_required` (projected from terminal submission boundaries such as `submission_settled` or external task states)
 - `artifact.published`
 - `effect.proposed`, `effect.completed`, `effect.failed`
 - `schedule.fired`
 - `agent.status.changed` (only externally meaningful transitions, e.g. `agent.available`)
-- `mcp.task.completed` (where an external MCP subscriber explicitly requested it)
+
+Flue does not project redundant `agent.message.sent`/`agent.message.received` wrappers; existing A2A messages and questions on streams are already authoritative.
 
 ### Projections, Not Commits
 
@@ -124,8 +124,8 @@ Electric receives semantic projections across Flue event projectors, never raw P
 
 - **Aggressive Coalescing**: Micro-states within a single turn are coalesced. If status changes multiple times during a turn (`busy`, `thinking`, `using_tool`), only the terminal meaningful transition (`available`) is published. Batch observations are projected as consolidated events (`observation.batch.processed`).
 - **Reference-Only Payloads**: Large payloads (artifacts, code bundles, document bodies) are referenced by opaque URI (`artifact://art_123/7`), never dumped into the stream as multi-megabyte payloads. Electric costs scale with collaboration, not compute.
-- **MCP Event Subscriptions**: MCP subscriptions (such as ChatGPT webhooks for `task_changed`) subscribe to this semantic projection, filtering out routine progress noise: `queued/running` produce no external webhook events; only actionable or terminal states (`input_required`, `completed`, `failed`, `cancelled`) trigger webhook deliveries.
-- **Fabric V4 Role**: Fabric stays out of the critical path and synchronous admission loop. When its semantics settle, Fabric attaches cleanly as an asynchronous consumer/producer over Electric semantic events without modifying AgentDO, Pi, or the MCP projection plane.
+- **Protocol-Neutral Vocabulary**: Electric carries protocol-neutral domain events (`task.completed`, `task.failed`, `task.cancelled`, `task.input_required`). The MCP transport plane projects these to MCP client events (such as `task_changed` webhooks for ChatGPT), filtering out routine progress noise: `queued/running` produce no external webhook events; only actionable or terminal states (`input_required`, `completed`, `failed`, `cancelled`) trigger webhook deliveries.
+- **Fabric Role**: Fabric has no current critical-path role. When needed, Fabric attaches cleanly as an asynchronous consumer/producer over Electric semantic events without modifying AgentDO, Pi, or the MCP projection plane.
 
 ## Rules
 

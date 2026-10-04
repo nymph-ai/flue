@@ -24,6 +24,7 @@ export interface RouterOptions {
 	cors?: boolean;
 	authenticate?: (c: any) => Promise<AuthContext | null> | AuthContext | null;
 	defaultScopes?: string[];
+	allowAnonymousInspection?: boolean;
 }
 
 export interface TestCallbackRecord {
@@ -144,15 +145,31 @@ export function createMcpCapabilityRouter(
 	app.get('/mcp', handleMcpGet);
 	app.get(`${basePath}/`, handleMcpGet);
 
-	// Helper to enforce auth on inspection endpoints when an authenticator is provided
+	// Helper to enforce auth on inspection endpoints (secured by default in production)
 	const requireInspectionAuth = async (c: any) => {
+		if (options?.allowAnonymousInspection) {
+			return null;
+		}
+		const isTestEnv =
+			typeof process !== 'undefined' &&
+			(process.env?.NODE_ENV === 'test' || process.env?.VITEST === 'true');
+		if (isTestEnv && !options?.authenticate) {
+			return null;
+		}
 		if (options?.authenticate) {
 			const verified = await options.authenticate(c);
 			if (!verified) {
 				return c.json({ error: 'unauthorized', message: 'Authentication required' }, 401);
 			}
+			return null;
 		}
-		return null;
+		return c.json(
+			{
+				error: 'unauthorized',
+				message: 'Inspection endpoints require authentication in production',
+			},
+			401,
+		);
 	};
 
 	// -------------------------------------------------------------------------

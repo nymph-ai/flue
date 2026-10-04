@@ -34,6 +34,15 @@ export interface DurableObjectStateLike {
 	waitUntil?(promise: Promise<unknown>): void;
 }
 
+/**
+ * Canonical port representing execution authority for asynchronous operations/tasks.
+ *
+ * OperationPort is the execution authority, not a passive task-record store:
+ * submitting an operation transfers execution ownership to the underlying engine
+ * (e.g. AgentDO via AgentOperationService, or durable task services).
+ * The MCP projection plane does not execute shadow runs or schedule local background
+ * runners once submitted to OperationPort.
+ */
 export interface OperationPort {
 	createOperation(params: {
 		capabilityId: string;
@@ -121,6 +130,8 @@ export interface EventPort {
 	listSubscriptions?(): Promise<EventSubscription[]> | EventSubscription[];
 	getDeliveryLogs?(): Promise<readonly WebhookDeliveryRecord[]> | readonly WebhookDeliveryRecord[];
 	getAuditLogs?(limit?: number): Promise<AuditLogEntry[]> | AuditLogEntry[];
+	drainSubscriptions?(streamId: string, headCursor?: string): Promise<void> | void;
+	processDoorbell?(streamId: string, headCursor?: string): Promise<void> | void;
 }
 
 export interface McpAuditLogPort {
@@ -220,5 +231,41 @@ export class CloudflareAgentOperationPort implements OperationPort {
 			return tasks.filter((t) => t.capabilityId === filter.capabilityId);
 		}
 		return tasks;
+	}
+
+	async readJobResource(jobUri: string): Promise<{ content: string; mimeType: string }> {
+		const match = jobUri.match(/^job:\/\/([^/?#]+)/);
+		if (!match) throw new Error(`Invalid job URI: ${jobUri}`);
+		const jobId = match[1] ?? '';
+		const op = await this.getOperation(jobId);
+		if (!op) throw new Error(`Job '${jobId}' not found.`);
+		return {
+			content: JSON.stringify(op, null, 2),
+			mimeType: 'application/json',
+		};
+	}
+
+	projectJobFallbackResult(op: Operation): CapabilityResult {
+		const jobUri = `job://${op.operationId}`;
+		return {
+			resultType: 'complete',
+			content: [
+				{
+					type: 'text',
+					text: `Operation '${op.operationId}' is ${op.state}. Observable via ${jobUri}`,
+				},
+			],
+			structuredContent: {
+				state: op.state,
+				jobId: op.operationId,
+				jobUri,
+				summary: op.summary,
+				revision: op.revision,
+				createdAt: op.createdAt,
+				updatedAt: op.updatedAt,
+			},
+			resourceLinks: [jobUri],
+			operationId: op.operationId,
+		};
 	}
 }

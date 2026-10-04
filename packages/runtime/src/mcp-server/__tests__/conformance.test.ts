@@ -10,14 +10,16 @@
  * Reference: docs/mcp-capability-projection.md
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { DurableStreamLogError } from '../../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../../streams/memory-log.ts';
 import { AppManager } from '../apps.ts';
-import { ElectricEventPort } from '../events.ts';
+import { ElectricEventPort, projectSettlementToElectricEvent } from '../events.ts';
 import { OperationStore } from '../operations.ts';
+import { type AgentOperationService, CloudflareAgentOperationPort } from '../ports.ts';
 import { McpCapabilityProjection } from '../projection.ts';
 import { createMcpCapabilityRouter } from '../router.ts';
-import type { CapabilityResult } from '../types.ts';
+import type { CapabilityResult, Operation } from '../types.ts';
 import { MCP_2026_07_28 } from '../types.ts';
 
 // -----------------------------------------------------------------------------
@@ -1340,5 +1342,307 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			headers: { Authorization: 'Bearer valid-admin-token' },
 		});
 		expect(resAuditAuthed.status).toBe(200);
+	});
+
+	describe('Milestone 2: Task Execution Authority & Decoupled Semantic Events', () => {
+		it('OperationPort represents execution authority: McpCapabilityProjection does not execute shadow local runs', async () => {
+			const invokeSpy = vi.fn().mockResolvedValue({
+				content: [{ type: 'text', text: 'Should not be invoked locally' }],
+			});
+
+			const projection = new McpCapabilityProjection({
+				descriptor: { name: 'test-authority', version: '1.0.0', description: 'test' },
+			});
+
+			projection.registry.register({
+				id: 'async.heavy.job',
+				kind: 'tool',
+				title: 'Async Heavy Job',
+				description: 'Test job',
+				asyncPolicy: 'async',
+				pinned: true,
+				inputSchema: { type: 'object' },
+				invoke: invokeSpy,
+			});
+
+			// Invoke capability via tools/call with tasks extension
+			const res = (await projection.handleRequest({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: {
+					name: 'async.heavy.job',
+					arguments: { param: 'test-value' },
+					capabilities: { tasks: true },
+				},
+			})) as any;
+
+			expect(res.result.operationId).toBeDefined();
+			const opId = res.result.operationId;
+
+			// Verify task was created in OperationStore
+			const op = await projection.operationPort.getOperation(opId);
+			expect(op).toBeDefined();
+			expect(op?.state).toBe('running');
+
+			// Invariant: The MCP projection plane did NOT call cap.invoke() locally!
+			// OperationPort owns execution authority.
+			expect(invokeSpy).not.toHaveBeenCalled();
+		});
+
+		it('CloudflareAgentOperationPort routes execution to AgentOperationService without shadow runs', async () => {
+			const submittedTasks: any[] = [];
+			const mockAgentService: AgentOperationService = {
+				submitTask: async (params) => {
+					submittedTasks.push(params);
+					return { taskId: 'task-agent-42', state: 'running' };
+				},
+				getTask: async (taskId) => {
+					const found = submittedTasks.find(
+						(t) => t.taskId === taskId || taskId === 'task-agent-42',
+					);
+					if (!found) return undefined;
+					return {
+						operationId: taskId,
+						capabilityId: found.capabilityId,
+						state: 'running',
+						revision: 1,
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					};
+				},
+				cancelTask: async () => true,
+				respondTask: async (_id, _resp) => ({
+					operationId: 'task-agent-42',
+					capabilityId: 'agent.run',
+					state: 'running',
+					revision: 2,
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+				}),
+				listTasks: async () => [],
+			};
+
+			const agentPort = new CloudflareAgentOperationPort(mockAgentService);
+			const created = await agentPort.createOperation({
+				capabilityId: 'agent.run',
+				payload: { foo: 'bar' },
+			});
+
+			expect(created.operationId).toBe('task-agent-42');
+			expect(submittedTasks.length).toBe(1);
+			expect(submittedTasks[0].capabilityId).toBe('agent.run');
+
+			// Can read job:// resource
+			const jobRes = await agentPort.readJobResource('job://task-agent-42');
+			expect(jobRes.mimeType).toBe('application/json');
+			expect(JSON.parse(jobRes.content).operationId).toBe('task-agent-42');
+		});
+
+		it('ElectricEventPort appends with append-first pattern (avoids redundant ensure on existing stream)', async () => {
+			const appends: string[] = [];
+			const ensures: string[] = [];
+			let streamExists = false;
+
+			const mockStreamLog = {
+				ensure: async (path: string) => {
+					ensures.push(path);
+					streamExists = true;
+				},
+				append: async (path: string, _messages: unknown[]) => {
+					appends.push(path);
+					if (!streamExists) {
+						throw new DurableStreamLogError('not-found', 'Stream does not exist yet');
+					}
+					return { nextOffset: '0000000000000001_0000000000000001' as any };
+				},
+				read: async () => ({
+					messages: [],
+					nextOffset: '0000000000000001_0000000000000001' as any,
+				}),
+				getHeadOffset: async () => '0000000000000001_0000000000000001' as any,
+			};
+
+			const port = new ElectricEventPort({
+				streamLog: mockStreamLog as any,
+			});
+
+			// 1. First append to new stream: append -> 404 -> ensure -> append
+			await port.appendEvent('orders', 'order.created', { id: 1 });
+			expect(ensures).toEqual(['orders']);
+			expect(appends).toEqual(['orders', 'orders']);
+
+			// 2. Second append to existing stream: single append, ZERO ensure calls
+			ensures.length = 0;
+			appends.length = 0;
+			await port.appendEvent('orders', 'order.paid', { id: 1 });
+			expect(ensures.length).toBe(0);
+			expect(appends).toEqual(['orders']);
+		});
+
+		it('Webhook delivery is decoupled from appendEvent and drained via doorbell/drainSubscriptions', async () => {
+			const streamLog = new InMemoryDurableStreamLog();
+			const port = new ElectricEventPort({ streamLog });
+
+			const deliveries: any[] = [];
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => {
+				deliveries.push({
+					headers: options?.headers,
+					body: JSON.parse(options?.body as string),
+				});
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			});
+
+			try {
+				// Subscribe to stream
+				const { subscription } = await port.subscribe({
+					streamId: 'pipeline',
+					callbackUrl: 'https://example.com/wh',
+					skipVerification: true,
+				});
+
+				// 1. Append event to stream: does NOT immediately invoke webhook synchronously
+				const evt1 = await port.appendEvent('pipeline', 'build.done', {
+					taskId: 't-1',
+					status: 'completed',
+				});
+				expect(evt1.cursor).toBeDefined();
+				expect(deliveries.length).toBe(0); // Decoupled! Invariant 8
+
+				// 2. High-water doorbell triggers drainSubscriptions
+				await port.drainSubscriptions('pipeline');
+				expect(deliveries.length).toBe(1);
+				expect(deliveries[0].body.data.taskId).toBe('t-1');
+
+				// Subscription cursor has advanced
+				const updatedSub = port.getSubscription(subscription.id);
+				expect(updatedSub?.cursor).toBe(evt1.cursor);
+
+				// 3. Second doorbell with no new events produces no duplicate deliveries
+				await port.processDoorbell('pipeline');
+				expect(deliveries.length).toBe(1);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('Protocol-neutral events (task.*) are projected to task_changed MCP webhooks with correct status', async () => {
+			const streamLog = new InMemoryDurableStreamLog();
+			const port = new ElectricEventPort({ streamLog });
+
+			const deliveries: any[] = [];
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => {
+				deliveries.push({
+					headers: options?.headers,
+					body: JSON.parse(options?.body as string),
+				});
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			});
+
+			try {
+				await port.subscribe({
+					streamId: 'tasks',
+					callbackUrl: 'https://example.com/tasks-wh',
+					skipVerification: true,
+				});
+
+				// Append protocol-neutral domain event
+				await port.appendEvent('tasks', 'task.completed', {
+					taskId: 'job-99',
+					result: { output: 'success' },
+				});
+
+				// Drain via doorbell
+				await port.drainSubscriptions('tasks');
+				expect(deliveries.length).toBe(1);
+
+				// MCP client receives task_changed with status: 'completed'
+				expect(deliveries[0].headers['x-mcp-event-type']).toBe('task_changed');
+				expect(deliveries[0].body.name).toBe('task_changed');
+				expect(deliveries[0].body.data.status).toBe('completed');
+				expect(deliveries[0].body.data.taskId).toBe('job-99');
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('projectSettlementToElectricEvent correctly maps runtime settlement outcomes to domain events', () => {
+			// Completed
+			const c = projectSettlementToElectricEvent({
+				submissionId: 'sub-1',
+				outcome: 'completed',
+				result: { done: true },
+			});
+			expect(c.name).toBe('task.completed');
+			expect(c.data.status).toBe('completed');
+			expect(c.data.taskId).toBe('sub-1');
+
+			// Failed
+			const f = projectSettlementToElectricEvent({
+				submissionId: 'sub-2',
+				outcome: 'failed',
+				error: 'Timeout',
+			});
+			expect(f.name).toBe('task.failed');
+			expect(f.data.status).toBe('failed');
+			expect(f.data.error).toBe('Timeout');
+
+			// Aborted -> task.cancelled
+			const a = projectSettlementToElectricEvent({
+				submissionId: 'sub-3',
+				outcome: 'aborted',
+			});
+			expect(a.name).toBe('task.cancelled');
+			expect(a.data.status).toBe('cancelled');
+		});
+
+		it('Production hardening: ElectricEventPort requires streamLog unless allowInMemoryFallback or in test', () => {
+			const origEnv = process.env.NODE_ENV;
+			const origVitest = process.env.VITEST;
+			try {
+				process.env.NODE_ENV = 'production';
+				delete process.env.VITEST;
+
+				// Must throw in production without streamLog
+				expect(() => new ElectricEventPort()).toThrow(/requires an explicit DurableStreamLog/);
+
+				// Allowed if allowInMemoryFallback is explicitly set
+				const port = new ElectricEventPort({ allowInMemoryFallback: true });
+				expect(port.streamLog).toBeDefined();
+			} finally {
+				process.env.NODE_ENV = origEnv;
+				if (origVitest !== undefined) process.env.VITEST = origVitest;
+			}
+		});
+
+		it('Inspection endpoints: require authentication in production mode unless allowAnonymousInspection: true', async () => {
+			const origEnv = process.env.NODE_ENV;
+			const origVitest = process.env.VITEST;
+			try {
+				process.env.NODE_ENV = 'production';
+				delete process.env.VITEST;
+
+				const projection = await setupTestProjection();
+
+				// 1. Production router without authenticator -> 401 on inspection endpoints
+				const prodApp = createMcpCapabilityRouter(projection);
+				const resTasks = await prodApp.request('/tasks/task-123');
+				expect(resTasks.status).toBe(401);
+				const json = (await resTasks.json()) as any;
+				expect(json.message).toContain('Inspection endpoints require authentication in production');
+
+				// 2. Production router with allowAnonymousInspection: true -> permitted
+				const openApp = createMcpCapabilityRouter(projection, {
+					allowAnonymousInspection: true,
+				});
+				const resOpen = await openApp.request('/tasks/nonexistent');
+				expect(resOpen.status).toBe(404); // Passed auth, failed on 404
+			} finally {
+				process.env.NODE_ENV = origEnv;
+				if (origVitest !== undefined) process.env.VITEST = origVitest;
+			}
+		});
 	});
 });

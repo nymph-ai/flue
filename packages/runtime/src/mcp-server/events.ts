@@ -9,7 +9,7 @@
  * Reference: docs/mcp-capability-projection.md § 10
  */
 
-import type { DurableStreamLog } from '../streams/log.ts';
+import { type DurableStreamLog, DurableStreamLogError } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
 import { asStreamOffset, STREAM_START } from '../streams/offset.ts';
 import type {
@@ -226,6 +226,41 @@ export async function deriveSubscriptionId(
 	return `sub_${hex}`;
 }
 
+/**
+ * Project a runtime submission_settled record to a protocol-neutral Electric domain event.
+ * Maps terminal submission outcomes (completed, failed, aborted) into domain events
+ * (task.completed, task.failed, task.cancelled) without exposing internal scheduler chatter.
+ */
+export function projectSettlementToElectricEvent(settlement: {
+	submissionId: string;
+	outcome: 'completed' | 'failed' | 'aborted';
+	result?: unknown;
+	error?: unknown;
+	summary?: string;
+	correlationId?: string;
+}): { name: string; data: Record<string, unknown> } {
+	const statusMap = {
+		completed: 'task.completed',
+		failed: 'task.failed',
+		aborted: 'task.cancelled',
+	} as const;
+
+	const name = statusMap[settlement.outcome] ?? 'task.completed';
+	const status = settlement.outcome === 'aborted' ? 'cancelled' : settlement.outcome;
+
+	return {
+		name,
+		data: {
+			taskId: settlement.submissionId,
+			status,
+			summary: settlement.summary,
+			result: settlement.result,
+			error: settlement.error,
+			correlationId: settlement.correlationId,
+		},
+	};
+}
+
 // -----------------------------------------------------------------------------
 // Event Projection Engine
 // -----------------------------------------------------------------------------
@@ -234,6 +269,7 @@ export interface EventProjectionOptions {
 	sql?: SqlStorageLike;
 	ctx?: DurableObjectStateLike;
 	streamLog?: DurableStreamLog;
+	allowInMemoryFallback?: boolean;
 }
 
 export class ElectricEventPort implements EventPort, McpAuditLogPort, SubscriptionStorePort {
@@ -249,7 +285,20 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	constructor(options?: EventProjectionOptions) {
 		this.sql = options?.sql;
 		this.ctx = options?.ctx;
-		this.streamLog = options?.streamLog ?? new InMemoryDurableStreamLog();
+
+		if (!options?.streamLog) {
+			const isTestEnv =
+				typeof process !== 'undefined' &&
+				(process.env?.NODE_ENV === 'test' || process.env?.VITEST === 'true');
+			if (!options?.allowInMemoryFallback && !isTestEnv) {
+				throw new Error(
+					'ElectricEventPort requires an explicit DurableStreamLog in production. InMemoryDurableStreamLog fallback is only permitted in test environments or with explicit allowInMemoryFallback: true.',
+				);
+			}
+			this.streamLog = new InMemoryDurableStreamLog();
+		} else {
+			this.streamLog = options.streamLog;
+		}
 
 		if (this.sql) {
 			this.initSchema();
@@ -366,8 +415,11 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	}
 
 	/**
-	 * Append an event to a durable stream and dispatch webhook notifications.
+	 * Append an event to a durable stream using append-first pattern (ensure on 404).
 	 * Electric is the sole source of truth for events.
+	 *
+	 * Note: Webhook delivery is decoupled from event generation (Invariant 8).
+	 * Subscriptions are drained via drainSubscriptions / processDoorbell on high-water doorbells.
 	 */
 	async appendEvent(
 		streamId: string,
@@ -379,7 +431,6 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		const eventId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const timestamp = new Date().toISOString();
 
-		await this.streamLog.ensure(streamId);
 		const message = {
 			eventId,
 			streamId,
@@ -388,10 +439,10 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			data,
 		};
 
-		const appendResult = await this.streamLog.append(streamId, [message]);
+		const appendResult = await this.appendToStream(streamId, message);
 		const cursor = customCursor ?? appendResult.nextOffset;
 
-		const event: ElectricEvent = {
+		return {
 			eventId,
 			streamId,
 			name,
@@ -399,57 +450,124 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			timestamp,
 			data,
 		};
-
-		// Dispatch to active subscribers
-		const dispatchPromise = this.dispatchToSubscribers(event);
-		if (this.ctx?.waitUntil) {
-			this.ctx.waitUntil(dispatchPromise);
-		}
-
-		return event;
 	}
 
 	/**
-	 * Deliver an event to all matching subscriptions.
+	 * Append to stream using append-first pattern:
+	 * Attempts append immediately, creating the stream only on 404 not-found.
+	 * Eliminates redundant ensure calls on every write.
 	 */
-	private async dispatchToSubscribers(event: ElectricEvent): Promise<void> {
-		const subs = this.listSubscriptions();
-		const eventData = (event.data && typeof event.data === 'object' ? event.data : {}) as Record<
-			string,
-			unknown
-		>;
-
-		const taskId = (eventData.taskId ?? eventData.id) as string | undefined;
-		const correlationId = eventData.correlationId as string | undefined;
-
-		for (const sub of subs) {
-			if (sub.streamId && sub.streamId !== event.streamId) continue;
-			if (sub.filter) {
-				if (sub.filter.taskId && sub.filter.taskId !== taskId) continue;
-				if (sub.filter.correlationId && sub.filter.correlationId !== correlationId) continue;
+	private async appendToStream(
+		streamId: string,
+		message: unknown,
+	): Promise<{ nextOffset: string }> {
+		try {
+			return await this.streamLog.append(streamId, [message]);
+		} catch (error) {
+			if (!(error instanceof DurableStreamLogError) || error.code !== 'not-found') {
+				throw error;
 			}
+			await this.streamLog.ensure(streamId);
+			return await this.streamLog.append(streamId, [message]);
+		}
+	}
 
-			const p = this.deliverEvent(sub, event);
-			if (this.ctx?.waitUntil) {
-				this.ctx.waitUntil(p);
-			} else {
-				void p;
+	/**
+	 * Process an Electric high-water doorbell for a stream.
+	 * Drains unconsumed events from each subscription's committed cursor up to the current head,
+	 * delivering matching events and updating the subscription's durable cursor.
+	 */
+	async drainSubscriptions(streamId: string, headCursor?: string): Promise<void> {
+		const subs = this.listSubscriptions();
+		for (const sub of subs) {
+			if (sub.streamId && sub.streamId !== streamId) continue;
+			let cursor = sub.cursor ? asStreamOffset(sub.cursor) : STREAM_START;
+			let hasMore = true;
+			while (hasMore) {
+				const batch = await this.streamLog.read(streamId, cursor);
+				if (batch.messages.length === 0) break;
+				for (const msg of batch.messages) {
+					if (!msg || typeof msg !== 'object') continue;
+					const m = msg as Record<string, unknown>;
+					const evt: ElectricEvent = {
+						eventId: String(m.eventId ?? `evt_${crypto.randomUUID().slice(0, 8)}`),
+						streamId: String(m.streamId ?? streamId),
+						name: String(m.name ?? ''),
+						cursor: String(m.cursor ?? batch.nextOffset),
+						timestamp: String(m.timestamp ?? new Date().toISOString()),
+						data: m.data,
+					};
+
+					const data = (evt.data && typeof evt.data === 'object' ? evt.data : {}) as Record<
+						string,
+						unknown
+					>;
+					const taskId = (data.taskId ?? data.id) as string | undefined;
+					const correlationId = data.correlationId as string | undefined;
+
+					if (sub.filter?.taskId && taskId !== sub.filter.taskId) continue;
+					if (sub.filter?.correlationId && correlationId !== sub.filter.correlationId) continue;
+
+					await this.deliverEvent(sub, evt);
+				}
+				cursor = batch.nextOffset;
+				sub.cursor = cursor;
+				this.saveSubscription(sub);
+
+				if (headCursor && cursor >= asStreamOffset(headCursor)) {
+					hasMore = false;
+				} else if (batch.messages.length < 50) {
+					hasMore = false;
+				}
 			}
 		}
+	}
+
+	async processDoorbell(streamId: string, headCursor?: string): Promise<void> {
+		return this.drainSubscriptions(streamId, headCursor);
 	}
 
 	/**
 	 * Deliver an event to a specific subscription with Standard Webhooks signing.
+	 * Projects protocol-neutral domain events (e.g. task.completed, task.failed) to MCP task_changed.
 	 */
 	async deliverEvent(sub: EventSubscription, event: ElectricEvent): Promise<void> {
 		const cursor = event.cursor;
 		const timestampSeconds = Math.floor(Date.now() / 1000).toString();
 
+		const eventData = (event.data && typeof event.data === 'object' ? event.data : {}) as Record<
+			string,
+			unknown
+		>;
+
+		let status = eventData.status as string | undefined;
+		if (!status && event.name.startsWith('task.')) {
+			const subName = event.name.slice('task.'.length);
+			if (
+				subName === 'completed' ||
+				subName === 'failed' ||
+				subName === 'cancelled' ||
+				subName === 'input_required'
+			) {
+				status = subName;
+			}
+		}
+
+		const mcpEventName =
+			event.name.startsWith('task.') || event.name === 'task_changed'
+				? 'task_changed'
+				: event.name;
+
+		const normalizedData = {
+			...eventData,
+			...(status ? { status } : {}),
+		};
+
 		const eventEnvelope = {
 			eventId: event.eventId,
-			name: event.name,
+			name: mcpEventName,
 			timestamp: event.timestamp || new Date().toISOString(),
-			data: event.data,
+			data: normalizedData,
 			cursor,
 		};
 		const payloadString = JSON.stringify(eventEnvelope);
@@ -461,19 +579,15 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			'x-mcp-subscription-id': sub.id,
 			'x-mcp-event-id': event.eventId,
 			'x-mcp-cursor': cursor,
-			'x-mcp-event-type': event.name,
+			'x-mcp-event-type': mcpEventName,
 			'user-agent': 'NymphAI-Flue/2.2.2 (MCP 2026-07-28)',
 		};
 
-		const eventData = (event.data && typeof event.data === 'object' ? event.data : {}) as Record<
-			string,
-			unknown
-		>;
-		if (eventData.taskId) {
-			headers['x-mcp-task-id'] = String(eventData.taskId);
+		if (normalizedData.taskId) {
+			headers['x-mcp-task-id'] = String(normalizedData.taskId);
 		}
-		if (eventData.revision) {
-			headers['x-mcp-revision'] = String(eventData.revision);
+		if (normalizedData.revision) {
+			headers['x-mcp-revision'] = String(normalizedData.revision);
 		}
 
 		if (sub.secret) {
@@ -514,8 +628,8 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				id: deliveryId,
 				subscriptionId: sub.id,
 				eventId: event.eventId,
-				taskId: eventData.taskId ? String(eventData.taskId) : undefined,
-				revision: eventData.revision ? Number(eventData.revision) : undefined,
+				taskId: normalizedData.taskId ? String(normalizedData.taskId) : undefined,
+				revision: normalizedData.revision ? Number(normalizedData.revision) : undefined,
 				cursor,
 				statusCode,
 				status: isSuccess ? 'delivered' : 'failed',
@@ -558,8 +672,8 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				id: deliveryId,
 				subscriptionId: sub.id,
 				eventId: event.eventId,
-				taskId: eventData.taskId ? String(eventData.taskId) : undefined,
-				revision: eventData.revision ? Number(eventData.revision) : undefined,
+				taskId: normalizedData.taskId ? String(normalizedData.taskId) : undefined,
+				revision: normalizedData.revision ? Number(normalizedData.revision) : undefined,
 				cursor,
 				status: 'failed',
 				error: errorMsg,

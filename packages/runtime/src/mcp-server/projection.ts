@@ -806,60 +806,13 @@ export class McpCapabilityProjection {
 			throw new Error(`Capability '${capabilityId}' not found.`);
 		}
 
-		// Handle asynchronous capabilities
+		// Handle asynchronous capabilities: OperationPort is execution authority
 		if (cap.asyncPolicy === 'async') {
 			const op = await this.operationPort.createOperation({
 				capabilityId: cap.id,
 				payload: args,
 				state: 'running',
 			});
-
-			// Schedule actual capability invocation in background
-			const runAsync = async () => {
-				try {
-					if (cap.invoke) {
-						const res = await cap.invoke(args, context);
-						const current = await this.operationPort.getOperation(op.operationId);
-						if (current?.state === 'cancelled') {
-							return;
-						}
-						await this.operationPort.updateOperation(op.operationId, {
-							state: 'completed',
-							result: res,
-							summary: `Operation '${op.operationId}' completed successfully.`,
-						});
-						await this.eventPort.appendEvent(`task_${op.operationId}`, 'task_changed', {
-							taskId: op.operationId,
-							status: 'completed',
-							result: res,
-						});
-					}
-				} catch (err: unknown) {
-					const current = await this.operationPort.getOperation(op.operationId);
-					if (current?.state === 'cancelled') {
-						return;
-					}
-					const message = err instanceof Error ? err.message : String(err);
-					await this.operationPort.updateOperation(op.operationId, {
-						state: 'failed',
-						error: { code: 'EXECUTION_FAILED', message },
-						summary: `Operation '${op.operationId}' failed: ${message}`,
-					});
-					await this.eventPort.appendEvent(`task_${op.operationId}`, 'task_changed', {
-						taskId: op.operationId,
-						status: 'failed',
-						error: message,
-					});
-				}
-			};
-
-			if (context.waitUntil) {
-				context.waitUntil(runAsync());
-			} else {
-				queueMicrotask(() => {
-					void runAsync();
-				});
-			}
 
 			// If client negotiated Tasks extension, return native task reference
 			if (context.capabilities.extensions.tasks) {
