@@ -33,7 +33,6 @@ import { deliveredFromSchedule, entityMessageJson, parseEntityMessage } from './
 import type { ObservationBook } from './observations.ts';
 import { entityKey, eventsPath, inboxPath, sameEntity } from './paths.ts';
 import { appendAnswer, parseFlueAnswer } from './questions.ts';
-import { appendCreating } from './append.ts';
 import type { ScheduleBook } from './schedules.ts';
 import {
 	EntityLifecycle,
@@ -71,7 +70,7 @@ export interface EntityFacetOptions {
 	/** Filled in by the facet: republishes `EntityObservation.cursors` from the Pi docs. */
 	readonly cursorSink?: { refresh?: (context: Context) => Promise<void> };
 	/** Semantic emitter for outbox-backed durable delivery. */
-	readonly emitter?: SemanticEmitter;
+	readonly emitter: SemanticEmitter;
 }
 
 export class EntityServiceError extends Error {
@@ -135,18 +134,14 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 			message: entityMessageJson(message),
 			...(directive === undefined ? {} : { directive }),
 		};
-		if (options.emitter) {
-			await options.emitter.emitSemantic(
-				{
-					id: messageId,
-					stream: inboxPath(target),
-					event,
-				},
-				{ signal: context.abortSignal, immediate: true },
-			);
-		} else {
-			await appendCreating(log, inboxPath(target), event, context.abortSignal);
-		}
+		await options.emitter.emitSemantic(
+			{
+				id: messageId,
+				stream: inboxPath(target),
+				event,
+			},
+			{ signal: context.abortSignal, immediate: true },
+		);
 		return {
 			messageId,
 			submissionId: await deriveKeyedSubmissionId(target.type, target.id, messageId),
@@ -168,18 +163,14 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				eventId,
 				event,
 			};
-			if (options.emitter) {
-				await options.emitter.emitSemantic(
-					{
-						id: eventId,
-						stream: eventsPath(self),
-						event: published,
-					},
-					{ signal: context.abortSignal, immediate: true },
-				);
-			} else {
-				await appendCreating(log, eventsPath(self), published, context.abortSignal);
-			}
+			await options.emitter.emitSemantic(
+				{
+					id: eventId,
+					stream: eventsPath(self),
+					event: published,
+				},
+				{ signal: context.abortSignal, immediate: true },
+			);
 			return { eventId };
 		},
 		async answer(target, questionId, answer, answerOptions, context) {
@@ -193,7 +184,7 @@ export function createEntityFacet(options: EntityFacetOptions): Facet {
 				);
 			}
 			const eventId = answerOptions.eventId ?? defaultId(context, 'answer');
-			await appendAnswer(log, target, { from: self, questionId, answer: parsed, eventId }, context.abortSignal);
+			await appendAnswer(options.emitter, target, { from: self, questionId, answer: parsed, eventId }, context.abortSignal);
 			return { eventId };
 		},
 	};

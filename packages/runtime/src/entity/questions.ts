@@ -39,11 +39,9 @@ import {
 	QuestionParkedError,
 	QuestionTimeoutError,
 } from '../questions.ts';
-import type { WakeReason } from '../pi/host.ts';
 import { markApplied, markPublished, parkQuestion, type QuestionTaskResult } from '../pi/questions.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import type { EntityAddress } from './events.ts';
-import { appendCreating } from './append.ts';
 import { entityKey, inboxPath, questionsPath } from './paths.ts';
 import type { EntityRef } from './services.ts';
 
@@ -216,7 +214,7 @@ export function inputAnsweredEvent(input: {
  * offset after the event (what its doorbell rings with).
  */
 export async function appendAnswer(
-	log: DurableStreamLog,
+	emitter: SemanticEmitter,
 	asker: EntityRef,
 	input: {
 		readonly from: EntityAddress;
@@ -227,7 +225,14 @@ export async function appendAnswer(
 	signal?: AbortSignal,
 ): Promise<{ readonly inbox: string; readonly eventId: string }> {
 	const inbox = inboxPath(asker);
-	await appendCreating(log, inbox, inputAnsweredEvent(input), signal);
+	await emitter.emitSemantic(
+		{
+			id: input.eventId,
+			stream: inbox,
+			event: inputAnsweredEvent(input),
+		},
+		{ signal, immediate: true },
+	);
 	return { inbox, eventId: input.eventId };
 }
 
@@ -238,15 +243,11 @@ export interface EntityQuestionHandlerOptions {
 	readonly log: DurableStreamLog;
 	/** The current render's `useQuestions()` settings. */
 	readonly settings: () => QuestionSettings | undefined;
-	/** Arm a wake at a question's deadline (the alarm). */
-	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	readonly now?: () => number;
 	readonly onReport?: (error: unknown) => void;
 	/** Semantic emitter for outbox-backed durable delivery. */
-	readonly emitter?: SemanticEmitter;
+	readonly emitter: SemanticEmitter;
 }
-
-const PUBLISH_ATTEMPTS = 3;
 
 /** The instance's question handler (see the module documentation). */
 export function createEntityQuestionHandler(options: EntityQuestionHandlerOptions): QuestionHandler {
@@ -275,38 +276,22 @@ export function createEntityQuestionHandler(options: EntityQuestionHandlerOption
 		const targets = [questionsPath(self)];
 		if (settings?.responder) targets.push(inboxPath(settings.responder));
 
-		if (options.emitter) {
-			try {
-				for (const path of targets) {
-					await options.emitter.emitSemantic(
-						{
-							id: `${event.eventId}:${path}`,
-							stream: path,
-							event,
-						},
-						{ signal, immediate: true },
-					);
-				}
-				return true;
-			} catch (error) {
-				report(error);
-				return false;
+		try {
+			for (const path of targets) {
+				await options.emitter.emitSemantic(
+					{
+						id: `${event.eventId}:${path}`,
+						stream: path,
+						event,
+					},
+					{ signal, immediate: true },
+				);
 			}
+			return true;
+		} catch (error) {
+			report(error);
+			return false;
 		}
-
-		let failure: unknown;
-		for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt++) {
-			try {
-				for (const path of targets) await appendCreating(options.log, path, event, signal);
-				return true;
-			} catch (error) {
-				failure = error;
-				if (signal?.aborted) break;
-			}
-		}
-		// Still parked and listed; the next run of the call publishes again.
-		report(failure);
-		return false;
 	}
 
 	return async (question, signal, call) => {
@@ -338,9 +323,6 @@ export function createEntityQuestionHandler(options: EntityQuestionHandlerOption
 				context.abortSignal,
 			);
 			if (published) await markPublished(api, question.id, context);
-		}
-		if (parked.timeoutAt !== undefined) {
-			await options.armWake(parked.timeoutAt, { kind: 'questions' });
 		}
 		let settled: SettledTask<QuestionTaskResult>;
 		try {

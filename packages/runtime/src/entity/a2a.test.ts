@@ -358,7 +358,7 @@ describe('doorbells and the alarm pump', () => {
 		});
 		// Reopen: Pi Durable replays the replay-safe tool call, which sends the same event again.
 		await alice.open();
-		await alice.requireHost().wake({ kind: 'live-tasks' }, context);
+		await alice.wake({ kind: 'live-tasks' }, context);
 		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
 			'completed',
 		);
@@ -544,26 +544,23 @@ describe('entity lifecycle', () => {
 			{ scheduleId: 'r1' },
 			context,
 		);
-		expect(alice.wakes).toContainEqual({
-			atMs: at,
-			reason: { kind: 'schedule', scheduleId: 'r1' },
-		});
-		await runtime.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
+		expect(await runtime.schedules.next(context)).toBe(at);
+		await alice.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
 		expect(
 			await alice.requireHost().settlement(scheduleSubmissionId('r1'), context),
 		).toBeUndefined();
 
 		await alice.close();
 		h.world.clock.now = at + 1;
-		const reopened = await alice.open();
-		await reopened.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
+		await alice.open();
+		await alice.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
 		expect(
 			(await alice.requireHost().waitForSettlement(scheduleSubmissionId('r1'), context)).outcome,
 		).toBe('completed');
 		const calls = alice.calls;
-		await reopened.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
+		await alice.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
 		await alice.close();
-		await (await alice.open()).wake({ kind: 'schedule', scheduleId: 'r1' }, context);
+		await alice.wake({ kind: 'schedule', scheduleId: 'r1' }, context);
 		await alice.requireHost().harness.waitForIdle(context);
 		expect(alice.calls).toBe(calls);
 	});
@@ -578,11 +575,11 @@ describe('entity lifecycle', () => {
 		await h.world.runAlarms();
 		const bob = h.world.entity(BOB);
 		const key = relayedScheduleKey(ALICE, 's1');
-		expect(bob.wakes).toContainEqual({ atMs: at, reason: { kind: 'schedule', scheduleId: key } });
+		expect(bob.wakes.some((w) => w.atMs === at)).toBe(true);
 		expect(bob.calls).toBe(0);
 		await bob.close();
 		h.world.clock.now = at;
-		await (await bob.open()).wake({ kind: 'schedule', scheduleId: key }, context);
+		await bob.wake({ kind: 'schedule', scheduleId: key }, context);
 		expect(
 			(await bob.requireHost().waitForSettlement(scheduleSubmissionId(key), context)).outcome,
 		).toBe('completed');

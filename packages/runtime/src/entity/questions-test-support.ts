@@ -48,6 +48,7 @@ import {
 } from './a2a-test-support.ts';
 import { inboxPath, questionsPath } from './paths.ts';
 import { appendAnswer, type InputRequestedEvent } from './questions.ts';
+import type { SemanticEmitter } from '../reactor/reactor.ts';
 import type { EntityRef } from './services.ts';
 
 const SEND_EMAIL_CODE = "await tools.send_email({ to: 'ops' }); return 'sent';";
@@ -353,8 +354,14 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 				second = await state.open(agent, ref, file);
 			}
 
+			const testEmitter: SemanticEmitter = {
+				async emitSemantic(entry, options) {
+					await state.log.append(entry.stream, [entry.event], options?.signal);
+				},
+			};
+
 			// A person answers through the inbox, like any participant.
-			await appendAnswer(state.log, ref, {
+			await appendAnswer(testEmitter, ref, {
 				from: { type: 'person', id: 'pat' },
 				questionId,
 				answer: { kind: 'codemode-approval', decision: 'approve' },
@@ -370,19 +377,19 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			expect(await second.pendingQuestions()).toEqual([]);
 
 			// Duplicate and late answers change nothing and are reported.
-			await appendAnswer(state.log, ref, {
+			await appendAnswer(testEmitter, ref, {
 				from: { type: 'person', id: 'pat' },
 				questionId,
 				answer: { kind: 'codemode-approval', decision: 'approve' },
 				eventId: 'answer-1',
 			});
-			await appendAnswer(state.log, ref, {
+			await appendAnswer(testEmitter, ref, {
 				from: { type: 'person', id: 'sam' },
 				questionId,
 				answer: { kind: 'codemode-approval', decision: 'reject' },
 				eventId: 'answer-2',
 			});
-			await appendAnswer(state.log, ref, {
+			await appendAnswer(testEmitter, ref, {
 				from: { type: 'person', id: 'sam' },
 				questionId: 'codemode:flue:nope:0',
 				answer: { kind: 'codemode-approval', decision: 'approve' },
@@ -456,7 +463,7 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 			expect(pending?.timeoutAt).toBe(askedAt + 60_000);
 			await eventually(() =>
 				state.wakes.some(
-					(wake) => wake.reason.kind === 'questions' && wake.atMs === askedAt + 60_000,
+					(wake) => wake.atMs === askedAt + 60_000,
 				),
 			);
 			// Early: nothing expires.

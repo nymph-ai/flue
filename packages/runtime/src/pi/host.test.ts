@@ -30,7 +30,7 @@ import { defineSkill } from '../skill-definition.ts';
 import { defineTool } from '../tool.ts';
 import type { AgentRuntimeConfig, SubagentDefinition } from '../types.ts';
 import { FlueReceiptIndex } from './docs.ts';
-import { createFluePiHost, type FlueAdmission, type FluePiHost, type WakeReason } from './host.ts';
+import { createFluePiHost, type FlueAdmission, type FluePiHost } from './host.ts';
 import { beginAdmission } from './receipts.ts';
 import { type RenderedAgent, renderedAgentFrom } from './registry-bridge.ts';
 
@@ -52,7 +52,6 @@ interface Fixture {
 	readonly faux: ReturnType<typeof fauxProvider>;
 	readonly storage: MemoryStorage;
 	readonly reports: unknown[];
-	readonly wakes: { atMs: number; reason: WakeReason }[];
 	open(render?: RenderedAgent): Promise<FluePiHost>;
 }
 
@@ -62,21 +61,16 @@ function fixture(): Fixture {
 	models.setProvider(faux.provider);
 	const storage = new MemoryStorage();
 	const reports: unknown[] = [];
-	const wakes: { atMs: number; reason: WakeReason }[] = [];
 	return {
 		faux,
 		storage,
 		reports,
-		wakes,
 		async open(render = agent()) {
 			const host = createFluePiHost({
 				entity,
 				models,
 				storage: async () => durable(storage),
 				onReport: (error) => reports.push(error),
-				armWake: async (atMs, reason) => {
-					wakes.push({ atMs, reason });
-				},
 			});
 			await host.open(context);
 			await host.applyRender(render, context);

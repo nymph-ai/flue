@@ -20,7 +20,6 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { FlueContextInternal } from '../client.ts';
 import { RuntimeUnavailableError } from '../errors.ts';
 import { createMcpConnectionCache, type McpConnectionCache } from '../mcp.ts';
-import type { WakeReason } from '../pi/host.ts';
 import { FlueAgentInstance } from '../runtime/agent-instance.ts';
 import {
 	type AttachedAgentSubmissionAdmission,
@@ -154,18 +153,14 @@ export function createNodeAgentCoordinator(options: {
 			agentName,
 			request: new Request('https://flue.invalid/_instance', { method: 'POST' }),
 		});
-		const armWake = (atMs: number, reason: WakeReason): void => {
+		const armWake = (atMs: number): void => {
 			if (stopping) return;
 			const timer = setTimeout(
 				() => {
 					timers.delete(timer);
 					if (stopping) return;
 					void created
-						.wake(reason)
-						.then(({ behind }) => {
-							// The pump left events behind: the next chunk, at once.
-							if (behind) armWake(Date.now(), { kind: 'pump' });
-						})
+						.wake()
 						.catch((error) => console.error('[flue:pi] wake failed', error));
 				},
 				Math.max(0, atMs - Date.now()),
@@ -183,7 +178,7 @@ export function createNodeAgentCoordinator(options: {
 				),
 			attachments: attachmentStore,
 			legacy: conversationStreamStore,
-			armWake: (atMs: number, reason: WakeReason) => armWake(atMs, reason),
+			armWake: (atMs: number) => armWake(atMs),
 			events,
 			mcp,
 			entities: { log },

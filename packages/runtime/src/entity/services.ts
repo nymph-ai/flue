@@ -111,7 +111,7 @@ export interface EntityLifecycleService {
 	): Promise<EntityRef & { readonly uid: string }>;
 	/**
 	 * Admit `message` to `target` at `atMs`. For this entity: the
-	 * `flue.schedules` doc plus `armWake`; for another: a relayed schedule
+	 * `flue.schedules` doc plus Reactor scheduling; for another: a relayed schedule
 	 * the target arms itself. Fires with `requestId = "sched:{scheduleId}"`.
 	 */
 	schedule(

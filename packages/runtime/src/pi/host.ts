@@ -6,7 +6,7 @@
  * submissions with receipts, lifecycle hooks onto generation hooks — and
  * never reaches past Pi's public API.
  *
- * Platform ports are injected (`storage`, `armWake`, the sandbox, MCP and
+ * Platform ports are injected (`storage`, the sandbox, MCP and
  * attachment ports), so nothing here is Electric- or Cloudflare-specific and
  * nothing imports `node:`. The coordinators are cut over to it in step 8.
  */
@@ -36,9 +36,7 @@ import { QUESTION_HANDLER, type QuestionHandler } from '../questions.ts';
 import { FlueReceipts, FlueSessions } from './docs.ts';
 import {
 	expireQuestions,
-	onlyParked,
 	parkedConversations,
-	parkedQuestionTasks,
 	QuestionTask,
 } from './questions.ts';
 import { executionEnvFromSandbox } from './execution-env.ts';
@@ -99,8 +97,6 @@ export interface FluePiHostOptions {
 	readonly env?: ExecutionEnv | (() => ExecutionEnv | undefined);
 	readonly now?: () => number;
 	readonly onReport: (error: unknown) => void;
-	/** Arm a wake at `atMs` (DO alarm / Node timer). */
-	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	/** Validate and parse creation data against the agent's `initialData` schema. */
 	readonly parseInitialData?: (initialData: unknown) => unknown;
 	/** Harness binding for `harness: true` tools, and progress loggers. */
@@ -382,21 +378,9 @@ class PiHost implements FluePiHost {
 	async wake(_reason: WakeReason, context: Context): Promise<void> {
 		const harness = this.harness;
 		await repairAdmissions(harness, context);
-		const deadline = await enforceTimeouts(harness, this.#now(), context);
-		const questionDeadline = await expireQuestions(harness, this.#now(), context);
+		await enforceTimeouts(harness, this.#now(), context);
+		await expireQuestions(harness, this.#now(), context);
 		harness.resume();
-		if (deadline !== undefined) await this.#options.armWake(deadline, { kind: 'live-tasks' });
-		if (questionDeadline !== undefined)
-			await this.#options.armWake(questionDeadline, { kind: 'questions' });
-		const inspection = await harness.inspect(context);
-		// Work that only waits on parked questions needs no backstop: the
-		// answer's doorbell, or the question's deadline, wakes the instance.
-		if (
-			inspection.tasks.length > 0 &&
-			!onlyParked(inspection.tasks, await parkedQuestionTasks(harness, context))
-		) {
-			await this.#options.armWake(this.#now() + LIVE_TASK_BACKSTOP_MS, { kind: 'live-tasks' });
-		}
 	}
 
 	get render(): RenderedAgent | undefined {

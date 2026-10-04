@@ -10,7 +10,7 @@
  * called, so the host may open later.
  */
 import { type Context, createFacetHost, type FacetHost } from '@earendil-works/chord';
-import type { FluePiHost, WakeReason } from '../pi/host.ts';
+import type { FluePiHost } from '../pi/host.ts';
 import type { DurableStreamLog } from '../streams/log.ts';
 import { createEntityFacet, type EntitySubscriptionPort } from './facet.ts';
 import { InboxConsumer } from './inbox.ts';
@@ -34,14 +34,12 @@ export interface EntityRuntimeOptions {
 	readonly host: FluePiHost;
 	readonly entity: EntityRef;
 	readonly log: DurableStreamLog;
-	/** Arm a wake at `atMs` (the DO alarm / a Node timer); the same port the host has. */
-	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	/** Electric subscription management for `observe({ wake: true })` (`subscriptions.ts`). */
 	readonly subscriptions?: EntitySubscriptionPort;
 	readonly now?: () => number;
 	readonly onReport?: (error: unknown) => void;
 	/** Semantic emitter for outbox-backed durable delivery. */
-	readonly emitter?: SemanticEmitter;
+	readonly emitter: SemanticEmitter;
 }
 
 export interface EntityRuntime {
@@ -54,11 +52,6 @@ export interface EntityRuntime {
 	readonly schedules: ScheduleBook;
 	readonly observations: ObservationBook;
 	readonly facets: FacetHost;
-	/**
-	 * The alarm/backstop entry point: fire due schedules, then `host.wake`
-	 * (admission repair, timeouts, resume, live-task backstop).
-	 */
-	wake(reason: WakeReason, context: Context): Promise<void>;
 	/** Republish `EntityObservation.cursors` from the Pi docs (after open). */
 	refreshCursors(context: Context): Promise<void>;
 	dispose(): Promise<void>;
@@ -74,13 +67,12 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 			entity,
 			log,
 			settings: () => host.render?.questions,
-			armWake: options.armWake,
 			now,
 			onReport,
 			emitter,
 		}),
 	);
-	const schedules = new ScheduleBook({ host, now, armWake: options.armWake, onReport });
+	const schedules = new ScheduleBook({ host, now, onReport });
 	const observations = new ObservationBook({ host, log, now });
 	const inbox = new InboxConsumer({
 		host,
@@ -117,10 +109,6 @@ export async function createEntityRuntime(options: EntityRuntimeOptions): Promis
 		schedules,
 		observations,
 		facets,
-		async wake(reason, context) {
-			await schedules.fireDue(context);
-			await host.wake(reason, context);
-		},
 		async refreshCursors(context) {
 			await cursorSink.refresh?.(context);
 		},

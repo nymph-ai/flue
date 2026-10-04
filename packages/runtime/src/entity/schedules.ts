@@ -1,13 +1,12 @@
 /**
  * Self-schedules (PI_UPGRADE_PLAN.md §2.5 "schedule"): a `flue.schedules`
  * doc per key plus the `flue.schedule-index` of armed ones, both canonical Pi
- * state, and an `armWake` at the earliest due time (the DO alarm, multiplexed
- * by the coordinator). A due schedule is admitted with
+ * state, and the Reactor calculation of the next wake at the earliest due time. A due schedule is admitted with
  * `submissionId = requestId = "sched:{key}"`, so firing twice — a crash
  * between admission and the `fired` mark, two overlapping wakes — admits once.
  */
 import type { Context, JsonValue } from '@earendil-works/chord';
-import type { FluePiHost, WakeReason } from '../pi/host.ts';
+import type { FluePiHost } from '../pi/host.ts';
 import { FlueSchedules } from '../pi/docs.ts';
 import type { DeliveredMessage } from '../types.ts';
 import { deliveredMessageJson, FlueScheduleIndex } from './docs.ts';
@@ -15,7 +14,6 @@ import { deliveredMessageJson, FlueScheduleIndex } from './docs.ts';
 export interface ScheduleBookOptions {
 	readonly host: FluePiHost;
 	readonly now: () => number;
-	readonly armWake: (atMs: number, reason: WakeReason) => Promise<void>;
 	readonly onReport: (error: unknown) => void;
 }
 
@@ -54,7 +52,6 @@ export class ScheduleBook {
 			index.armed[key] = atMs;
 			return true;
 		}, context);
-		if (armed) await this.#options.armWake(atMs, { kind: 'schedule', scheduleId: key });
 		return armed;
 	}
 
@@ -115,9 +112,6 @@ export class ScheduleBook {
 			}, context);
 			fired.push(key);
 		}
-		const next = await this.next(context);
-		if (next !== undefined)
-			await this.#options.armWake(next, { kind: 'schedule', scheduleId: 'next' });
 		return fired;
 	}
 

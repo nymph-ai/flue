@@ -57,6 +57,8 @@ import type { EntityRef } from './services.ts';
 import { EntityWakeBook } from './wake-book.ts';
 import type { EntityDoorbell } from './webhook-route.ts';
 import type { WebhookJwk } from './webhook.ts';
+import { FlueReactor } from '../reactor/reactor.ts';
+import { FlueReactorStore } from '../reactor/reactor-store.ts';
 
 export const context: Context = BACKGROUND_CONTEXT;
 
@@ -299,6 +301,7 @@ export class TestEntity {
 	file: string | undefined;
 	host: FluePiHost | undefined;
 	runtime: EntityRuntime | undefined;
+	reactor: FlueReactor | undefined;
 	storage: SqliteStorage | undefined;
 	database: KillableDatabase | undefined;
 	incarnation: Incarnation | undefined;
@@ -367,8 +370,8 @@ export class TestEntity {
 				return this.respond(request.messages);
 			}),
 		);
-		const armWake = async (atMs: number, reason: WakeReason) => {
-			this.wakes.push({ atMs, reason });
+		const armWake = async (atMs: number) => {
+			this.wakes.push({ atMs, reason: { kind: 'live-tasks' } });
 		};
 		const log = new KillableLog(this.world.log, () => incarnation);
 		const host = createFluePiHost({
@@ -380,13 +383,26 @@ export class TestEntity {
 			},
 			now: () => this.world.clock.now,
 			onReport: (error) => this.reports.push(error),
-			armWake,
 		});
+		const store = new FlueReactorStore(database);
+		const reactor = new FlueReactor({
+			entityRef: this.ref,
+			store,
+			host,
+			entity: () => this.runtime,
+			log,
+			armWake: (atMs) => {
+				this.wakes.push({ atMs, reason: { kind: 'live-tasks' } });
+			},
+			now: () => this.world.clock.now,
+			onReport: (error) => this.reports.push(error),
+		});
+		this.reactor = reactor;
 		const runtime = await createEntityRuntime({
 			host,
 			entity: this.ref,
 			log,
-			armWake,
+			emitter: reactor,
 			now: () => this.world.clock.now,
 			onReport: (error) => this.reports.push(error),
 			...(this.world.subscriptions ? { subscriptions: this.world.subscriptions } : {}),
@@ -406,6 +422,7 @@ export class TestEntity {
 		const host = this.host;
 		this.runtime = undefined;
 		this.host = undefined;
+		this.reactor = undefined;
 		this.storage = undefined;
 		this.database = undefined;
 		await runtime?.dispose();
@@ -424,6 +441,7 @@ export class TestEntity {
 		const host = this.host;
 		this.runtime = undefined;
 		this.host = undefined;
+		this.reactor = undefined;
 		this.storage = undefined;
 		this.database = undefined;
 		this.#opening = undefined;
@@ -455,26 +473,25 @@ export class TestEntity {
 	}
 
 	/**
-	 * The alarm: open if asleep, pump one bounded chunk, wake Pi, and re-arm
+	 * The alarm: open if asleep, tick reactor, and re-arm
 	 * while the pump left events behind. Returns the pump's result.
 	 */
 	async alarm(): Promise<PumpResult> {
 		this.alarmArmed = false;
-		const runtime = await this.open();
-		const database = this.database;
-		if (!database) throw new Error(`${entityKey(this.ref)} is not open`);
-		const book = new EntityWakeBook(database);
-		const result = await pumpEntity(runtime, book, context, {
-			...(this.world.pumpLimits ? { limits: this.world.pumpLimits } : {}),
-			now: () => this.world.clock.now,
-		});
-		this.pumps.push(result);
-		await runtime.wake({ kind: 'pump' }, context);
+		await this.open();
+		const result = await this.reactor!.tick({ reason: { kind: 'pump' }, context });
+		const pump = result.pump ?? { behind: false, answered: [], messages: 0 };
+		this.pumps.push(pump);
 		if (result.behind) {
 			this.alarmArmed = true;
 			if (this.world.autoAlarms) this.world.scheduleAlarm(this);
 		}
-		return result;
+		return pump;
+	}
+
+	async wake(reason: WakeReason = { kind: 'live-tasks' }, ctx: Context = context): Promise<void> {
+		await this.open();
+		await this.reactor!.tick({ reason, context: ctx });
 	}
 
 	requireHost(): FluePiHost {

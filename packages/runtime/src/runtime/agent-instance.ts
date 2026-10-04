@@ -43,9 +43,6 @@ import { EntityWakeBook } from '../entity/wake-book.ts';
 import { FlueReactor, type FlueReactorStore } from '../reactor/index.ts';
 import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
-import { appendCreating } from '../entity/append.ts';
-import { eventsPath } from '../entity/paths.ts';
-import { projectSettlementToElectricEvent } from '../mcp-server/events.ts';
 import type { AgentOperationService } from '../mcp-server/ports.ts';
 import type { CapabilityResult, McpInputRequest, Operation } from '../mcp-server/types.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
@@ -402,9 +399,6 @@ export class FlueAgentInstance implements AgentOperationService {
 			env: () => (this.#sandbox.current ? this.#envProxy : undefined),
 			now: this.#now,
 			onReport: (error) => this.#report(error),
-			armWake: async (atMs, reason) => {
-				await options.armWake(atMs, reason);
-			},
 			parseInitialData: (data) => parseCreationData(options.agent, data),
 			tools: toolDeps,
 			mcp: (connections) => this.#resolveMcp(connections, toolDeps),
@@ -457,9 +451,6 @@ export class FlueAgentInstance implements AgentOperationService {
 					entity: { type: this.agentName, id: this.instanceId },
 					log: options.entities.log,
 					emitter: this.#reactor,
-					armWake: async (atMs, reason) => {
-						await options.armWake(atMs, reason);
-					},
 					...(options.entities.subscriptions
 						? { subscriptions: options.entities.subscriptions }
 						: {}),
@@ -768,10 +759,8 @@ export class FlueAgentInstance implements AgentOperationService {
 			context,
 		);
 		telemetry.queued(input.submissionId, input.kind);
-		await host.wake({ kind: 'dispatch' }, context);
 		if (!this.#closed) {
-			await this.#reactor.reconcileSettlements(host).catch((err) => this.#report(err));
-			await this.#reactor.flushOutbox().catch((err) => this.#report(err));
+			await this.#reactor.tick({ reason: { kind: 'dispatch' }, context }).catch((err) => this.#report(err));
 		}
 		return { receipt, offset };
 	}
@@ -925,7 +914,7 @@ export class FlueAgentInstance implements AgentOperationService {
 		if (answer.kind !== expected) return { status: 'mismatched', expected };
 		const self = { type: this.agentName, id: this.instanceId };
 		const eventId = `answer:${options.answerId ?? crypto.randomUUID()}`;
-		const { inbox } = await appendAnswer(entities.log, self, {
+		const { inbox } = await appendAnswer(this.#reactor, self, {
 			from: options.from ?? { type: 'person', id: 'http' },
 			questionId,
 			answer,

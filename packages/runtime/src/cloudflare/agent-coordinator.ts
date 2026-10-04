@@ -221,11 +221,6 @@ class CloudflareAgentCoordinator {
 	readonly #options: CloudflareAgentRuntimeOptions;
 	#agentInstance: FlueAgentInstance | undefined;
 	#book: EntityWakeBook | undefined;
-	/**
-	 * While the alarm runs: the earliest time an arm asked for since it
-	 * started (`Infinity` for none), set once at its end.
-	 */
-	#driving: { rearmAt: number } | undefined;
 	/** Arms outside the alarm, one at a time: each reads the alarm before it writes. */
 	#arming: Promise<void> = Promise.resolve();
 	/** Live MCP connections of this instance; eviction is the teardown. */
@@ -327,16 +322,10 @@ class CloudflareAgentCoordinator {
 	}
 
 	/**
-	 * Arm a wake at `atMs`. While the alarm runs, the arm folds into the one
-	 * `setAlarm` at its end. Otherwise the alarm moves earlier, or stays: an
-	 * alarm already due at or before `atMs` serves this wake too, and costs
-	 * nothing.
+	 * Arm a wake at `atMs`. An alarm already due at or before `atMs` serves this
+	 * wake too, and costs nothing.
 	 */
 	#armWake(atMs: number): Promise<void> {
-		if (this.#driving) {
-			this.#driving.rearmAt = Math.min(this.#driving.rearmAt, atMs);
-			return Promise.resolve();
-		}
 		const alarms = this.#alarmStorage();
 		const arm = this.#arming.then(async () => {
 			const armed = await alarms.getAlarm();
@@ -352,29 +341,17 @@ class CloudflareAgentCoordinator {
 	}
 
 	/**
-	 * The alarm: one full wake — pump, schedules, deadlines, Pi — inside the
-	 * instance context, then one `setAlarm` for what it left: now while the
-	 * pump is still behind, else the earliest time an arm asked for. A new
-	 * instance with nothing to pump never opens Pi.
-	 *
-	 * Turns the wake admits run on after it returns; Pi's live-task backstop,
-	 * armed by this wake while they are live, resumes them if the object is
-	 * evicted or redeployed first.
+	 * The alarm: one full wake inside the instance context.
+	 * Reactor calculates the next wake and arms the single alarm.
 	 */
 	onAlarm(): Promise<void> {
 		return this.run(async () => {
 			if (!this.#behind() && !this.#hasPiState()) return;
-			const driving = { rearmAt: Number.POSITIVE_INFINITY };
-			this.#driving = driving;
-			let behind = false;
 			try {
-				behind = (await this.#core().wake({ kind: 'live-tasks' })).behind;
+				await this.#core().wake();
 			} finally {
-				this.#driving = undefined;
 				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
 			}
-			const next = behind ? Date.now() : driving.rearmAt;
-			if (next !== Number.POSITIVE_INFINITY) await this.#armWake(next);
 		});
 	}
 
@@ -395,14 +372,11 @@ class CloudflareAgentCoordinator {
 		) {
 			throw new InvalidRequestError({ reason: 'A doorbell needs { stream, head }.' });
 		}
-		const alarms = this.#alarmStorage();
-		// While the alarm runs, a ring folds into its end; the head is durable
-		// now, and a wake that dies is retried by the platform.
-		const armed = this.#driving ? 0 : await alarms.getAlarm();
-		const now = Date.now();
 		if (!this.#wakeBook().ring(doorbell.stream, doorbell.head)) return { recorded: true };
-		if (this.#driving) this.#driving.rearmAt = now;
-		else if (armed === null || armed > now) await alarms.setAlarm(now);
+		const now = Date.now();
+		const alarms = this.#alarmStorage();
+		const armed = await alarms.getAlarm();
+		if (armed === null || armed > now) await alarms.setAlarm(now);
 		return { recorded: true };
 	}
 

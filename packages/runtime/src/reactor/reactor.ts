@@ -291,10 +291,9 @@ export class FlueReactor implements SemanticEmitter {
 
 		// Step 2: Let Pi repair / resume
 		if (entity) {
-			await entity.wake(options?.reason ?? { kind: 'live-tasks' }, context);
-		} else {
-			await host.wake(options?.reason ?? { kind: 'live-tasks' }, context);
+			await entity.schedules.fireDue(context);
 		}
+		await host.wake(options?.reason ?? { kind: 'live-tasks' }, context);
 
 		// Step 3: Reconcile Pi settlements → semantic outbox
 		const settlementsReconciled = await this.reconcileSettlements(host, context);
