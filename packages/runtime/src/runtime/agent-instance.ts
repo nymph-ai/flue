@@ -306,7 +306,8 @@ export class FlueAgentInstance implements AgentOperationService {
 		}
 	}
 
-	async #retryUnprojectedSettlements(host: FluePiHost): Promise<void> {
+	async #retryUnprojectedSettlements(host: FluePiHost, reason: WakeReason): Promise<void> {
+		if (reason.kind !== 'live-tasks') return;
 		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
 
 		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
@@ -880,7 +881,9 @@ export class FlueAgentInstance implements AgentOperationService {
 		} else {
 			await opened.host.wake(reason, context);
 		}
-		await this.#retryUnprojectedSettlements(opened.host).catch((error) => this.#report(error));
+		await this.#retryUnprojectedSettlements(opened.host, reason).catch((error) =>
+			this.#report(error),
+		);
 		return { behind: pump?.behind ?? false, ...(pump ? { pump } : {}) };
 	}
 
