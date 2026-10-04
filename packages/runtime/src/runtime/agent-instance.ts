@@ -428,9 +428,23 @@ export class FlueAgentInstance implements AgentOperationService {
 					afterTools: async () => {
 						await this.#flushWrites((change) => host.harness.commit(change, context));
 						await this.#render(host, undefined, context);
+						const nextWake = await this.#reactor.calculateNextWake(context).catch((err) => {
+							this.#report(err);
+							return undefined;
+						});
+						if (nextWake !== undefined && Number.isFinite(nextWake)) {
+							await Promise.resolve(this.#options.armWake(nextWake, { kind: 'live-tasks' })).catch((err) => this.#report(err));
+						}
 					},
 					onYield: async () => {
 						await this.#flushWrites((change) => host.harness.commit(change, context));
+						const nextWake = await this.#reactor.calculateNextWake(context).catch((err) => {
+							this.#report(err);
+							return undefined;
+						});
+						if (nextWake !== undefined && Number.isFinite(nextWake)) {
+							await Promise.resolve(this.#options.armWake(nextWake, { kind: 'live-tasks' })).catch((err) => this.#report(err));
+						}
 						return undefined;
 					},
 				}),

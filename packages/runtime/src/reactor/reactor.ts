@@ -58,9 +58,9 @@ export interface SemanticEmitter {
 
 export interface FlueReactorOptions {
 	readonly entityRef: EntityRef;
-	readonly store: () => Promise<FlueReactorStore> | FlueReactorStore;
-	readonly host: () => Promise<FluePiHost> | FluePiHost;
-	readonly entity?: () => Promise<EntityRuntime | undefined> | EntityRuntime | undefined;
+	readonly store: (() => Promise<FlueReactorStore> | FlueReactorStore) | FlueReactorStore;
+	readonly host: (() => Promise<FluePiHost> | FluePiHost) | FluePiHost;
+	readonly entity?: (() => Promise<EntityRuntime | undefined> | EntityRuntime | undefined) | EntityRuntime;
 	readonly log?: DurableStreamLog;
 	readonly armWake: (atMs: number) => Promise<void> | void;
 	readonly now?: () => number;
@@ -134,6 +134,14 @@ export class FlueReactor implements SemanticEmitter {
 					throw error;
 				}
 			}
+		}
+
+		const nextWake = await this.calculateNextWake().catch((err) => {
+			this.#report(err);
+			return undefined;
+		});
+		if (nextWake !== undefined && Number.isFinite(nextWake)) {
+			await Promise.resolve(this.#options.armWake(nextWake)).catch((err) => this.#report(err));
 		}
 	}
 

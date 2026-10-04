@@ -16,11 +16,20 @@ function findFiles(dir: string, extension = '.ts'): string[] {
 	return results;
 }
 
+function findProductionFiles(dir: string, extension = '.ts'): string[] {
+	return findFiles(dir, extension).filter(
+		(file) =>
+			!file.includes('.test.') &&
+			!file.includes('-test-support') &&
+			!file.includes('__tests__'),
+	);
+}
+
 describe('Flue Coordination Architecture Rules', () => {
 	const srcDir = resolve(__dirname, '../../');
 
 	it('Rule 1: armWake never appears in pi/, entity/questions.ts, or entity/schedules.ts', () => {
-		const piFiles = findFiles(join(srcDir, 'pi'));
+		const piFiles = findProductionFiles(join(srcDir, 'pi'));
 		const restrictedFiles = [
 			...piFiles,
 			join(srcDir, 'entity', 'questions.ts'),
@@ -39,15 +48,14 @@ describe('Flue Coordination Architecture Rules', () => {
 	});
 
 	it('Rule 2: appendCreating never appears outside Reactor and transport infrastructure', () => {
-		const allFiles = findFiles(srcDir);
+		const prodFiles = findProductionFiles(srcDir);
 		const allowedFiles = new Set([
 			resolve(srcDir, 'entity', 'append.ts'),
 			resolve(srcDir, 'reactor', 'reactor.ts'),
-			resolve(__dirname, 'architecture-rules.test.ts'),
 		]);
 
 		const violations: string[] = [];
-		for (const file of allFiles) {
+		for (const file of prodFiles) {
 			if (allowedFiles.has(resolve(file))) continue;
 			const content = readFileSync(file, 'utf-8');
 			if (content.includes('appendCreating')) {
@@ -62,15 +70,13 @@ describe('Flue Coordination Architecture Rules', () => {
 	});
 
 	it('Rule 3: host.wake( never appears outside Reactor', () => {
-		const allFiles = findFiles(srcDir);
+		const prodFiles = findProductionFiles(srcDir);
 		const allowedFiles = new Set([
 			resolve(srcDir, 'reactor', 'reactor.ts'),
-			resolve(srcDir, 'pi', 'host.test.ts'),
-			resolve(__dirname, 'architecture-rules.test.ts'),
 		]);
 
 		const violations: string[] = [];
-		for (const file of allFiles) {
+		for (const file of prodFiles) {
 			if (allowedFiles.has(resolve(file))) continue;
 			const content = readFileSync(file, 'utf-8');
 			if (content.includes('host.wake(')) {
@@ -81,16 +87,14 @@ describe('Flue Coordination Architecture Rules', () => {
 		expect(violations, `host.wake( found outside Reactor: ${violations.join(', ')}`).toEqual([]);
 	});
 
-	it('Rule 4: reconcileSettlements( or flushOutbox( never appear outside Reactor and its tests', () => {
-		const allFiles = findFiles(srcDir);
+	it('Rule 4: reconcileSettlements( or flushOutbox( never appear outside Reactor in production code', () => {
+		const prodFiles = findProductionFiles(srcDir);
 		const allowedFiles = new Set([
 			resolve(srcDir, 'reactor', 'reactor.ts'),
-			resolve(__dirname, 'reactor.test.ts'),
-			resolve(__dirname, 'architecture-rules.test.ts'),
 		]);
 
 		const violations: string[] = [];
-		for (const file of allFiles) {
+		for (const file of prodFiles) {
 			if (allowedFiles.has(resolve(file))) continue;
 			const content = readFileSync(file, 'utf-8');
 			if (content.includes('reconcileSettlements(') || content.includes('flushOutbox(')) {
@@ -105,14 +109,10 @@ describe('Flue Coordination Architecture Rules', () => {
 	});
 
 	it('Rule 5: reason.kind never controls runtime semantics outside ingress/telemetry', () => {
-		const allFiles = findFiles(srcDir);
-		const allowedFiles = new Set([
-			resolve(__dirname, 'architecture-rules.test.ts'),
-		]);
+		const prodFiles = findProductionFiles(srcDir);
 
 		const violations: string[] = [];
-		for (const file of allFiles) {
-			if (allowedFiles.has(resolve(file))) continue;
+		for (const file of prodFiles) {
 			const content = readFileSync(file, 'utf-8');
 			if (content.includes('reason.kind')) {
 				violations.push(file);

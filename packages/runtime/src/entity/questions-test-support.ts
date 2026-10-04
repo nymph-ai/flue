@@ -48,6 +48,7 @@ import {
 } from './a2a-test-support.ts';
 import { inboxPath, questionsPath } from './paths.ts';
 import { appendAnswer, type InputRequestedEvent } from './questions.ts';
+import { appendCreating } from './append.ts';
 import type { SemanticEmitter } from '../reactor/reactor.ts';
 import type { EntityRef } from './services.ts';
 
@@ -356,7 +357,7 @@ export function defineQuestionScenarios(label: string, factory: QuestionLogFacto
 
 			const testEmitter: SemanticEmitter = {
 				async emitSemantic(entry, options) {
-					await state.log.append(entry.stream, [entry.event], options?.signal);
+					await appendCreating(state.log, entry.stream, entry.event, options?.signal);
 				},
 			};
 

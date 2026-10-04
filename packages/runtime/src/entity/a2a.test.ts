@@ -358,7 +358,7 @@ describe('doorbells and the alarm pump', () => {
 		});
 		// Reopen: Pi Durable replays the replay-safe tool call, which sends the same event again.
 		await alice.open();
-		await alice.wake({ kind: 'live-tasks' }, context);
+		await alice.requireHost().wake({ kind: 'live-tasks' }, context);
 		expect((await alice.requireHost().waitForSettlement('sub_ask', context)).outcome).toBe(
 			'completed',
 		);
