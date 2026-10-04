@@ -26,10 +26,8 @@ const SCHEMA = [
 		cursor TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS flue_settlement_projections (
-		submission_id TEXT PRIMARY KEY,
-		state TEXT NOT NULL DEFAULT 'published'
+		submission_id TEXT PRIMARY KEY
 	)`,
-	`CREATE INDEX IF NOT EXISTS idx_flue_settlement_projections_pending ON flue_settlement_projections (submission_id) WHERE state = 'pending'`,
 ];
 
 export interface WakeStreamState {

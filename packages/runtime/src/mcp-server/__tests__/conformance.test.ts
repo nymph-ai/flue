@@ -2425,5 +2425,51 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			expect(msg?.id).toBe('task-settled:task-A');
 			expect(msg?.name).toBe('task.completed');
 		});
+
+		it('EntityWakeBook: migrates old one-column schema, preserves published state, creates partial index, and supports pending APIs', async () => {
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { EntityWakeBook } = await import('../../entity/wake-book.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
+
+			// 1. Explicitly construct the old one-column schema from previous release
+			database.prepare(`CREATE TABLE entity_wake_book (
+				stream TEXT PRIMARY KEY,
+				cursor TEXT NOT NULL
+			)`).run();
+			database.prepare(`CREATE TABLE flue_settlement_projections (
+				submission_id TEXT PRIMARY KEY
+			)`).run();
+
+			// 2. Insert an old settled submission row
+			database.prepare(`INSERT INTO flue_settlement_projections (submission_id) VALUES (?)`).run('old-task-1');
+
+			// 3. Instantiate EntityWakeBook (triggers #ensure migration)
+			const book = new EntityWakeBook(database);
+
+			// 4. Assert old published rows have state='published'
+			expect(book.isSettlementPublished('old-task-1')).toBe(true);
+			const rawRow = database
+				.prepare('SELECT submission_id, state FROM flue_settlement_projections WHERE submission_id = ?')
+				.get<{ submission_id: string; state: string }>('old-task-1');
+			expect(rawRow?.state).toBe('published');
+
+			// 5. Assert partial index creation succeeded
+			const indexRow = database
+				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_flue_settlement_projections_pending'")
+				.get<{ name: string; sql: string }>();
+			expect(indexRow).toBeDefined();
+			expect(indexRow?.name).toBe('idx_flue_settlement_projections_pending');
+			expect(indexRow?.sql).toContain("WHERE state = 'pending'");
+
+			// 6. Assert pending APIs work on the migrated table
+			book.recordSettlementPending('new-pending-task');
+			expect(book.isSettlementPublished('new-pending-task')).toBe(false);
+			expect(book.pendingSettlementIds()).toEqual(['new-pending-task']);
+
+			book.markSettlementPublished('new-pending-task');
+			expect(book.isSettlementPublished('new-pending-task')).toBe(true);
+			expect(book.pendingSettlementIds()).toEqual([]);
+		});
 	});
 });
