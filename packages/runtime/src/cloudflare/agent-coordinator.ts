@@ -55,6 +55,7 @@ import {
 	SubmissionConflictError,
 } from '../errors.ts';
 import { createMcpConnectionCache } from '../mcp.ts';
+import type { Operation } from '../mcp-server/types.ts';
 import { FlueAgentInstance } from '../runtime/agent-instance.ts';
 import {
 	type AttachedAgentSubmissionOptions,
@@ -148,6 +149,21 @@ export interface CloudflareAgentRuntime {
 		instance: CloudflareAgentInstance,
 		doorbell: EntityDoorbell,
 	): Promise<{ readonly recorded: true }>;
+	submitTask(
+		instance: CloudflareAgentInstance,
+		params: { capabilityId: string; payload?: Record<string, unknown>; correlationId?: string },
+	): Promise<{ taskId: string; state: Operation['state'] }>;
+	getTask(instance: CloudflareAgentInstance, taskId: string): Promise<Operation | undefined>;
+	cancelTask(instance: CloudflareAgentInstance, taskId: string, reason?: string): Promise<boolean>;
+	respondTask(
+		instance: CloudflareAgentInstance,
+		taskId: string,
+		response: { inputId?: string; input: unknown },
+	): Promise<Operation>;
+	listTasks(
+		instance: CloudflareAgentInstance,
+		filter?: { state?: Operation['state'] },
+	): Promise<Operation[]>;
 }
 
 export function createCloudflareAgentRuntime(
@@ -184,6 +200,12 @@ export function createCloudflareAgentRuntime(
 		onRequest: (instance, request) => coordinatorOf(instance).onRequest(request),
 		onAlarm: (instance) => coordinatorOf(instance).onAlarm(),
 		wake: (instance, doorbell) => coordinatorOf(instance).doorbell(doorbell),
+		submitTask: (instance, params) => coordinatorOf(instance).submitTask(params),
+		getTask: (instance, taskId) => coordinatorOf(instance).getTask(taskId),
+		cancelTask: (instance, taskId, reason) => coordinatorOf(instance).cancelTask(taskId, reason),
+		respondTask: (instance, taskId, response) =>
+			coordinatorOf(instance).respondTask(taskId, response),
+		listTasks: (instance, filter) => coordinatorOf(instance).listTasks(filter),
 	};
 }
 
@@ -531,6 +553,63 @@ class CloudflareAgentCoordinator {
 			}
 			throw error;
 		}
+	}
+
+	submitTask(params: {
+		capabilityId: string;
+		payload?: Record<string, unknown>;
+		correlationId?: string;
+	}): Promise<{ taskId: string; state: Operation['state'] }> {
+		return this.run(async () => {
+			try {
+				return await this.#core().submitTask(params);
+			} finally {
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+			}
+		});
+	}
+
+	getTask(taskId: string): Promise<Operation | undefined> {
+		return this.run(async () => {
+			try {
+				return await this.#core().getTask(taskId);
+			} finally {
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+			}
+		});
+	}
+
+	cancelTask(taskId: string, reason?: string): Promise<boolean> {
+		return this.run(async () => {
+			try {
+				return await this.#core().cancelTask(taskId, reason);
+			} finally {
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+			}
+		});
+	}
+
+	respondTask(
+		taskId: string,
+		response: { inputId?: string; input: unknown },
+	): Promise<Operation> {
+		return this.run(async () => {
+			try {
+				return await this.#core().respondTask(taskId, response);
+			} finally {
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+			}
+		});
+	}
+
+	listTasks(filter?: { state?: Operation['state'] }): Promise<Operation[]> {
+		return this.run(async () => {
+			try {
+				return await this.#core().listTasks(filter);
+			} finally {
+				this.#instance.ctx.waitUntil?.(drainGlobalEventDeliveries());
+			}
+		});
 	}
 }
 

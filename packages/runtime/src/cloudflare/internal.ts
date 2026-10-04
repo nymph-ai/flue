@@ -25,6 +25,11 @@ export {
 	MCP_AUTH_CLASS_NAME,
 } from './mcp-auth.ts';
 export { installDefaultCloudflareTracing } from './tracing/index.ts';
+export {
+	createFlueMcpSubscriptionClass,
+	type CreateFlueMcpSubscriptionClassOptions,
+	type McpSubscriptionStub,
+} from './mcp-subscription.ts';
 export type {
 	CloudflareAgentIdentity,
 	CloudflareWorkerConfig,

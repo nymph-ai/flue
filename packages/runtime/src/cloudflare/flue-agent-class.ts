@@ -126,6 +126,47 @@ export function createFlueAgentClass(options: CreateFlueAgentClassOptions): Exte
 				return runtime.wake(this as unknown as CloudflareAgentInstance, doorbell);
 			});
 		}
+
+		submitTask(params: Parameters<CloudflareAgentRuntime['submitTask']>[1]) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.submitTask(this as unknown as CloudflareAgentInstance, params);
+			});
+		}
+
+		getTask(taskId: Parameters<CloudflareAgentRuntime['getTask']>[1]) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.getTask(this as unknown as CloudflareAgentInstance, taskId);
+			});
+		}
+
+		cancelTask(
+			taskId: Parameters<CloudflareAgentRuntime['cancelTask']>[1],
+			reason?: Parameters<CloudflareAgentRuntime['cancelTask']>[2],
+		) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.cancelTask(this as unknown as CloudflareAgentInstance, taskId, reason);
+			});
+		}
+
+		respondTask(
+			taskId: Parameters<CloudflareAgentRuntime['respondTask']>[1],
+			response: Parameters<CloudflareAgentRuntime['respondTask']>[2],
+		) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.respondTask(this as unknown as CloudflareAgentInstance, taskId, response);
+			});
+		}
+
+		listTasks(filter?: Parameters<CloudflareAgentRuntime['listTasks']>[1]) {
+			return runtime.run(this as unknown as CloudflareAgentInstance, async () => {
+				await this.lifecycle.start();
+				return runtime.listTasks(this as unknown as CloudflareAgentInstance, filter);
+			});
+		}
 	}
 
 	// The codegen named each class `Flue<PascalCase>Agent`; preserve that for

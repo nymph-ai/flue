@@ -11,7 +11,7 @@
 
 import { type DurableStreamLog, DurableStreamLogError } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
-import { asStreamOffset, STREAM_START } from '../streams/offset.ts';
+import { asStreamOffset, compareOffsets, STREAM_START } from '../streams/offset.ts';
 import type {
 	DurableObjectStateLike,
 	EventPort,
@@ -238,6 +238,7 @@ export function projectSettlementToElectricEvent(settlement: {
 	error?: unknown;
 	summary?: string;
 	correlationId?: string;
+	artifactRefs?: string[];
 }): { name: string; data: Record<string, unknown> } {
 	const statusMap = {
 		completed: 'task.completed',
@@ -254,7 +255,8 @@ export function projectSettlementToElectricEvent(settlement: {
 			taskId: settlement.submissionId,
 			status,
 			summary: settlement.summary,
-			result: settlement.result,
+			resultRef: `job://${settlement.submissionId}`,
+			artifactRefs: settlement.artifactRefs ?? [],
 			error: settlement.error,
 			correlationId: settlement.correlationId,
 		},
@@ -276,7 +278,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	private readonly subscriptions = new Map<string, EventSubscription>();
 	private readonly deliveryLogs: WebhookDeliveryRecord[] = [];
 	private readonly auditLogs: AuditLogEntry[] = [];
-	private readonly knownStreams = new Set<string>();
+	private readonly inMemoryStreams = new Set<string>();
 
 	private readonly sql?: SqlStorageLike;
 	private readonly ctx?: DurableObjectStateLike;
@@ -308,6 +310,13 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	private initSchema(): void {
 		if (!this.sql) return;
 		try {
+			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_streams (
+				stream_id TEXT PRIMARY KEY,
+				updated_at TEXT NOT NULL
+			)`);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_mcp_streams_updated_at ON mcp_streams(updated_at)`,
+			);
 			this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_audit_logs (
 				id TEXT PRIMARY KEY,
 				category TEXT NOT NULL,
@@ -345,6 +354,23 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			);
 		} catch (error) {
 			console.error('[flue:events] Failed to initialize SQLite schema', error);
+		}
+	}
+
+	private recordStream(streamId: string): void {
+		if (this.sql) {
+			try {
+				this.sql.exec(
+					`INSERT INTO mcp_streams (stream_id, updated_at) VALUES (?, ?)
+					 ON CONFLICT(stream_id) DO UPDATE SET updated_at = excluded.updated_at`,
+					streamId,
+					new Date().toISOString(),
+				);
+			} catch (e) {
+				console.error('[flue:events] Failed to record stream in SQLite:', e);
+			}
+		} else {
+			this.inMemoryStreams.add(streamId);
 		}
 	}
 
@@ -427,7 +453,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		data: unknown,
 		customCursor?: string,
 	): Promise<ElectricEvent> {
-		this.knownStreams.add(streamId);
+		this.recordStream(streamId);
 		const eventId = `evt_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const timestamp = new Date().toISOString();
 
@@ -486,6 +512,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			while (hasMore) {
 				const batch = await this.streamLog.read(streamId, cursor);
 				if (batch.messages.length === 0) break;
+				let batchSuccess = true;
 				for (const msg of batch.messages) {
 					if (!msg || typeof msg !== 'object') continue;
 					const m = msg as Record<string, unknown>;
@@ -508,13 +535,24 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 					if (sub.filter?.taskId && taskId !== sub.filter.taskId) continue;
 					if (sub.filter?.correlationId && correlationId !== sub.filter.correlationId) continue;
 
-					await this.deliverEvent(sub, evt);
+					const delivered = await this.deliverEvent(sub, evt);
+					if (!delivered) {
+						batchSuccess = false;
+						break;
+					}
 				}
+
+				if (!batchSuccess) {
+					// Failed webhook delivery does not advance the subscription cursor (at-least-once delivery;
+					// advance cursor only when batch delivery succeeds). Halt draining until retry/doorbell.
+					break;
+				}
+
 				cursor = batch.nextOffset;
 				sub.cursor = cursor;
 				this.saveSubscription(sub);
 
-				if (headCursor && cursor >= asStreamOffset(headCursor)) {
+				if (headCursor && compareOffsets(cursor, asStreamOffset(headCursor)) >= 0) {
 					hasMore = false;
 				} else if (batch.messages.length < 50) {
 					hasMore = false;
@@ -530,8 +568,9 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	/**
 	 * Deliver an event to a specific subscription with Standard Webhooks signing.
 	 * Projects protocol-neutral domain events (e.g. task.completed, task.failed) to MCP task_changed.
+	 * Returns true if delivery succeeded (HTTP 2xx), false otherwise.
 	 */
-	async deliverEvent(sub: EventSubscription, event: ElectricEvent): Promise<void> {
+	async deliverEvent(sub: EventSubscription, event: ElectricEvent): Promise<boolean> {
 		const cursor = event.cursor;
 		const timestampSeconds = Math.floor(Date.now() / 1000).toString();
 
@@ -671,6 +710,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				statusCode,
 				success: isSuccess,
 			});
+			return isSuccess;
 		} catch (err: unknown) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			const record: WebhookDeliveryRecord = {
@@ -714,6 +754,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				deliveryId,
 				error: errorMsg,
 			});
+			return false;
 		}
 	}
 
@@ -726,7 +767,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 		limit = 50,
 	): Promise<{ events: ElectricEvent[]; nextCursor: string | null; headCursor: string | null }> {
 		try {
-			this.knownStreams.add(streamId);
+			this.recordStream(streamId);
 			const fromOffset = afterCursor ? asStreamOffset(afterCursor) : STREAM_START;
 			const batch = await this.streamLog.read(streamId, fromOffset);
 			const head = await this.streamLog.head(streamId);
@@ -772,7 +813,17 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	 * List active stream IDs.
 	 */
 	listStreams(): string[] {
-		return Array.from(this.knownStreams).sort();
+		if (this.sql) {
+			try {
+				const rows = this.sql
+					.exec(`SELECT stream_id FROM mcp_streams ORDER BY stream_id ASC`)
+					.toArray();
+				return rows.map((r) => String(r.stream_id));
+			} catch {
+				return [];
+			}
+		}
+		return Array.from(this.inMemoryStreams).sort();
 	}
 
 	// --------------------------------------------------------------------------
@@ -835,6 +886,9 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	}
 
 	saveSubscription(sub: EventSubscription): void {
+		if (sub.streamId) {
+			this.recordStream(sub.streamId);
+		}
 		if (this.sql) {
 			try {
 				this.sql.exec(
@@ -867,7 +921,7 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			return;
 		}
 		const replay = async () => {
-			const streamIds = sub.streamId ? [sub.streamId] : Array.from(this.knownStreams);
+			const streamIds = sub.streamId ? [sub.streamId] : this.listStreams();
 			const fromOffset = cursor ? asStreamOffset(cursor) : STREAM_START;
 
 			for (const streamId of streamIds) {

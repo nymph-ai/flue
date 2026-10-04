@@ -50,6 +50,8 @@ export interface EntityWakeRouteOptions {
 	readonly keys: WebhookKeyResolver;
 	/** Ring one entity's doorbell: `stub(idFromName(entity)).__flueWake({ stream, head })`. */
 	readonly wake: (entity: EntityRef, doorbell: EntityDoorbell) => Promise<unknown>;
+	/** Ring MCP subscription doorbell: `stub.__mcpWake({ stream, head })`. */
+	readonly mcpWake?: (doorbell: EntityDoorbell) => Promise<unknown>;
 	/** For callback acks. */
 	readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 	readonly now?: () => number;
@@ -109,11 +111,19 @@ export function createEntityWakeRoute(options: EntityWakeRouteOptions): Hono {
 		const { notice } = received;
 		const { targets } = routeWakeNotice(notice);
 
-		const settled = await Promise.allSettled(
-			targets.flatMap((target) =>
-				target.doorbells.map((doorbell) => options.wake(target.entity, doorbell)),
-			),
+		const wakePromises: Promise<unknown>[] = targets.flatMap((target) =>
+			target.doorbells.map((doorbell) => options.wake(target.entity, doorbell)),
 		);
+
+		if (options.mcpWake) {
+			for (const stream of notice.streams) {
+				if (!stream.pending) continue;
+				const path = logPathFromWire(stream.path);
+				wakePromises.push(options.mcpWake({ stream: path, head: stream.tailOffset }));
+			}
+		}
+
+		const settled = await Promise.allSettled(wakePromises);
 		const failed = settled.filter((result) => result.status === 'rejected');
 		if (failed.length > 0) {
 			for (const failure of failed) report((failure as PromiseRejectedResult).reason);

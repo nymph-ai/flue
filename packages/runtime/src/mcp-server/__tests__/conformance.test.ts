@@ -21,6 +21,8 @@ import { McpCapabilityProjection } from '../projection.ts';
 import { createMcpCapabilityRouter } from '../router.ts';
 import type { CapabilityResult, Operation } from '../types.ts';
 import { MCP_2026_07_28 } from '../types.ts';
+import { createEntityWakeRoute } from '../../entity/webhook-route.ts';
+import { createFlueMcpSubscriptionClass } from '../../cloudflare/mcp-subscription.ts';
 
 // -----------------------------------------------------------------------------
 // Test Fixture Setup
@@ -1573,15 +1575,18 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 		});
 
 		it('projectSettlementToElectricEvent correctly maps runtime settlement outcomes to domain events', () => {
-			// Completed
+			// Completed with reference-only resultRef and artifactRefs
 			const c = projectSettlementToElectricEvent({
 				submissionId: 'sub-1',
 				outcome: 'completed',
 				result: { done: true },
+				artifactRefs: ['file:///artifact/1'],
 			});
 			expect(c.name).toBe('task.completed');
 			expect(c.data.status).toBe('completed');
 			expect(c.data.taskId).toBe('sub-1');
+			expect(c.data.resultRef).toBe('job://sub-1');
+			expect(c.data.artifactRefs).toEqual(['file:///artifact/1']);
 
 			// Failed
 			const f = projectSettlementToElectricEvent({
@@ -1592,6 +1597,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			expect(f.name).toBe('task.failed');
 			expect(f.data.status).toBe('failed');
 			expect(f.data.error).toBe('Timeout');
+			expect(f.data.resultRef).toBe('job://sub-2');
 
 			// Aborted -> task.cancelled
 			const a = projectSettlementToElectricEvent({
@@ -1600,6 +1606,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			});
 			expect(a.name).toBe('task.cancelled');
 			expect(a.data.status).toBe('cancelled');
+			expect(a.data.resultRef).toBe('job://sub-3');
 		});
 
 		it('Production hardening: ElectricEventPort requires streamLog unless allowInMemoryFallback or in test', () => {
@@ -1647,6 +1654,118 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				process.env.NODE_ENV = origEnv;
 				if (origVitest !== undefined) process.env.VITEST = origVitest;
 			}
+		});
+
+		it('At-least-once delivery: drainSubscriptions does NOT advance cursor when webhook delivery fails', async () => {
+			const streamLog = new InMemoryDurableStreamLog();
+			const port = new ElectricEventPort({
+				streamLog,
+				allowInMemoryFallback: true,
+			});
+
+			const originalFetch = globalThis.fetch;
+			let failDelivery = true;
+			try {
+				globalThis.fetch = vi.fn().mockImplementation(async () => {
+					if (failDelivery) {
+						return new Response('Internal Error', { status: 500 });
+					}
+					return new Response('OK', { status: 200 });
+				}) as any;
+
+				const { subscription } = await port.subscribe({
+					callbackUrl: 'https://webhook.test/callback',
+					streamId: 'pipeline-atleastonce',
+					skipVerification: true,
+				});
+
+				const evt = await port.appendEvent('pipeline-atleastonce', 'task.completed', {
+					taskId: 'task-42',
+				});
+
+				// Delivery fails (500)
+				await port.drainSubscriptions('pipeline-atleastonce');
+				const subAfterFail = (await port.getSubscription?.(subscription.id)) ?? subscription;
+				// Cursor must NOT advance past failed delivery!
+				expect(subAfterFail.cursor).toBeUndefined();
+
+				// Now delivery succeeds (200)
+				failDelivery = false;
+				await port.drainSubscriptions('pipeline-atleastonce');
+				const subAfterSuccess = (await port.getSubscription?.(subscription.id)) ?? subscription;
+				expect(subAfterSuccess.cursor).toBe(evt.cursor);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('Stream discovery without ephemeral Set: ElectricEventPort persists streams into SQLite', async () => {
+			const streamLog = new InMemoryDurableStreamLog();
+			const streamRows = new Map<string, { stream_id: string; updated_at: string }>();
+			const mockSql = {
+				exec: (query: string, ...bindings: unknown[]) => {
+					if (query.includes('INSERT INTO mcp_streams')) {
+						const streamId = String(bindings[0]);
+						const updatedAt = String(bindings[1]);
+						streamRows.set(streamId, { stream_id: streamId, updated_at: updatedAt });
+					}
+					if (query.includes('SELECT stream_id FROM mcp_streams')) {
+						return {
+							toArray: () => Array.from(streamRows.values()),
+						};
+					}
+					return { toArray: () => [] };
+				},
+			};
+
+			const port1 = new ElectricEventPort({
+				sql: mockSql as any,
+				streamLog,
+			});
+
+			await port1.appendEvent('persistent_stream_1', 'item.created', { id: 1 });
+			expect(port1.listStreams()).toContain('persistent_stream_1');
+
+			// Second port instance over the same SQLite storage (simulating new isolate eviction)
+			const port2 = new ElectricEventPort({
+				sql: mockSql as any,
+				streamLog,
+			});
+
+			// Must discover persistent_stream_1 from SQLite without relying on in-memory Set
+			const streams = port2.listStreams();
+			expect(streams).toContain('persistent_stream_1');
+		});
+
+		it('MCP Doorbell Wake: createEntityWakeRoute dispatches doorbells to mcpWake', async () => {
+			const { routeWakeNotice } = await import('../../entity/webhook-route.ts');
+			const notice = {
+				subscriptionId: 'sub-test',
+				generation: 1,
+				streams: [
+					{ path: 'flue/v1/agent/instance/inbox', tailOffset: '10', pending: true },
+					{ path: 'flue/v1/mcp/events/custom', tailOffset: '20', pending: true },
+				],
+			};
+			const routed = routeWakeNotice(notice as any);
+			expect(routed.unowned).toContain('flue/v1/mcp/events/custom');
+		});
+
+		it('FlueMcpSubscription DO: __mcpWake pumps subscriptions via processDoorbell', async () => {
+			const streamLog = new InMemoryDurableStreamLog();
+			class MockDO {
+				constructor(public ctx: any, public env: any) {}
+			}
+			const SubDOClass = createFlueMcpSubscriptionClass({
+				DurableObject: MockDO as any,
+				streamLog,
+			});
+
+			const subDO = new SubDOClass({ storage: {} } as any, {});
+			expect(subDO.__mcpWake).toBeDefined();
+
+			const res = await subDO.__mcpWake({ stream: 'test-stream', head: '0000000000000001_0000000000000001' });
+			expect(res.recorded).toBe(true);
 		});
 	});
 });

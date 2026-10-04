@@ -59,6 +59,12 @@ export interface CreateCloudflareWorkerConfigOptions {
 		binding: unknown,
 		instanceId: string,
 	) => Promise<{ __flueWake(doorbell: EntityDoorbell): Promise<unknown> }>;
+	/**
+	 * MCP Subscription DO stub, for the `__mcpWake` doorbell RPC.
+	 */
+	mcpStub?: () => Promise<{ __mcpWake(doorbell: EntityDoorbell): Promise<unknown> }>;
+	/** Direct MCP doorbell wake handler. */
+	mcpWake?: (doorbell: EntityDoorbell) => Promise<unknown>;
 }
 
 /** The Cloudflare-target seams the generated entry passes to `configureFlueRuntime`. */
@@ -182,6 +188,14 @@ export function createCloudflareWorkerConfig(
 				if (!binding) throw new Error(`[flue] Entity wake for unknown agent "${entity.type}".`);
 				return (await agentStub(binding, entity.id)).__flueWake(doorbell);
 			},
+			mcpWake: options.mcpWake
+				? options.mcpWake
+				: options.mcpStub
+					? async (doorbell) => {
+							const stub = await options.mcpStub!();
+							return stub.__mcpWake(doorbell);
+						}
+					: undefined,
 			...(streams.fetch
 				? {
 						fetch: (input: string, init?: RequestInit) =>

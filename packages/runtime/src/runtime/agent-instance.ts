@@ -41,8 +41,13 @@ import { type PumpLimits, type PumpResult, pumpEntity } from '../entity/pump.ts'
 import { EntityWakeBook } from '../entity/wake-book.ts';
 import { importLegacyConversation } from '../legacy/import.ts';
 import type { McpConnectionDefinition, McpConnectionResolver } from '../mcp.ts';
+import { appendCreating } from '../entity/append.ts';
+import { eventsPath } from '../entity/paths.ts';
+import { projectSettlementToElectricEvent } from '../mcp-server/events.ts';
+import type { AgentOperationService } from '../mcp-server/ports.ts';
+import type { CapabilityResult, Operation } from '../mcp-server/types.ts';
 import { createAgentOutputChannel } from '../message-output.ts';
-import { FlueInstance, FlueState } from '../pi/docs.ts';
+import { FlueInstance, FlueReceiptIndex, FlueReceipts, FlueState } from '../pi/docs.ts';
 import {
 	listPendingQuestions,
 	onlyParked,
@@ -80,6 +85,7 @@ import type {
 	SandboxFactory,
 } from '../types.ts';
 import { parseCreationData, submissionLimits } from './agent-submissions.ts';
+import { deriveKeyedSubmissionId, generateSubmissionId } from './ids.ts';
 import { type AttachmentStore, createAttachmentRef } from './attachment-store.ts';
 import type { ConversationProjectionSource } from './conversation-source.ts';
 import type { ConversationStreamStore } from './conversation-stream-store.ts';
@@ -155,7 +161,7 @@ interface PendingWrites {
 	data: { name: string; data: unknown }[];
 }
 
-export class FlueAgentInstance {
+export class FlueAgentInstance implements AgentOperationService {
 	readonly agentName: string;
 	readonly instanceId: string;
 	/** The public conversation, served from the cache over Pi storage. */
@@ -245,6 +251,19 @@ export class FlueAgentInstance {
 			this.#options.events.emitEvent(event, observation);
 		} catch {
 			// Event delivery never breaks agent work.
+		}
+
+		if (event.type === 'submission_settled' && this.#options.entities) {
+			const self = { type: this.agentName, id: this.instanceId };
+			const path = eventsPath(self);
+			const domainEvent = projectSettlementToElectricEvent({
+				submissionId: event.submissionId,
+				outcome: event.outcome,
+				error: event.error,
+			});
+			void appendCreating(this.#options.entities.log, path, domainEvent, undefined).catch(
+				(err) => this.#report(err),
+			);
 		}
 	}
 
@@ -913,6 +932,200 @@ export class FlueAgentInstance {
 			rows?: { rowsRead: number; rowsWritten: number };
 		};
 		return database.rows ? { ...database.rows } : undefined;
+	}
+
+	// ─── AgentOperationService ──────────────────────────────────────────────
+
+	async submitTask(params: {
+		capabilityId: string;
+		payload?: Record<string, unknown>;
+		correlationId?: string;
+	}): Promise<{ taskId: string; state: Operation['state'] }> {
+		const submissionId = params.correlationId
+			? await deriveKeyedSubmissionId(this.agentName, this.instanceId, params.correlationId)
+			: generateSubmissionId();
+		const message: DeliveredMessage = {
+			kind: 'signal',
+			type: 'mcp.capability',
+			body: JSON.stringify(params.payload ?? {}),
+			attributes: { capabilityId: params.capabilityId },
+		};
+		const acceptedAt = new Date(this.#now()).toISOString();
+		await this.admit({
+			kind: 'direct',
+			submissionId,
+			message,
+			acceptedAt,
+		});
+		return { taskId: submissionId, state: 'running' };
+	}
+
+	async getTask(taskId: string): Promise<Operation | undefined> {
+		const settlement = await this.settlement(taskId);
+		if (settlement) {
+			const state: Operation['state'] =
+				settlement.outcome === 'completed'
+					? 'completed'
+					: settlement.outcome === 'aborted'
+						? 'cancelled'
+						: 'failed';
+
+			const result: CapabilityResult | undefined =
+				settlement.outcome === 'completed'
+					? typeof settlement.result === 'object' &&
+						settlement.result !== null &&
+						'resultType' in settlement.result
+						? (settlement.result as CapabilityResult)
+						: {
+								resultType: 'complete',
+								content: [
+									{
+										type: 'text',
+										text:
+											typeof settlement.result === 'string'
+												? settlement.result
+												: JSON.stringify(settlement.result ?? null),
+									},
+								],
+								structuredContent:
+									typeof settlement.result === 'object' && settlement.result !== null
+										? (settlement.result as Record<string, unknown>)
+										: undefined,
+							}
+					: undefined;
+
+			const error =
+				settlement.outcome === 'failed'
+					? {
+							code: 'TASK_FAILED',
+							message: settlement.error?.message ?? 'Task failed',
+							details: settlement.error?.detail,
+						}
+					: undefined;
+
+			return {
+				operationId: taskId,
+				capabilityId: 'agent.run',
+				state,
+				revision: 2,
+				summary: settlement.outcome === 'aborted' ? 'Operation was cancelled' : undefined,
+				result,
+				error,
+				createdAt: settlement.settledAt,
+				updatedAt: settlement.settledAt,
+			};
+		}
+
+		if (!this.#opened && !hasPiState(await this.#db())) {
+			return undefined;
+		}
+
+		const { host } = await this.#open();
+		const receipt = await host.harness.snapshot(FlueReceipts, taskId, BACKGROUND_CONTEXT);
+		if (!receipt || receipt.status === 'absent') {
+			return undefined;
+		}
+
+		let capabilityId = 'agent.run';
+		if (
+			receipt.message &&
+			typeof receipt.message === 'object' &&
+			'attributes' in receipt.message &&
+			receipt.message.attributes &&
+			typeof (receipt.message.attributes as Record<string, unknown>).capabilityId === 'string'
+		) {
+			capabilityId = (receipt.message.attributes as Record<string, unknown>).capabilityId as string;
+		}
+
+		const questions = await this.pendingQuestions();
+		const hasPendingQuestion = questions.length > 0;
+
+		let state: Operation['state'];
+		if (hasPendingQuestion) {
+			state = 'input_required';
+		} else if (receipt.status === 'admitting') {
+			state = 'queued';
+		} else {
+			state = 'running';
+		}
+
+		const inputRequests = hasPendingQuestion
+			? questions.map((q) => ({
+					inputId: q.id,
+					prompt: q.prompt,
+					fields: (q as { fields?: unknown }).fields as never,
+				}))
+			: undefined;
+
+		return {
+			operationId: taskId,
+			capabilityId,
+			state,
+			revision: 1,
+			inputRequests,
+			createdAt: receipt.acceptedAt,
+			updatedAt: receipt.acceptedAt,
+		};
+	}
+
+	async cancelTask(taskId: string, _reason?: string): Promise<boolean> {
+		const { host } = await this.#open();
+		return host.abort(taskId, BACKGROUND_CONTEXT);
+	}
+
+	async respondTask(
+		taskId: string,
+		response: { inputId?: string; input: unknown },
+	): Promise<Operation> {
+		const questions = await this.pendingQuestions();
+		const targetQuestion = response.inputId
+			? questions.find((q) => q.id === response.inputId)
+			: questions[0];
+
+		if (!targetQuestion) {
+			throw new Error(`No pending question found to respond to for task '${taskId}'.`);
+		}
+
+		const res = await this.answerQuestion(targetQuestion.id, response.input as FlueAnswer);
+		if (res.status !== 'accepted') {
+			throw new Error(`Failed to respond to task '${taskId}': answer status '${res.status}'.`);
+		}
+
+		const updated = await this.getTask(taskId);
+		if (!updated) {
+			throw new Error(`Task '${taskId}' not found after responding.`);
+		}
+		return updated;
+	}
+
+	async listTasks(filter?: { state?: Operation['state'] }): Promise<Operation[]> {
+		if (!this.#opened && !hasPiState(await this.#db())) {
+			return [];
+		}
+		const { host } = await this.#open();
+		const index = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
+		const ids = new Set<string>();
+		for (const id of Object.keys(index?.live ?? {})) {
+			ids.add(id);
+		}
+		for (const id of index?.admitting ?? []) {
+			ids.add(id);
+		}
+		for (const id of Object.values(index?.byPiSubmission ?? {})) {
+			ids.add(id);
+		}
+
+		const tasks: Operation[] = [];
+		for (const id of ids) {
+			const task = await this.getTask(id);
+			if (task) {
+				if (filter?.state && task.state !== filter.state) {
+					continue;
+				}
+				tasks.push(task);
+			}
+		}
+		return tasks.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	}
 
 	async close(): Promise<void> {
