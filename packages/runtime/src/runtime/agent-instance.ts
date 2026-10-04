@@ -255,18 +255,15 @@ export class FlueAgentInstance implements AgentOperationService {
 
 	// ─── Events ─────────────────────────────────────────────────────────────
 
-	async #publishSettlementEvent(
-		settlement: {
-			submissionId: string;
-			outcome: 'completed' | 'failed' | 'aborted';
-			error?: unknown;
-			result?: unknown;
-			summary?: string;
-			correlationId?: string;
-			artifactRefs?: string[];
-		},
-		isGetTask = false,
-	): Promise<void> {
+	async #publishSettlementEvent(settlement: {
+		submissionId: string;
+		outcome: 'completed' | 'failed' | 'aborted';
+		error?: unknown;
+		result?: unknown;
+		summary?: string;
+		correlationId?: string;
+		artifactRefs?: string[];
+	}): Promise<void> {
 		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
 		const entities = this.#options.entities;
 
@@ -281,13 +278,8 @@ export class FlueAgentInstance implements AgentOperationService {
 		}
 
 		const publishPromise = (async () => {
-			const { host } = await this.#open();
-			const receipt = await host.harness.snapshot(
-				FlueReceipts,
-				settlement.submissionId,
-				BACKGROUND_CONTEXT,
-			);
-			if (receipt?.settlementPublished) {
+			const book = await this.#wakeBook();
+			if (book.isSettlementPublished(settlement.submissionId)) {
 				this.#publishedSettlements.add(settlement.submissionId);
 				return;
 			}
@@ -299,15 +291,7 @@ export class FlueAgentInstance implements AgentOperationService {
 				this.#report(err),
 			);
 
-			if (isGetTask) {
-				await host.harness
-					.commit(async (tx) => {
-						const record = await tx.doc(FlueReceipts, settlement.submissionId, null);
-						record.settlementPublished = true;
-					}, BACKGROUND_CONTEXT)
-					.catch((err) => this.#report(err));
-			}
-
+			book.markSettlementPublished(settlement.submissionId);
 			this.#publishedSettlements.add(settlement.submissionId);
 		})();
 
@@ -1103,15 +1087,12 @@ export class FlueAgentInstance implements AgentOperationService {
 	async getTask(taskId: string): Promise<Operation | undefined> {
 		const settlement = await this.settlement(taskId);
 		if (settlement) {
-			await this.#publishSettlementEvent(
-				{
-					submissionId: settlement.submissionId,
-					outcome: settlement.outcome,
-					result: settlement.result,
-					error: settlement.error,
-				},
-				true,
-			);
+			await this.#publishSettlementEvent({
+				submissionId: settlement.submissionId,
+				outcome: settlement.outcome,
+				result: settlement.result,
+				error: settlement.error,
+			});
 
 			const state: Operation['state'] =
 				settlement.outcome === 'completed'

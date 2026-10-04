@@ -19,11 +19,16 @@
 import type { CountingSqliteDatabase } from '../cloudflare/do-sqlite-database.ts';
 import { compareOffsets, STREAM_START } from '../streams/offset.ts';
 
-const SCHEMA = `CREATE TABLE IF NOT EXISTS flue_entity_streams (
-	path TEXT PRIMARY KEY,
-	head TEXT NOT NULL,
-	cursor TEXT NOT NULL
-)`;
+const SCHEMA = [
+	`CREATE TABLE IF NOT EXISTS flue_entity_streams (
+		path TEXT PRIMARY KEY,
+		head TEXT NOT NULL,
+		cursor TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS flue_settlement_projections (
+		submission_id TEXT PRIMARY KEY
+	)`,
+];
 
 export interface WakeStreamState {
 	readonly path: string;
@@ -42,8 +47,27 @@ export class EntityWakeBook {
 
 	#ensure(): void {
 		if (this.#schema) return;
-		this.#db.prepare(SCHEMA).run();
+		for (const statement of SCHEMA) {
+			this.#db.prepare(statement).run();
+		}
 		this.#schema = true;
+	}
+
+	/** Whether a submission's settlement has been projected outward to Electric. */
+	isSettlementPublished(submissionId: string): boolean {
+		this.#ensure();
+		const row = this.#db
+			.prepare('SELECT 1 FROM flue_settlement_projections WHERE submission_id = ?')
+			.get(submissionId);
+		return Boolean(row);
+	}
+
+	/** Mark a submission's settlement as projected outward to Electric. */
+	markSettlementPublished(submissionId: string): void {
+		this.#ensure();
+		this.#db
+			.prepare('INSERT OR IGNORE INTO flue_settlement_projections (submission_id) VALUES (?)')
+			.run(submissionId);
 	}
 
 	/**
