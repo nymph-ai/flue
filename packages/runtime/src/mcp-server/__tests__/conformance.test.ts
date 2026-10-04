@@ -1996,6 +1996,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
 			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
+			const { STREAM_START } = await import('../../streams/offset.ts');
 
 			const database = await openNodeSqliteDatabase(':memory:');
 			const streamLog = new InMemoryDurableStreamLog();
@@ -2021,24 +2022,24 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 			vi.spyOn(instance, 'settlement').mockResolvedValue({
 				submissionId: 'task-dedup-100',
-				outcome: 'completed',
-				result: { hello: 'world' },
+				outcome: 'failed',
+				error: { message: 'task failed' },
 				settledAt: new Date().toISOString(),
 			});
 
 			// Execute 100 calls to getTask on the active instance
 			for (let i = 0; i < 100; i++) {
 				const op = await instance.getTask('task-dedup-100');
-				expect(op?.state).toBe('completed');
+				expect(op?.state).toBe('failed');
 			}
 
 			// Read Electric stream: exactly 1 event should be present
 			const streamPath = 'flue/v1/alice/1/events';
-			const batch = await streamLog.read(streamPath, '0');
+			const batch = await streamLog.read(streamPath, STREAM_START);
 			expect(batch.messages.length).toBe(1);
 			const event = batch.messages[0] as any;
 			expect(event?.id).toBe('task-settled:task-dedup-100');
-			expect(event?.name).toBe('task_changed');
+			expect(event?.name).toBe('task.failed');
 
 			// Simulate DO eviction/restart: create a new instance on the same SQLite database
 			const restartedInstance = new FlueAgentInstance({
@@ -2054,25 +2055,26 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			});
 			vi.spyOn(restartedInstance, 'settlement').mockResolvedValue({
 				submissionId: 'task-dedup-100',
-				outcome: 'completed',
-				result: { hello: 'world' },
+				outcome: 'failed',
+				error: { message: 'task failed' },
 				settledAt: new Date().toISOString(),
 			});
 
 			// Execute 100 more calls on the new instance
 			for (let i = 0; i < 100; i++) {
 				const op = await restartedInstance.getTask('task-dedup-100');
-				expect(op?.state).toBe('completed');
+				expect(op?.state).toBe('failed');
 			}
 
 			// Still exactly 1 event in Electric because durable marker persisted
-			const batchAfterRestart = await streamLog.read(streamPath, '0');
+			const batchAfterRestart = await streamLog.read(streamPath, STREAM_START);
 			expect(batchAfterRestart.messages.length).toBe(1);
 		});
 
 		it('ElectricEventPort: replayPastEvents preserves m.id as eventId for deterministic settlement records', async () => {
 			const { InMemoryDurableStreamLog } = await import('../../streams/memory-log.ts');
 			const streamLog = new InMemoryDurableStreamLog();
+			await streamLog.ensure('test-stream');
 			const eventPort = new ElectricEventPort({ streamLog });
 
 			await streamLog.append('test-stream', [
@@ -2084,9 +2086,9 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				},
 			]);
 
-			const delivered: ElectricEvent[] = [];
+			const delivered: Array<{ eventId: string; [key: string]: unknown }> = [];
 			vi.spyOn(eventPort as any, 'deliverEvent').mockImplementation(async (_sub, evt) => {
-				delivered.push(evt as ElectricEvent);
+				delivered.push(evt as any);
 			});
 
 			await eventPort.subscribe({
@@ -2109,6 +2111,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const { createMcpConnectionCache } = await import('../../mcp.ts');
 			const { ROOT_CONVERSATION_ID } = await import('@earendil-works/pi-durable');
 			const { FlueQuestions } = await import('../../pi/questions.ts');
+			const { BACKGROUND_CONTEXT } = await import('@earendil-works/chord/context');
 
 			const database = await openNodeSqliteDatabase(':memory:');
 			const instance = new FlueAgentInstance({
@@ -2131,16 +2134,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 			const host = await instance.host();
 			// Commit question with null callTaskId into Pi
-			await host.harness.commit(
-				async (tx) => {
-					const doc = await tx.doc(FlueQuestions, 'q-no-task', null);
-					doc.status = 'pending';
-					doc.question = { kind: 'test' };
-					doc.conversationId = ROOT_CONVERSATION_ID;
-					doc.callTaskId = null;
-				},
-				{ abortSignal: undefined as any },
-			);
+			await host.harness.commit(async (tx) => {
+				const doc = await tx.doc(FlueQuestions, 'q-no-task', null);
+				doc.status = 'parked';
+				doc.question = { kind: 'test' };
+				doc.conversationId = ROOT_CONVERSATION_ID;
+				doc.callTaskId = null;
+			}, BACKGROUND_CONTEXT);
 
 			vi.spyOn(instance, 'pendingQuestions').mockResolvedValue([
 				{

@@ -255,16 +255,20 @@ export class FlueAgentInstance implements AgentOperationService {
 
 	// ─── Events ─────────────────────────────────────────────────────────────
 
-	async #publishSettlementEvent(settlement: {
-		submissionId: string;
-		outcome: 'completed' | 'failed' | 'aborted';
-		error?: unknown;
-		result?: unknown;
-		summary?: string;
-		correlationId?: string;
-		artifactRefs?: string[];
-	}): Promise<void> {
-		if (!this.#options.entities) return;
+	async #publishSettlementEvent(
+		settlement: {
+			submissionId: string;
+			outcome: 'completed' | 'failed' | 'aborted';
+			error?: unknown;
+			result?: unknown;
+			summary?: string;
+			correlationId?: string;
+			artifactRefs?: string[];
+		},
+		isGetTask = false,
+	): Promise<void> {
+		if (!this.#options.entities || typeof this.#options.entities === 'boolean') return;
+		const entities = this.#options.entities;
 
 		if (this.#publishedSettlements.has(settlement.submissionId)) {
 			return;
@@ -291,16 +295,18 @@ export class FlueAgentInstance implements AgentOperationService {
 			const self = { type: this.agentName, id: this.instanceId };
 			const path = eventsPath(self);
 			const domainEvent = projectSettlementToElectricEvent(settlement);
-			await appendCreating(this.#options.entities!.log, path, domainEvent, undefined).catch((err) =>
+			await appendCreating(entities.log, path, domainEvent, undefined).catch((err) =>
 				this.#report(err),
 			);
 
-			await host.harness
-				.commit(async (tx) => {
-					const record = await tx.doc(FlueReceipts, settlement.submissionId, null);
-					record.settlementPublished = true;
-				}, BACKGROUND_CONTEXT)
-				.catch((err) => this.#report(err));
+			if (isGetTask) {
+				await host.harness
+					.commit(async (tx) => {
+						const record = await tx.doc(FlueReceipts, settlement.submissionId, null);
+						record.settlementPublished = true;
+					}, BACKGROUND_CONTEXT)
+					.catch((err) => this.#report(err));
+			}
 
 			this.#publishedSettlements.add(settlement.submissionId);
 		})();
@@ -1097,12 +1103,15 @@ export class FlueAgentInstance implements AgentOperationService {
 	async getTask(taskId: string): Promise<Operation | undefined> {
 		const settlement = await this.settlement(taskId);
 		if (settlement) {
-			await this.#publishSettlementEvent({
-				submissionId: settlement.submissionId,
-				outcome: settlement.outcome,
-				result: settlement.result,
-				error: settlement.error,
-			});
+			await this.#publishSettlementEvent(
+				{
+					submissionId: settlement.submissionId,
+					outcome: settlement.outcome,
+					result: settlement.result,
+					error: settlement.error,
+				},
+				true,
+			);
 
 			const state: Operation['state'] =
 				settlement.outcome === 'completed'
