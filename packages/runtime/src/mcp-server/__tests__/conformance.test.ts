@@ -2184,6 +2184,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const streamPath = eventsPath({ type: 'test-agent', id: '1' });
 			await streamLog.ensure(streamPath);
 
+			let now = Date.now();
 			const instance = new FlueAgentInstance({
 				agentName: 'test-agent',
 				instanceId: '1',
@@ -2192,6 +2193,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				events: { emitEvent: () => {} } as any,
 				mcp: createMcpConnectionCache(),
 				armWake: async () => {},
+				now: () => now,
 				attachments: new InMemoryAttachmentStore(),
 				entities: { log: streamLog },
 			});
@@ -2210,7 +2212,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				kind: 'direct',
 				submissionId: 'task-fail-retry-1',
 				message: { kind: 'signal', type: 'test', body: '' },
-				acceptedAt: new Date().toISOString(),
+				acceptedAt: new Date(now).toISOString(),
 			});
 
 			const host = await instance.host();
@@ -2218,7 +2220,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				submissionId: 'task-fail-retry-1',
 				outcome: 'completed' as const,
 				result: { resultType: 'complete', content: [{ type: 'text', text: 'done' }] },
-				settledAt: new Date().toISOString(),
+				settledAt: new Date(now).toISOString(),
 			};
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
@@ -2236,8 +2238,9 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			let batch = await streamLog.read(streamPath, STREAM_START);
 			expect(batch.messages.length).toBe(0);
 
-			// Heal Electric
+			// Heal Electric and advance time past retry_at
 			failAppend = false;
+			now += 5000;
 
 			// Trigger wake - retries the outbox obligation
 			await instance.wake({ kind: 'live-tasks' });
@@ -2361,7 +2364,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			// getTask returns the operation projection
 			const task = await instance.getTask('task-ro-1');
 			expect(task?.state).toBe('completed');
-			expect(task?.response?.resultRef).toBe('job://test-agent/1/task-ro-1');
+			expect(task?.operationId).toBe('task-ro-1');
 
 			// Assert getTask does NOT touch outbox or append to Electric
 			const store = new FlueReactorStore(database);

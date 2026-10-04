@@ -65,6 +65,11 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		const env = await setupEnvironment();
 		const host = await env.instance.host();
 
+		// [CRASH SIMULATION]: Process terminates before reconciliation
+		vi.spyOn(env.instance.reactor, 'reconcileSettlements').mockRejectedValue(
+			new Error('Simulated process crash before reconciliation'),
+		);
+
 		// Admit task-1
 		await env.instance.admit({
 			kind: 'direct',
@@ -82,16 +87,18 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		};
 		vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 
-		// [CRASH SIMULATION]: Process terminates before reconciliation
 		// State: task-1 is in index.live; flue_outbox is empty; Electric has 0 messages
 		const indexBefore = await host.harness.snapshot(FlueReceiptIndex, BACKGROUND_CONTEXT);
 		expect(indexBefore?.live?.['task-1']).toBeDefined();
 		expect(env.store.outboxCount()).toBe(0);
+		const initialBatch = await env.streamLog.read(eventStream, STREAM_START);
+		expect(initialBatch.messages.length).toBe(0);
 
 		// [RESTART]: A new instance / alarm wake triggers reactor.tick()
 		const restarted = env.createInstance();
 		const restartedHost = await restarted.host();
 		vi.spyOn(restartedHost, 'settlement').mockResolvedValue(mockSettlement);
+		vi.spyOn(restarted, 'settlement').mockResolvedValue(mockSettlement);
 
 		const tickResult = await restarted.wake();
 		expect(tickResult.behind).toBe(false);
@@ -254,12 +261,14 @@ describe('FlueReactor & Semantic Outbox Crash Boundaries', () => {
 		// Mock Electric failure
 		let electricDown = true;
 		const originalAppend = env.streamLog.append.bind(env.streamLog);
-		vi.spyOn(env.streamLog, 'append').mockImplementation(async (path, messages, signal) => {
-			if (electricDown) {
-				throw new Error('Electric 503 Service Unavailable');
-			}
-			return originalAppend(path, messages, signal);
-		});
+		vi.spyOn(env.streamLog, 'append').mockImplementation(
+			async (path: string, messages: readonly unknown[]) => {
+				if (electricDown) {
+					throw new Error('Electric 503 Service Unavailable');
+				}
+				return originalAppend(path, messages);
+			},
+		);
 
 		// Admit task-5
 		await env.instance.admit({
