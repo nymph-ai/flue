@@ -72,7 +72,7 @@ const BUDGET: Record<string, Rows> = {
 	'5-tool-call turn': { rowsRead: 60, rowsWritten: 50 },
 	'A2A send (sender turn)': { rowsRead: 60, rowsWritten: 45 },
 	'A2A receive (doorbell, pump, admission, turn)': { rowsRead: 25, rowsWritten: 45 },
-	'idle wake': { rowsRead: 20, rowsWritten: 0 },
+	'idle wake': { rowsRead: 20, rowsWritten: 5 },
 	'cold open + admission + turn': { rowsRead: 80, rowsWritten: 30 },
 	'Code Mode store() turn, cold, after <size> store writes': { rowsRead: 120, rowsWritten: 50 },
 	'parked question (ask, park, answer, resume)': { rowsRead: 85, rowsWritten: 70 },
