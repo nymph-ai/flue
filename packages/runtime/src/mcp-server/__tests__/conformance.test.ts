@@ -1452,7 +1452,11 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				append: async (path: string, _messages: unknown[]) => {
 					appends.push(path);
 					if (!streamExists) {
-						throw new DurableStreamLogError('not-found', 'Stream does not exist yet');
+						throw new DurableStreamLogError({
+							code: 'not-found',
+							path,
+							message: 'Stream does not exist yet',
+						});
 					}
 					return { nextOffset: '0000000000000001_0000000000000001' as any };
 				},

@@ -858,6 +858,9 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 	}
 
 	private replayPastEvents(sub: EventSubscription, cursor?: string, fromRevision?: number): void {
+		if (!cursor && fromRevision === undefined) {
+			return;
+		}
 		const replay = async () => {
 			const streamIds = sub.streamId ? [sub.streamId] : Array.from(this.knownStreams);
 			const fromOffset = cursor ? asStreamOffset(cursor) : STREAM_START;
