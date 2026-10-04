@@ -26,7 +26,8 @@ const SCHEMA = [
 		cursor TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS flue_settlement_projections (
-		submission_id TEXT PRIMARY KEY
+		submission_id TEXT PRIMARY KEY,
+		state TEXT NOT NULL DEFAULT 'published'
 	)`,
 ];
 
