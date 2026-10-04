@@ -1784,7 +1784,7 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			const { WebhookSigner, durableStreamsWakeBody } =
 				await import('../../entity/a2a-test-support.ts');
 			const { staticWebhookKeys } = await import('../../entity/webhook.ts');
-			const signer = await WebhookSigner.generate();
+			const signer = await WebhookSigner.create();
 
 			const agentWakes: Array<{ entity: unknown; doorbell: unknown }> = [];
 			const mcpWakes: Array<{ doorbell: unknown }> = [];
@@ -1858,25 +1858,32 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 		it('AgentOperationService: respondTask refuses omitted inputId when multiple questions are pending', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
 			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
 				agent: { name: 'test-agent', handle: async () => {} } as any,
-				storage: {} as any,
+				database: () => database,
 				events: { emitEvent: () => {} } as any,
-				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				mcp: createMcpConnectionCache(),
 				armWake: async () => {},
-				attachments: { put: async () => '', get: async () => undefined },
+				attachments: new InMemoryAttachmentStore(),
 			});
 
-			vi.spyOn(instance as any, '#open').mockResolvedValue({
-				host: {
-					harness: {
-						snapshot: async () => ({ status: 'admitted', conversationId: 1 }),
-					},
-				},
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-1',
+				message: { kind: 'signal', type: 'test' },
+				acceptedAt: new Date().toISOString(),
 			});
+
 			vi.spyOn(instance, 'questionsForTask').mockResolvedValue([
-				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 1 },
-				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 1 },
+				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 0 },
+				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 0 },
 			]);
 
 			await expect(instance.respondTask('task-1', { input: { value: 42 } })).rejects.toThrow(
@@ -1886,25 +1893,32 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 		it('AgentOperationService: respondTask selects the targeted question when inputId is provided', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
 			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
 				agent: { name: 'test-agent', handle: async () => {} } as any,
-				storage: {} as any,
+				database: () => database,
 				events: { emitEvent: () => {} } as any,
-				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				mcp: createMcpConnectionCache(),
 				armWake: async () => {},
-				attachments: { put: async () => '', get: async () => undefined },
+				attachments: new InMemoryAttachmentStore(),
 			});
 
-			vi.spyOn(instance as any, '#open').mockResolvedValue({
-				host: {
-					harness: {
-						snapshot: async () => ({ status: 'admitted', conversationId: 1 }),
-					},
-				},
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-1',
+				message: { kind: 'signal', type: 'test' },
+				acceptedAt: new Date().toISOString(),
 			});
+
 			vi.spyOn(instance, 'questionsForTask').mockResolvedValue([
-				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 1 },
-				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 1 },
+				{ id: 'q-1', question: { kind: 'test' } as any, askedAt: 1, conversationId: 0 },
+				{ id: 'q-2', question: { kind: 'test' } as any, askedAt: 2, conversationId: 0 },
 			]);
 			const answerSpy = vi
 				.spyOn(instance, 'answerQuestion')
@@ -1931,35 +1945,37 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 		it('AgentOperationService: questionsForTask filters out questions from different conversations', async () => {
 			const { FlueAgentInstance } = await import('../../runtime/agent-instance.ts');
+			const { openNodeSqliteDatabase } = await import('../../node/node-sqlite-database.ts');
+			const { InMemoryAttachmentStore } = await import('../../runtime/attachment-store.ts');
+			const { createMcpConnectionCache } = await import('../../mcp.ts');
+
+			const database = await openNodeSqliteDatabase(':memory:');
 			const instance = new FlueAgentInstance({
+				agentName: 'test-agent',
+				instanceId: '1',
 				agent: { name: 'test-agent', handle: async () => {} } as any,
-				storage: {} as any,
+				database: () => database,
 				events: { emitEvent: () => {} } as any,
-				mcp: { resolve: async () => ({ tools: [] }) } as any,
+				mcp: createMcpConnectionCache(),
 				armWake: async () => {},
-				attachments: { put: async () => '', get: async () => undefined },
+				attachments: new InMemoryAttachmentStore(),
 			});
 
-			vi.spyOn(instance as any, '#db').mockResolvedValue({});
-			vi.spyOn(instance as any, '#open').mockResolvedValue({
-				host: {
-					harness: {
-						snapshot: async (_doc: any, key: any) => {
-							if (key === 'task-1') return { status: 'admitted', conversationId: 10 };
-							return null;
-						},
-						inspect: async () => ({ tasks: [] }),
-					},
-				},
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-1',
+				message: { kind: 'signal', type: 'test' },
+				acceptedAt: new Date().toISOString(),
 			});
+
 			vi.spyOn(instance, 'pendingQuestions').mockResolvedValue([
-				{ id: 'q-owned', question: { kind: 'test' } as any, askedAt: 1, conversationId: 10 },
+				{ id: 'q-owned', question: { kind: 'test' } as any, askedAt: 1, conversationId: 0 },
 				{ id: 'q-other', question: { kind: 'test' } as any, askedAt: 2, conversationId: 99 },
 			]);
 
 			const questions = await instance.questionsForTask('task-1');
 			expect(questions.length).toBe(1);
-			expect(questions[0].id).toBe('q-owned');
+			expect(questions[0]?.id).toBe('q-owned');
 		});
 	});
 });

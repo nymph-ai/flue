@@ -249,11 +249,13 @@ describe('Cloudflare Worker bundle', () => {
 	it('binds the FlueMcpSubscription Durable Object when an app uses MCP server / subscriptions', async () => {
 		const source = [
 			"'use agent';",
-			"import { createMcpRouter, useModel } from '@flue/runtime';",
+			"import { useModel } from '@flue/runtime';",
+			'',
+			'function mcpSubscriptions() {}',
 			'',
 			'export function Researcher() {',
 			"\tuseModel('anthropic/claude-sonnet-4-6');",
-			'\tcreateMcpRouter();',
+			'\tmcpSubscriptions();',
 			"\treturn 'Answer.';",
 			'}',
 			'',
