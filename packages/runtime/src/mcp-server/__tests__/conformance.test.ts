@@ -2208,13 +2208,6 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 				return originalAppend(path, messages);
 			});
 
-			await instance.admit({
-				kind: 'direct',
-				submissionId: 'task-fail-retry-1',
-				message: { kind: 'signal', type: 'test', body: '' },
-				acceptedAt: new Date(now).toISOString(),
-			});
-
 			const host = await instance.host();
 			const mockSettlement = {
 				submissionId: 'task-fail-retry-1',
@@ -2224,6 +2217,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			};
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-fail-retry-1',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date(now).toISOString(),
+			});
 
 			// Wake while Electric is failing -> settlement reconciled into outbox, but append fails
 			await instance.wake({ kind: 'live-tasks' });
@@ -2295,13 +2295,6 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 
 			vi.spyOn(streamLog, 'append').mockRejectedValue(new Error('Electric unreachable'));
 
-			await instance.admit({
-				kind: 'direct',
-				submissionId: 'task-alarm-1',
-				message: { kind: 'signal', type: 'test', body: '' },
-				acceptedAt: new Date(now).toISOString(),
-			});
-
 			const host = await instance.host();
 			const mockSettlement = {
 				submissionId: 'task-alarm-1',
@@ -2311,6 +2304,13 @@ describe('Milestone 1 Unification: Ports Dependency Inversion & Electric Authori
 			};
 			vi.spyOn(host, 'settlement').mockResolvedValue(mockSettlement);
 			vi.spyOn(instance, 'settlement').mockResolvedValue(mockSettlement);
+
+			await instance.admit({
+				kind: 'direct',
+				submissionId: 'task-alarm-1',
+				message: { kind: 'signal', type: 'test', body: '' },
+				acceptedAt: new Date(now).toISOString(),
+			});
 
 			// Wake while Electric fails
 			await instance.wake();

@@ -280,14 +280,6 @@ export class FlueAgentInstance implements AgentOperationService {
 		} catch {
 			// Event delivery never breaks agent work.
 		}
-
-		if (event.type === 'submission_settled') {
-			void this.#open()
-				.then(({ host }) =>
-					this.#reactor.reconcileSettlements(host).then(() => this.#reactor.flushOutbox()),
-				)
-				.catch((err) => this.#report(err));
-		}
 	}
 
 	#executionContext(fields: Partial<FlueExecutionContext> = {}): FlueExecutionContext {
@@ -777,6 +769,10 @@ export class FlueAgentInstance implements AgentOperationService {
 		);
 		telemetry.queued(input.submissionId, input.kind);
 		await host.wake({ kind: 'dispatch' }, context);
+		if (!this.#closed) {
+			await this.#reactor.reconcileSettlements(host).catch((err) => this.#report(err));
+			await this.#reactor.flushOutbox().catch((err) => this.#report(err));
+		}
 		return { receipt, offset };
 	}
 
