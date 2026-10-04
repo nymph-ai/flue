@@ -558,10 +558,15 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				? 'task_changed'
 				: event.name;
 
-		const normalizedData = {
+		const normalizedData: Record<string, unknown> = {
 			...eventData,
 			...(status ? { status } : {}),
 		};
+
+		const taskId = (normalizedData.taskId ??
+			(event.name.startsWith('task.') ? normalizedData.id : undefined)) as string | undefined;
+		const revision =
+			normalizedData.revision !== undefined ? Number(normalizedData.revision) : undefined;
 
 		const eventEnvelope = {
 			eventId: event.eventId,
@@ -583,11 +588,11 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 			'user-agent': 'NymphAI-Flue/2.2.2 (MCP 2026-07-28)',
 		};
 
-		if (normalizedData.taskId) {
-			headers['x-mcp-task-id'] = String(normalizedData.taskId);
+		if (taskId) {
+			headers['x-mcp-task-id'] = String(taskId);
 		}
-		if (normalizedData.revision) {
-			headers['x-mcp-revision'] = String(normalizedData.revision);
+		if (revision !== undefined) {
+			headers['x-mcp-revision'] = String(revision);
 		}
 
 		if (sub.secret) {
@@ -628,8 +633,8 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				id: deliveryId,
 				subscriptionId: sub.id,
 				eventId: event.eventId,
-				taskId: normalizedData.taskId ? String(normalizedData.taskId) : undefined,
-				revision: normalizedData.revision ? Number(normalizedData.revision) : undefined,
+				taskId: taskId ? String(taskId) : undefined,
+				revision,
 				cursor,
 				statusCode,
 				status: isSuccess ? 'delivered' : 'failed',
@@ -672,8 +677,8 @@ export class ElectricEventPort implements EventPort, McpAuditLogPort, Subscripti
 				id: deliveryId,
 				subscriptionId: sub.id,
 				eventId: event.eventId,
-				taskId: normalizedData.taskId ? String(normalizedData.taskId) : undefined,
-				revision: normalizedData.revision ? Number(normalizedData.revision) : undefined,
+				taskId: taskId ? String(taskId) : undefined,
+				revision,
 				cursor,
 				status: 'failed',
 				error: errorMsg,
