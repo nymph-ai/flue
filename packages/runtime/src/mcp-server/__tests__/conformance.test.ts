@@ -497,8 +497,9 @@ describe('Flue MCP Capability Projection: 7-Client Conformance Matrix', () => {
 			params: clientCaps,
 		})) as any;
 		const viewTool = toolsRes.result.tools.find((t: any) => t.name === 'linear.project.view');
-		expect(viewTool.ui).toBeDefined();
-		expect(viewTool.ui.viewUri).toBe('ui://linear/project-view');
+		const uiMeta = (viewTool._meta as { ui?: { resourceUri?: string } })?.ui;
+		expect(uiMeta).toBeDefined();
+		expect(uiMeta?.resourceUri).toBe('ui://linear/project-view');
 
 		// resources/read(ui://linear/project-view)
 		const uiRead = (await projection.handleRequest({

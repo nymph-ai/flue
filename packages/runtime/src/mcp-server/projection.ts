@@ -10,6 +10,7 @@
 import type { DurableStreamLog } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
 import { AppManager } from './apps.ts';
+import { handleUiHostMethod, isUiMethod } from './ui-host-bridge.ts';
 import { CANONICAL_EVENT_DEFINITIONS, ElectricEventPort } from './events.ts';
 import { PolicyInterceptorPipeline } from './interceptor.ts';
 import { OperationStore } from './operations.ts';
@@ -215,7 +216,9 @@ export class McpCapabilityProjection {
 				skills: getExt('skills', 'io.modelcontextprotocol/skills'),
 				tasks: getExt('tasks', 'io.modelcontextprotocol/tasks'),
 				events: getExt('events', 'io.modelcontextprotocol/events'),
-				apps: getExt('apps', 'io.modelcontextprotocol/apps'),
+				apps:
+					getExt('apps', 'io.modelcontextprotocol/apps') ||
+					getExt('ui', 'io.modelcontextprotocol/ui'),
 				variants:
 					getExt('variants', 'io.modelcontextprotocol/variants') || requestedVariant !== undefined,
 				toolsResolve: getExt('toolsResolve', 'io.modelcontextprotocol/toolsResolve'),
@@ -453,6 +456,12 @@ export class McpCapabilityProjection {
 			}
 
 			default:
+				if (isUiMethod(method)) {
+					if (!context.capabilities.extensions.apps) {
+						throw { code: -32601, message: `Method not found: ${method}` };
+					}
+					return handleUiHostMethod(method, params);
+				}
 				throw { code: -32601, message: `Method not found: ${method}` };
 		}
 	}
@@ -479,7 +488,10 @@ export class McpCapabilityProjection {
 		if (ext.skills) caps.skills = {};
 		if (ext.tasks) caps.tasks = {};
 		if (ext.events) caps.events = { subscribe: true, list: true, history: true };
-		if (ext.apps) caps.apps = {};
+		if (ext.apps) {
+			caps.apps = {};
+			caps.ui = {};
+		}
 		if (ext.variants) caps.variants = { profiles: this.descriptor.profiles };
 		if (ext.toolsResolve) caps.toolsResolve = {};
 
@@ -650,9 +662,14 @@ export class McpCapabilityProjection {
 				},
 			};
 
-			// Project UI metadata only when Apps extension is negotiated
+			// MCP Apps stable: _meta.ui.resourceUri + visibility (not toolDef.ui alone)
 			if (context.capabilities.extensions.apps && cap.ui) {
-				toolDef.ui = cap.ui;
+				toolDef._meta = {
+					ui: {
+						resourceUri: cap.ui.viewUri,
+						visibility: cap.ui.visibility ?? 'all',
+					},
+				};
 			}
 
 			tools.push(toolDef);
@@ -1065,10 +1082,13 @@ export class McpCapabilityProjection {
 
 		// 7. App UI URI: ui://<app>/<view>
 		if (uri.startsWith('ui://')) {
+			if (!context.capabilities.extensions.apps) {
+				throw new Error(`Resource '${uri}' requires MCP Apps capability.`);
+			}
 			const res = this.appManager.readUiResource(uri);
 			return {
 				resultType: 'complete',
-				contents: [{ uri, mimeType: res.mimeType, text: res.content }],
+				contents: [{ uri, mimeType: res.mimeType, text: res.content, _meta: res._meta }],
 			};
 		}
 

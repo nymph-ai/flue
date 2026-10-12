@@ -17,5 +17,12 @@ export { CodemodeTurnAgent } from '../../cloudflare/workers/codemode-turn.ts';
 export class CodemodeTestAgent extends DurableObject {}
 
 export default {
-	fetch: () => new Response('codemode tests'),
+	async fetch(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		if (url.pathname.startsWith('/p22/')) {
+			const { handleP22 } = await import('../../artifacts/gateway/workers-entry.ts');
+			return handleP22(request);
+		}
+		return new Response('codemode tests');
+	},
 };
