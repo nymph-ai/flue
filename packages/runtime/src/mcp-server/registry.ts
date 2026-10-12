@@ -66,7 +66,7 @@ export class CapabilityRegistry {
 			uriTemplate: 'ui://{app}/{view}',
 			name: 'App View Definition',
 			description: 'Interactive UI presentation definition for an App-enabled tool.',
-			mimeType: 'text/html',
+			mimeType: 'text/html;profile=mcp-app',
 		},
 	];
 

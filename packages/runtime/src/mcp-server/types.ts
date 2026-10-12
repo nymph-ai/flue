@@ -57,10 +57,38 @@ export interface EffectMetadata {
 	userReviewRequired?: boolean;
 }
 
+/** MIME type for MCP Apps stable HTML resources (2026-01-26). */
+export const MCP_APP_HTML_MIME = 'text/html;profile=mcp-app' as const;
+
+export interface McpUiResourceCsp {
+	connectDomains?: string[];
+	resourceDomains?: string[];
+	frameDomains?: string[];
+	baseUriDomains?: string[];
+}
+
+export interface McpUiPermissions {
+	camera?: Record<string, never>;
+	microphone?: Record<string, never>;
+	geolocation?: Record<string, never>;
+	clipboardWrite?: Record<string, never>;
+}
+
+export interface McpUiResourceMeta {
+	csp?: McpUiResourceCsp;
+	permissions?: McpUiPermissions;
+	domain?: string;
+	prefersBorder?: boolean;
+}
+
+export type ToolUiVisibility = 'model' | 'app' | 'all';
+
 export interface AppUiDefinition {
 	viewUri: string; // e.g. ui://linear/project-view
 	description?: string;
 	previews?: Array<{ type: string; title: string }>;
+	visibility?: ToolUiVisibility;
+	meta?: McpUiResourceMeta;
 }
 
 export interface AuthRequirements {
