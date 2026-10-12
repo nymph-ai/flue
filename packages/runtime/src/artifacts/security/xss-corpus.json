@@ -1,0 +1,27 @@
+[
+  {
+    "id": "parent-dom",
+    "class": "sandbox",
+    "note": "Sandboxed iframe without allow-same-origin must not read the parent DOM."
+  },
+  {
+    "id": "cookie-inheritance",
+    "class": "sandbox",
+    "note": "Opaque-origin iframe must not see the host session cookie."
+  },
+  {
+    "id": "top-navigation",
+    "class": "sandbox",
+    "note": "Without allow-top-navigation the iframe must not set top.location."
+  },
+  {
+    "id": "bearer-token",
+    "class": "compiler",
+    "html": "<!doctype html><html><body>Bearer abcdefghijklmnopqrstuvwxyz012345</body></html>"
+  },
+  {
+    "id": "api-key",
+    "class": "compiler",
+    "html": "<!doctype html><html><body>api_key: 'abcdefghijklmnopqrst'</body></html>"
+  }
+]
