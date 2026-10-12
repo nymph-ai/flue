@@ -11,6 +11,7 @@ async function setup(): Promise<McpCapabilityProjection> {
 		id: 'demo.view',
 		kind: 'tool',
 		title: 'Demo view',
+		pinned: true,
 		inputSchema: { type: 'object', properties: {} },
 		ui: { viewUri: 'ui://demo/view', visibility: 'app' },
 		invoke: async () => ({

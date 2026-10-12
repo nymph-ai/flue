@@ -17,7 +17,7 @@
 import type { Context } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { DurableStreamLog } from '../streams/log.ts';
-import { appendCreating } from '../entity/append.ts';
+import { appendCreating, appendCreatingMany } from '../entity/append.ts';
 import { eventsPath } from '../entity/paths.ts';
 import type { EntityRef } from '../entity/services.ts';
 import { type PumpLimits, type PumpResult, pumpEntity } from '../entity/pump.ts';
@@ -198,18 +198,29 @@ export class FlueReactor implements SemanticEmitter {
 		const store = await this.resolveStore();
 		const now = this.#now();
 		const pending = store.pendingEvents(now, 50);
-		let delivered = 0;
-
+		const byStream = new Map<string, typeof pending>();
 		for (const entry of pending) {
+			const group = byStream.get(entry.stream);
+			if (group) group.push(entry);
+			else byStream.set(entry.stream, [entry]);
+		}
+
+		let delivered = 0;
+		for (const [stream, entries] of byStream) {
 			try {
-				const event = JSON.parse(entry.eventJson);
-				await appendCreating(this.#options.log, entry.stream, event, context.abortSignal);
-				store.delivered(entry.eventId);
-				delivered++;
+				const events = entries.map((entry) => JSON.parse(entry.eventJson) as unknown);
+				// One append per stream per tick (bounded subrequests, GH #3797).
+				await appendCreatingMany(this.#options.log, stream, events, context.abortSignal);
+				for (const entry of entries) {
+					store.delivered(entry.eventId);
+					delivered++;
+				}
 			} catch (error) {
 				this.#report(error);
 				const retryAt = now + 5000;
-				store.failed(entry.eventId, retryAt);
+				for (const entry of entries) {
+					store.failed(entry.eventId, retryAt);
+				}
 				await Promise.resolve(this.#options.armWake(retryAt)).catch((err) => this.#report(err));
 			}
 		}

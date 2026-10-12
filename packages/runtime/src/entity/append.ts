@@ -7,11 +7,25 @@ export async function appendCreating(
 	message: unknown,
 	signal: AbortSignal | undefined,
 ): Promise<void> {
+	await appendCreatingMany(log, path, [message], signal);
+}
+
+/**
+ * Append many messages in one POST (P22-A6). One subrequest per stream batch,
+ * plus at most one ensure when the stream is missing.
+ */
+export async function appendCreatingMany(
+	log: DurableStreamLog,
+	path: string,
+	messages: readonly unknown[],
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	if (messages.length === 0) return;
 	try {
-		await log.append(path, [message], signal);
+		await log.append(path, messages, signal);
 	} catch (error) {
 		if (!(error instanceof DurableStreamLogError) || error.code !== 'not-found') throw error;
 		await log.ensure(path, signal);
-		await log.append(path, [message], signal);
+		await log.append(path, messages, signal);
 	}
 }
