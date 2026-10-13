@@ -8,6 +8,7 @@
  */
 
 import { verifyViewerToken } from '../auth/tokens.ts';
+import { ArtifactRevokedError, UnauthorizedError } from './memory-gateway.ts';
 import type { ReadGatewayPort } from './read-gateway.ts';
 
 export interface ArtifactGatewayOptions {
@@ -20,21 +21,33 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 	return {
 		async fetch(request: Request): Promise<Response> {
 			const url = new URL(request.url);
+			if (url.pathname === '/health') {
+				return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+			}
 			const artifactId = url.searchParams.get('artifactId') ?? '';
 			const token = bearer(request);
 			if (!artifactId || !token) return json({ error: 'UNAUTHORIZED' }, 401);
 			const claims = verifyViewerToken(options.secret, token, options.now?.() ?? Date.now());
 			if (!claims || claims.artifactId !== artifactId) return json({ error: 'UNAUTHORIZED' }, 401);
 
-			if (url.pathname === '/p22/bootstrap') {
-				const boot = await options.gateway.bootstrap(artifactId, token);
-				return json(boot, 200);
+			try {
+				if (url.pathname === '/p22/bootstrap') {
+					const boot = await options.gateway.bootstrap(artifactId, token);
+					return json(boot, 200);
+				}
+			} catch (error) {
+				if (error instanceof UnauthorizedError || error instanceof ArtifactRevokedError) {
+					return json({ error: 'UNAUTHORIZED' }, 401);
+				}
+				throw error;
 			}
 			if (url.pathname === '/p22/stream') {
 				const cursor = url.searchParams.get('cursor') ?? '';
 				if (!cursor) return json({ error: 'cursor required' }, 400);
 				const encoder = new TextEncoder();
-				const stream = new ReadableStream({
+				let stream: ReadableStream;
+				try {
+					stream = new ReadableStream({
 					async start(controller) {
 						try {
 							for await (const event of options.gateway.follow(
@@ -52,6 +65,12 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 						}
 					},
 				});
+				} catch (error) {
+					if (error instanceof UnauthorizedError || error instanceof ArtifactRevokedError) {
+						return json({ error: 'UNAUTHORIZED' }, 401);
+					}
+					throw error;
+				}
 				return new Response(stream, {
 					headers: {
 						'content-type': 'text/event-stream',
