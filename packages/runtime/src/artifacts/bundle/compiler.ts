@@ -29,6 +29,12 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
 	/\bsk-[a-zA-Z0-9]{20,}/,
 ];
 
+/** Remote executable or module loads are forbidden in published MCP App bundles (P22-A4). */
+const SUPPLY_CHAIN_PATTERNS: RegExp[] = [
+	/<script[^>]+src\s*=\s*["']https?:\/\//i,
+	/<script[^>]+type\s*=\s*["']importmap["'][^>]*>[\s\S]*https?:\/\//i,
+];
+
 export function compileHtmlArtifactBundle(
 	html: string,
 	options: BundleCompileOptions = {},
@@ -41,6 +47,11 @@ export function compileHtmlArtifactBundle(
 	for (const pattern of FORBIDDEN_PATTERNS) {
 		if (pattern.test(html)) {
 			throw new Error('HTML bundle contains forbidden credential-like pattern');
+		}
+	}
+	for (const pattern of SUPPLY_CHAIN_PATTERNS) {
+		if (pattern.test(html)) {
+			throw new Error('HTML bundle contains forbidden remote supply-chain reference');
 		}
 	}
 	if (!html.includes('<') || !html.toLowerCase().includes('html')) {
