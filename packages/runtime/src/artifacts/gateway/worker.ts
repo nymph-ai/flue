@@ -37,7 +37,13 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 				const stream = new ReadableStream({
 					async start(controller) {
 						try {
-							for await (const event of options.gateway.follow(artifactId, cursor, token)) {
+							for await (const event of options.gateway.follow(
+								artifactId,
+								cursor,
+								token,
+								request.signal,
+							)) {
+								if (request.signal.aborted) break;
 								controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 							}
 							controller.close();

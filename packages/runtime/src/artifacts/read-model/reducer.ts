@@ -16,6 +16,9 @@ export interface ReduceResult {
 	readonly gap: boolean;
 }
 
+/** Recent event ids retained for idempotent replay; not an unbounded journal. */
+export const MAX_APPLIED_EVENT_IDS = 4096;
+
 export function emptySnapshot(artifactId: string, now: string): ArtifactReadModelSnapshot {
 	return {
 		schemaVersion: 1,
@@ -61,6 +64,7 @@ export function reduceArtifactEvents(
 		}
 		if (event.producerSeq > expectedSeq + 1) {
 			gap = true;
+			break;
 		}
 		expectedSeq = Math.max(expectedSeq, event.producerSeq);
 		appliedIds.add(event.eventId);
@@ -69,7 +73,11 @@ export function reduceArtifactEvents(
 		applyPayload(state, event);
 	}
 
-	state.appliedEventIds = [...appliedIds].sort();
+	const sortedIds = [...appliedIds].sort();
+	state.appliedEventIds =
+		sortedIds.length > MAX_APPLIED_EVENT_IDS
+			? sortedIds.slice(sortedIds.length - MAX_APPLIED_EVENT_IDS)
+			: sortedIds;
 	state.producerEpoch = epoch;
 	state.producerSeq = expectedSeq;
 

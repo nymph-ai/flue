@@ -22,6 +22,12 @@ export interface UiInitializeResult {
 	hostCapabilities?: Record<string, unknown>;
 }
 
+export interface UiHostBridgeActions {
+	readonly openLink?: (url: string) => Promise<void> | void;
+	readonly updateModelContext?: (payload: Record<string, unknown>) => Promise<void> | void;
+	readonly requestDisplayMode?: (mode: string) => Promise<boolean> | boolean;
+}
+
 const UI_METHOD_PREFIX = 'ui/';
 
 export function isUiMethod(method: string): boolean {
@@ -31,6 +37,7 @@ export function isUiMethod(method: string): boolean {
 export function handleUiHostMethod(
 	method: string,
 	params: Record<string, unknown>,
+	actions?: UiHostBridgeActions,
 ): Record<string, unknown> {
 	switch (method) {
 		case 'ui/initialize': {
@@ -44,9 +51,9 @@ export function handleUiHostMethod(
 					displayMode: 'inline',
 				},
 				hostCapabilities: {
-					openLinks: true,
+					openLinks: Boolean(actions?.openLink),
 					displayMode: ['inline', 'fullscreen'],
-					updateModelContext: true,
+					updateModelContext: Boolean(actions?.updateModelContext),
 				},
 				...(init.appCapabilities ? { negotiatedAppCapabilities: init.appCapabilities } : {}),
 			};
@@ -58,16 +65,51 @@ export function handleUiHostMethod(
 			if (!url.startsWith('https://') && !url.startsWith('http://')) {
 				throw new Error('ui/open-link requires http(s) URL');
 			}
+			if (!actions?.openLink) {
+				throw { code: -32601, message: 'Host does not implement ui/open-link' };
+			}
 			return { resultType: 'complete', opened: true, url };
 		}
+		case 'ui/update-model-context': {
+			if (!actions?.updateModelContext) {
+				throw { code: -32601, message: 'Host does not implement ui/update-model-context' };
+			}
+			return { resultType: 'complete', accepted: true };
+		}
+		case 'ui/request-display-mode': {
+			if (!actions?.requestDisplayMode) {
+				throw { code: -32601, message: 'Host does not implement ui/request-display-mode' };
+			}
+			const mode = String(params.mode ?? 'inline');
+			const granted = actions.requestDisplayMode(mode);
+			return {
+				resultType: 'complete',
+				accepted: granted instanceof Promise ? true : granted,
+				mode,
+			};
+		}
 		case 'ui/message':
-		case 'ui/update-model-context':
-		case 'ui/request-display-mode':
 			return { resultType: 'complete', accepted: true };
 		default:
 			if (method.startsWith('ui/notifications/')) {
 				return { resultType: 'complete', acknowledged: true };
 			}
 			throw { code: -32601, message: `Method not found: ${method}` };
+	}
+}
+
+export async function performUiHostSideEffects(
+	method: string,
+	params: Record<string, unknown>,
+	actions?: UiHostBridgeActions,
+): Promise<void> {
+	if (method === 'ui/open-link' && actions?.openLink) {
+		await actions.openLink(String(params.url ?? ''));
+	}
+	if (method === 'ui/update-model-context' && actions?.updateModelContext) {
+		await actions.updateModelContext(params as Record<string, unknown>);
+	}
+	if (method === 'ui/request-display-mode' && actions?.requestDisplayMode) {
+		await actions.requestDisplayMode(String(params.mode ?? 'inline'));
 	}
 }

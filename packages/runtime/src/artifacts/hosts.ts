@@ -15,7 +15,7 @@ export type HostId =
 
 export interface HostDelivery {
 	readonly host: HostId;
-	readonly mode: 'mcp-apps-live' | 'hosted-embed' | 'static-snapshot';
+	readonly mode: 'mcp-apps-live' | 'mcp-apps-snapshot' | 'hosted-embed' | 'static-snapshot';
 	readonly liveStream: boolean;
 	readonly fallbackUrl?: string;
 }
@@ -27,7 +27,7 @@ export function resolveHostDelivery(host: HostId, liveUrl: string): HostDelivery
 			return { host, mode: 'mcp-apps-live', liveStream: true };
 		case 'chatgpt':
 		case 'claude':
-			return { host, mode: 'mcp-apps-live', liveStream: false, fallbackUrl: liveUrl };
+			return { host, mode: 'mcp-apps-snapshot', liveStream: false, fallbackUrl: liveUrl };
 		case 'notion-embed':
 			return { host, mode: 'hosted-embed', liveStream: false, fallbackUrl: liveUrl };
 		case 'notion-html':

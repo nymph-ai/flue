@@ -66,18 +66,26 @@ describe('artifact SSE worker', () => {
 		expect(body.snapshot.state.home).toBe(3);
 		expect(body.cursor.length).toBeGreaterThan(0);
 
+		const controller = new AbortController();
 		const stream = await app.fetch(
 			new Request(
 				`https://gw.example/p22/stream?artifactId=${encodeURIComponent(ARTIFACT)}&cursor=${encodeURIComponent(STREAM_START)}`,
-				{ headers: { authorization: `Bearer ${token()}` } },
+				{ headers: { authorization: `Bearer ${token()}` }, signal: controller.signal },
 			),
 		);
 		expect(stream.headers.get('content-type')).toContain('text/event-stream');
 		expect(stream.headers.get('x-agentdo-wake')).toBe('0');
-		const text = await stream.text();
+		const reader = stream.body?.getReader();
+		const decoder = new TextDecoder();
+		let text = '';
+		if (reader) {
+			const chunk = await reader.read();
+			text = decoder.decode(chunk.value);
+			controller.abort();
+			await reader.cancel();
+		}
 		expect(text.startsWith('data: ')).toBe(true);
 		expect(text).toContain('evt-1');
-		expect(text.endsWith('\n\n')).toBe(true);
 	});
 
 	it('refuses a missing token and a token for another artifact', async () => {

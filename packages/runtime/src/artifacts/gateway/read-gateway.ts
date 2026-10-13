@@ -15,5 +15,10 @@ export interface ReadGatewayPort {
 	/** Atomic snapshot + opaque cursor for a scoped viewer token. */
 	bootstrap(artifactId: string, viewerToken: string): Promise<ReadGatewayBootstrap>;
 	/** Follow stream after cursor; implementation uses Electric durable streams. */
-	follow(artifactId: string, cursor: string, viewerToken: string): AsyncIterable<unknown>;
+	follow(
+		artifactId: string,
+		cursor: string,
+		viewerToken: string,
+		signal?: AbortSignal,
+	): AsyncIterable<unknown>;
 }

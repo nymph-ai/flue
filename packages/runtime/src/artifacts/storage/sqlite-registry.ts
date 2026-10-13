@@ -83,9 +83,12 @@ export class SqliteArtifactRegistry {
 			}
 			return rowToRevision(existing);
 		}
-		if (input.expectedCasToken) {
-			const head = this.head(input.artifactId);
-			if (!head || head.casToken !== input.expectedCasToken) {
+		const head = this.head(input.artifactId);
+		if (head) {
+			if (!input.expectedCasToken) {
+				throw new RevisionConflictError('expectedCasToken required when head revision exists');
+			}
+			if (head.casToken !== input.expectedCasToken) {
 				throw new RevisionConflictError('CAS token does not match head revision');
 			}
 		}
@@ -138,6 +141,38 @@ export class SqliteArtifactRegistry {
 			.toArray();
 		const row = rows[0];
 		return row ? rowToRevision(row) : undefined;
+	}
+
+	isArtifactRevoked(artifactId: string): boolean {
+		const rows = this.storage.sql
+			.exec('SELECT revoked FROM p22_artifacts WHERE artifact_id = ?', artifactId)
+			.toArray();
+		return Boolean(rows[0]?.revoked);
+	}
+
+	resolvePublishedUiResource(uiResourceUri: string): {
+		artifactId: string;
+		revisionId: string;
+		bundleDigest: string;
+		status: ArtifactRevisionStatus;
+	} | null {
+		const rows = this.storage.sql
+			.exec(
+				`SELECT r.artifact_id, r.revision_id, r.bundle_digest, r.status, r.ui_resource_uri, a.head_revision_id
+				 FROM p22_revisions r
+				 JOIN p22_artifacts a ON a.artifact_id = r.artifact_id
+				 WHERE r.ui_resource_uri = ? AND r.revision_id = a.head_revision_id`,
+				uiResourceUri,
+			)
+			.toArray();
+		const row = rows[0];
+		if (!row) return null;
+		return {
+			artifactId: String(row.artifact_id),
+			revisionId: String(row.revision_id),
+			bundleDigest: String(row.bundle_digest),
+			status: String(row.status) as ArtifactRevisionStatus,
+		};
 	}
 
 	revoke(artifactId: string, revisionId: string): void {

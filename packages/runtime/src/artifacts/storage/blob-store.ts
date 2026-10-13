@@ -3,8 +3,10 @@
  *
  * The registry stores digests. Bytes live here (R2 in production, memory in
  * tests). A second put of the same digest is a no-op; different bytes for the
- * same digest are rejected.
+ * same digest are rejected. Digests are always verified against bytes on put/get.
  */
+
+import { createHash } from 'node:crypto';
 
 export interface BlobBucket {
 	get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>;
@@ -18,10 +20,27 @@ export class ImmutableBlobConflict extends Error {
 	}
 }
 
+export class BlobDigestMismatch extends Error {
+	constructor(digest: string) {
+		super(`blob bytes do not match digest ${digest}`);
+		this.name = 'BlobDigestMismatch';
+	}
+}
+
+export function sha256Digest(bytes: Uint8Array): string {
+	const h = createHash('sha256');
+	h.update(bytes);
+	return `sha256:${h.digest('hex')}`;
+}
+
 export class ContentAddressedBlobStore {
 	constructor(private readonly bucket: BlobBucket) {}
 
 	async put(digest: string, bytes: Uint8Array): Promise<void> {
+		const computed = sha256Digest(bytes);
+		if (digest !== computed) {
+			throw new BlobDigestMismatch(digest);
+		}
 		if (!/^sha256:[a-f0-9]{64}$/.test(digest)) {
 			throw new Error(`refusing non-digest key ${digest}`);
 		}
@@ -37,7 +56,11 @@ export class ContentAddressedBlobStore {
 	async get(digest: string): Promise<Uint8Array | null> {
 		const existing = await this.bucket.get(digest);
 		if (!existing) return null;
-		return new Uint8Array(await existing.arrayBuffer());
+		const bytes = new Uint8Array(await existing.arrayBuffer());
+		if (sha256Digest(bytes) !== digest) {
+			throw new BlobDigestMismatch(digest);
+		}
+		return bytes;
 	}
 }
 

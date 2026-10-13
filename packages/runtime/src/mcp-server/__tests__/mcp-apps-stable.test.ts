@@ -37,6 +37,7 @@ describe('MCP Apps 2026-01-26 stable wire', () => {
 				'io.modelcontextprotocol/clientCapabilities': {
 					extensions: { 'io.modelcontextprotocol/ui': true },
 				},
+				'io.modelcontextprotocol/ui': { surface: 'app' },
 			},
 		};
 		const res = (await projection.handleRequest({
@@ -47,7 +48,63 @@ describe('MCP Apps 2026-01-26 stable wire', () => {
 		})) as any;
 		const tool = res.result.tools.find((t: { name: string }) => t.name === 'demo.view');
 		expect(tool._meta.ui.resourceUri).toBe('ui://demo/view');
-		expect(tool._meta.ui.visibility).toBe('app');
+		expect(tool._meta.ui.visibility).toEqual(['app']);
+	});
+
+	it('hides app-only tools from the model surface', async () => {
+		const projection = await setup();
+		const res = (await projection.handleRequest({
+			jsonrpc: '2.0',
+			id: 4,
+			method: 'tools/list',
+			params: {
+				_meta: {
+					'io.modelcontextprotocol/clientCapabilities': {
+						extensions: { 'io.modelcontextprotocol/ui': true },
+					},
+					'io.modelcontextprotocol/ui': { surface: 'model' },
+				},
+			},
+		})) as any;
+		expect(res.result.tools.some((t: { name: string }) => t.name === 'demo.view')).toBe(false);
+	});
+
+	it('rejects app-only tool invocation from the model surface', async () => {
+		const projection = await setup();
+		const res = (await projection.handleRequest({
+			jsonrpc: '2.0',
+			id: 5,
+			method: 'tools/call',
+			params: {
+				name: 'demo.view',
+				arguments: {},
+				_meta: {
+					'io.modelcontextprotocol/clientCapabilities': {
+						extensions: { 'io.modelcontextprotocol/ui': true },
+					},
+					'io.modelcontextprotocol/ui': { surface: 'model' },
+				},
+			},
+		})) as any;
+		expect(res.error?.message).toMatch(/app-only/);
+	});
+
+	it('ui/open-link without a host action returns method not found', async () => {
+		const projection = await setup();
+		const res = (await projection.handleRequest({
+			jsonrpc: '2.0',
+			id: 6,
+			method: 'ui/open-link',
+			params: {
+				url: 'https://example.com',
+				_meta: {
+					'io.modelcontextprotocol/clientCapabilities': {
+						extensions: { 'io.modelcontextprotocol/ui': true },
+					},
+				},
+			},
+		})) as any;
+		expect(res.error?.code).toBe(-32601);
 	});
 
 	it('resources/read returns mcp-app mime and _meta.ui', async () => {
