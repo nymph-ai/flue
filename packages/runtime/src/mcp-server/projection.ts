@@ -9,6 +9,7 @@
 
 import type { DurableStreamLog } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
+import { enforceArtifactToolGate } from '../artifacts/actions/mcp-artifact-gate.ts';
 import type { PersistentUiResourceReader } from '../artifacts/persistent-ui-resources.ts';
 import { UiResourceNotFoundError, UiResourceRevokedError } from '../artifacts/persistent-ui-resources.ts';
 import { AppManager } from './apps.ts';
@@ -83,6 +84,9 @@ export interface ProjectionOptions {
 	streamLog?: DurableStreamLog;
 	uiResourceReader?: PersistentUiResourceReader;
 	uiHostActions?: UiHostBridgeActions;
+	/** HMAC secret for artifact viewer tokens on tools/call (P22-A7). */
+	artifactViewerSecret?: string;
+	isArtifactRevoked?: (artifactId: string) => boolean;
 }
 
 export class McpCapabilityProjection {
@@ -98,6 +102,8 @@ export class McpCapabilityProjection {
 	public readonly descriptor: ServerDescriptor;
 	private readonly uiResourceReader?: PersistentUiResourceReader;
 	private readonly uiHostActions?: UiHostBridgeActions;
+	private readonly artifactViewerSecret?: string;
+	private readonly isArtifactRevoked?: (artifactId: string) => boolean;
 
 	// Backward-compatibility accessors for callers and test suites
 	public get operationStore(): OperationPort {
@@ -134,6 +140,8 @@ export class McpCapabilityProjection {
 		this.appManager = new AppManager();
 		this.uiResourceReader = options?.uiResourceReader;
 		this.uiHostActions = options?.uiHostActions;
+		this.artifactViewerSecret = options?.artifactViewerSecret;
+		this.isArtifactRevoked = options?.isArtifactRevoked;
 		this.pipeline = options?.policyPipeline ?? new PolicyInterceptorPipeline();
 
 		this.descriptor = {
@@ -762,7 +770,7 @@ export class McpCapabilityProjection {
 			const cap = this.registry.get(capId);
 			if (cap?.ui) assertToolCallableOnSurface(capId, cap.ui, context, params);
 			const capArgs = (args.arguments as Record<string, unknown>) ?? {};
-			return this.invokeCapability(capId, capArgs, context);
+			return this.invokeCapability(capId, capArgs, context, params);
 		}
 
 		if (name === 'flue.categories') {
@@ -843,18 +851,30 @@ export class McpCapabilityProjection {
 		}
 
 		// Native tool invocation
-		return this.invokeCapability(name, args, context);
+		return this.invokeCapability(name, args, context, params);
 	}
 
 	private async invokeCapability(
 		capabilityId: string,
 		args: Record<string, unknown>,
 		context: RequestContext,
+		toolCallParams?: Record<string, unknown>,
 	): Promise<CapabilityResult> {
 		const cap = this.registry.get(capabilityId);
 		if (!cap) {
 			throw new Error(`Capability '${capabilityId}' not found.`);
 		}
+
+		const artifactDenied = await enforceArtifactToolGate({
+			cap,
+			args,
+			context,
+			toolCallParams,
+			viewerSecret: this.artifactViewerSecret,
+			operationPort: this.operationPort,
+			isRevoked: this.isArtifactRevoked,
+		});
+		if (artifactDenied) return artifactDenied;
 
 		// Handle asynchronous capabilities: OperationPort is execution authority
 		if (cap.asyncPolicy === 'async') {
