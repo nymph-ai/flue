@@ -1,5 +1,5 @@
 /**
- * Flue semantic events → AG-UI events (P22-A8).
+ * Flue semantic events → AG-UI events (live-artifacts A8).
  *
  * Deterministic, typed mapping. CopilotKit consumes these; it does not own
  * a second agent or event log. Artifact identity is independent of thread id.

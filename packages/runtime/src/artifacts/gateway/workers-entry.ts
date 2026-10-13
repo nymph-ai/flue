@@ -1,5 +1,5 @@
 /**
- * Test-worker entry for the artifact read gateway (P22-A5).
+ * Test-worker entry for the artifact read gateway (live-artifacts A5).
  * Miniflare hits this through the codemode test worker. The handler never
  * constructs an AgentDO; the wake header on SSE is 0.
  */
@@ -7,7 +7,7 @@
 import { issueViewerToken } from '../auth/tokens.ts';
 import { createArtifactGateway } from './worker.ts';
 
-const SECRET = 'p22-workers-test';
+const SECRET = 'live-artifacts-workers-test';
 const NOW = 1_700_000_000_000;
 
 const handler = createArtifactGateway({
@@ -33,9 +33,9 @@ const handler = createArtifactGateway({
 	},
 });
 
-export async function handleP22(request: Request): Promise<Response> {
+export async function handleLiveArtifactsGateway(request: Request): Promise<Response> {
 	const url = new URL(request.url);
-	if (url.pathname === '/p22/token') {
+	if (url.pathname === '/live-artifacts/token') {
 		const artifactId = url.searchParams.get('artifactId') ?? '';
 		if (!artifactId) return new Response('missing artifactId', { status: 400 });
 		const token = issueViewerToken(SECRET, {

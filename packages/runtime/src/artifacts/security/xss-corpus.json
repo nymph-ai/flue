@@ -23,5 +23,15 @@
     "id": "api-key",
     "class": "compiler",
     "html": "<!doctype html><html><body>api_key: 'abcdefghijklmnopqrst'</body></html>"
+  },
+  {
+    "id": "remote-script",
+    "class": "supply-chain",
+    "html": "<!doctype html><html><body><script src=\"https://cdn.example/evil.js\"></script></body></html>"
+  },
+  {
+    "id": "import-map-cdn",
+    "class": "supply-chain",
+    "html": "<!doctype html><html><head><script type=\"importmap\">{\"imports\":{\"x\":\"https://cdn.example/x.js\"}}</script></head><body></body></html>"
   }
 ]

@@ -1,13 +1,14 @@
 /**
- * Cloudflare fetch handler for the artifact read gateway (P22-A5).
+ * Cloudflare fetch handler for the artifact read gateway (live-artifacts A5).
  *
- * GET /p22/bootstrap?artifactId=  → JSON snapshot + cursor
- * GET /p22/stream?artifactId=&cursor= → text/event-stream
+ * GET /live-artifacts/bootstrap?artifactId=  → JSON snapshot + cursor
+ * GET /live-artifacts/stream?artifactId=&cursor= → text/event-stream
  *
  * The handler does not call an AgentDO. Authorization is the viewer token.
  */
 
 import { verifyViewerToken } from '../auth/tokens.ts';
+import { ArtifactRevokedError, UnauthorizedError } from './memory-gateway.ts';
 import type { ReadGatewayPort } from './read-gateway.ts';
 
 export interface ArtifactGatewayOptions {
@@ -20,24 +21,42 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 	return {
 		async fetch(request: Request): Promise<Response> {
 			const url = new URL(request.url);
+			if (url.pathname === '/health') {
+				return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+			}
 			const artifactId = url.searchParams.get('artifactId') ?? '';
 			const token = bearer(request);
 			if (!artifactId || !token) return json({ error: 'UNAUTHORIZED' }, 401);
 			const claims = verifyViewerToken(options.secret, token, options.now?.() ?? Date.now());
 			if (!claims || claims.artifactId !== artifactId) return json({ error: 'UNAUTHORIZED' }, 401);
 
-			if (url.pathname === '/p22/bootstrap') {
-				const boot = await options.gateway.bootstrap(artifactId, token);
-				return json(boot, 200);
+			try {
+				if (url.pathname === '/live-artifacts/bootstrap') {
+					const boot = await options.gateway.bootstrap(artifactId, token);
+					return json(boot, 200);
+				}
+			} catch (error) {
+				if (error instanceof UnauthorizedError || error instanceof ArtifactRevokedError) {
+					return json({ error: 'UNAUTHORIZED' }, 401);
+				}
+				throw error;
 			}
-			if (url.pathname === '/p22/stream') {
+			if (url.pathname === '/live-artifacts/stream') {
 				const cursor = url.searchParams.get('cursor') ?? '';
 				if (!cursor) return json({ error: 'cursor required' }, 400);
 				const encoder = new TextEncoder();
-				const stream = new ReadableStream({
+				let stream: ReadableStream;
+				try {
+					stream = new ReadableStream({
 					async start(controller) {
 						try {
-							for await (const event of options.gateway.follow(artifactId, cursor, token)) {
+							for await (const event of options.gateway.follow(
+								artifactId,
+								cursor,
+								token,
+								request.signal,
+							)) {
+								if (request.signal.aborted) break;
 								controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 							}
 							controller.close();
@@ -46,6 +65,12 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 						}
 					},
 				});
+				} catch (error) {
+					if (error instanceof UnauthorizedError || error instanceof ArtifactRevokedError) {
+						return json({ error: 'UNAUTHORIZED' }, 401);
+					}
+					throw error;
+				}
 				return new Response(stream, {
 					headers: {
 						'content-type': 'text/event-stream',

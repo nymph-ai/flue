@@ -1,0 +1,26 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "fabric-live-artifacts",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-25",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	// Account 865babfb7b889533bb9357f7c79f1222 — no DNS zones. Reuse the existing
+	// Workers VPC service on tunnel fabric-society (do not create a second service).
+	"vpc_services": [
+		{
+			"binding": "FLUE_STREAMS",
+			"service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7"
+		}
+	],
+	"r2_buckets": [{ "binding": "ARTIFACT_BLOBS", "bucket_name": "fabric-live-artifacts" }],
+	"durable_objects": {
+		"bindings": [{ "name": "ARTIFACT_HUB", "class_name": "LiveArtifactHub" }]
+	},
+	"migrations": [{ "tag": "live-artifacts-v1", "new_sqlite_classes": ["LiveArtifactHub"] }],
+	"vars": {
+		"FLUE_STREAMS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437",
+		"FLUE_STREAMS_JWKS_URL": "http://fabric-society-electric.fabric-society.svc.cluster.local:4437/__ds/jwks.json"
+	}
+}

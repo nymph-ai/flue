@@ -19,9 +19,9 @@ export class CodemodeTestAgent extends DurableObject {}
 export default {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname.startsWith('/p22/')) {
-			const { handleP22 } = await import('../../artifacts/gateway/workers-entry.ts');
-			return handleP22(request);
+		if (url.pathname.startsWith('/live-artifacts/')) {
+			const { handleLiveArtifactsGateway } = await import('../../artifacts/gateway/workers-entry.ts');
+			return handleLiveArtifactsGateway(request);
 		}
 		return new Response('codemode tests');
 	},

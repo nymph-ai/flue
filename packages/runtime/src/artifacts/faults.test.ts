@@ -1,5 +1,5 @@
 /**
- * Local fault injection (P22-A13).
+ * Local fault injection (live-artifacts A13).
  *
  * Crash-before-append leaves the outbox obligation. Crash-after-append
  * before delete is a duplicate the reducer ignores. A skipped producer seq

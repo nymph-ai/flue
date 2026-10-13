@@ -1,5 +1,5 @@
 /**
- * Scoped viewer credentials for artifact reads and app actions (P22-A7).
+ * Scoped viewer credentials for artifact reads and app actions (live-artifacts A7).
  * HMAC-SHA256 over a JSON body. No token is embedded in HTML bundles.
  */
 

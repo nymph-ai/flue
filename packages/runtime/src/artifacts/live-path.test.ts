@@ -31,7 +31,7 @@ function event(fence: ReturnType<typeof createFence>, seqHint: number, patch: Re
 	});
 }
 
-describe('P22 live path', () => {
+describe('live-artifacts live path', () => {
 	it('batches appends so N events cost one POST', async () => {
 		const log = new InMemoryDurableStreamLog();
 		let posts = 0;

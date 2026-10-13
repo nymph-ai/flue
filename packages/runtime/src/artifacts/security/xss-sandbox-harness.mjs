@@ -1,5 +1,5 @@
 /**
- * Headless sandbox corpus (P22-A4).
+ * Headless sandbox corpus (live-artifacts A4).
  *
  * Serves a host page and a sandboxed iframe (allow-scripts only) and asks
  * Chrome to dump the DOM after the iframe reports what it could touch.
@@ -85,7 +85,7 @@ function dumpDom(url) {
 				'--no-sandbox',
 				'--disable-gpu',
 				'--disable-dev-shm-usage',
-				`--user-data-dir=${mkdtempSync(join(tmpdir(), 'p22-chrome-'))}`,
+				`--user-data-dir=${mkdtempSync(join(tmpdir(), 'live-artifacts-chrome-'))}`,
 				'--no-first-run',
 				'--virtual-time-budget=5000',
 				'--dump-dom',

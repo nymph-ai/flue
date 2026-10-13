@@ -1,5 +1,5 @@
 /**
- * Deterministic artifact read-model reducer (P22-A5 / A6).
+ * Deterministic artifact read-model reducer (live-artifacts A5 / A6).
  *
  * Idempotent on eventId. Duplicate delivery, retries after a lost append
  * ack, and out-of-order arrival within one epoch converge to one state.
@@ -15,6 +15,9 @@ export interface ReduceResult {
 	readonly duplicates: number;
 	readonly gap: boolean;
 }
+
+/** Recent event ids retained for idempotent replay; not an unbounded journal. */
+export const MAX_APPLIED_EVENT_IDS = 4096;
 
 export function emptySnapshot(artifactId: string, now: string): ArtifactReadModelSnapshot {
 	return {
@@ -61,6 +64,7 @@ export function reduceArtifactEvents(
 		}
 		if (event.producerSeq > expectedSeq + 1) {
 			gap = true;
+			break;
 		}
 		expectedSeq = Math.max(expectedSeq, event.producerSeq);
 		appliedIds.add(event.eventId);
@@ -69,7 +73,11 @@ export function reduceArtifactEvents(
 		applyPayload(state, event);
 	}
 
-	state.appliedEventIds = [...appliedIds].sort();
+	const sortedIds = [...appliedIds].sort();
+	state.appliedEventIds =
+		sortedIds.length > MAX_APPLIED_EVENT_IDS
+			? sortedIds.slice(sortedIds.length - MAX_APPLIED_EVENT_IDS)
+			: sortedIds;
 	state.producerEpoch = epoch;
 	state.producerSeq = expectedSeq;
 

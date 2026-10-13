@@ -9,8 +9,22 @@
 
 import type { DurableStreamLog } from '../streams/log.ts';
 import { InMemoryDurableStreamLog } from '../streams/memory-log.ts';
+import { enforceArtifactToolGate } from '../artifacts/actions/mcp-artifact-gate.ts';
+import type { PersistentUiResourceReader } from '../artifacts/persistent-ui-resources.ts';
+import { UiResourceNotFoundError, UiResourceRevokedError } from '../artifacts/persistent-ui-resources.ts';
 import { AppManager } from './apps.ts';
-import { handleUiHostMethod, isUiMethod } from './ui-host-bridge.ts';
+import {
+	handleUiHostMethod,
+	isUiMethod,
+	performUiHostSideEffects,
+	type UiHostBridgeActions,
+} from './ui-host-bridge.ts';
+import {
+	assertToolCallableOnSurface,
+	resolveUiClientSurface,
+	toolVisibleOnSurface,
+	visibilityWireValue,
+} from './ui-visibility.ts';
 import { CANONICAL_EVENT_DEFINITIONS, ElectricEventPort } from './events.ts';
 import { PolicyInterceptorPipeline } from './interceptor.ts';
 import { OperationStore } from './operations.ts';
@@ -68,6 +82,11 @@ export interface ProjectionOptions {
 	sql?: SqlStorageLike;
 	ctx?: DurableObjectStateLike;
 	streamLog?: DurableStreamLog;
+	uiResourceReader?: PersistentUiResourceReader;
+	uiHostActions?: UiHostBridgeActions;
+	/** HMAC secret for artifact viewer tokens on tools/call (live-artifacts A7). */
+	artifactViewerSecret?: string;
+	isArtifactRevoked?: (artifactId: string) => boolean;
 }
 
 export class McpCapabilityProjection {
@@ -81,6 +100,10 @@ export class McpCapabilityProjection {
 	public readonly pipeline: PolicyInterceptorPipeline;
 	public readonly serverCardManager: ServerCardManager;
 	public readonly descriptor: ServerDescriptor;
+	private readonly uiResourceReader?: PersistentUiResourceReader;
+	private readonly uiHostActions?: UiHostBridgeActions;
+	private readonly artifactViewerSecret?: string;
+	private readonly isArtifactRevoked?: (artifactId: string) => boolean;
 
 	// Backward-compatibility accessors for callers and test suites
 	public get operationStore(): OperationPort {
@@ -115,6 +138,10 @@ export class McpCapabilityProjection {
 			});
 		this.skillManager = new SkillManager(this.registry);
 		this.appManager = new AppManager();
+		this.uiResourceReader = options?.uiResourceReader;
+		this.uiHostActions = options?.uiHostActions;
+		this.artifactViewerSecret = options?.artifactViewerSecret;
+		this.isArtifactRevoked = options?.isArtifactRevoked;
 		this.pipeline = options?.policyPipeline ?? new PolicyInterceptorPipeline();
 
 		this.descriptor = {
@@ -460,7 +487,9 @@ export class McpCapabilityProjection {
 					if (!context.capabilities.extensions.apps) {
 						throw { code: -32601, message: `Method not found: ${method}` };
 					}
-					return handleUiHostMethod(method, params);
+					const result = handleUiHostMethod(method, params, this.uiHostActions);
+					await performUiHostSideEffects(method, params, this.uiHostActions);
+					return result;
 				}
 				throw { code: -32601, message: `Method not found: ${method}` };
 		}
@@ -523,7 +552,7 @@ export class McpCapabilityProjection {
 	}
 
 	private handleToolsList(
-		_params: Record<string, unknown>,
+		params: Record<string, unknown>,
 		context: RequestContext,
 	): { resultType: 'complete'; tools: Array<Record<string, unknown>> } {
 		const tools: Array<Record<string, unknown>> = [];
@@ -667,9 +696,14 @@ export class McpCapabilityProjection {
 				toolDef._meta = {
 					ui: {
 						resourceUri: cap.ui.viewUri,
-						visibility: cap.ui.visibility ?? 'all',
+						visibility: visibilityWireValue(cap.ui.visibility),
 					},
 				};
+			}
+
+			const surface = resolveUiClientSurface(params);
+			if (cap.ui && !toolVisibleOnSurface(cap.ui, surface)) {
+				continue;
 			}
 
 			tools.push(toolDef);
@@ -733,8 +767,10 @@ export class McpCapabilityProjection {
 
 		if (name === 'flue.invoke') {
 			const capId = String(args.capability ?? '');
+			const cap = this.registry.get(capId);
+			if (cap?.ui) assertToolCallableOnSurface(capId, cap.ui, context, params);
 			const capArgs = (args.arguments as Record<string, unknown>) ?? {};
-			return this.invokeCapability(capId, capArgs, context);
+			return this.invokeCapability(capId, capArgs, context, params);
 		}
 
 		if (name === 'flue.categories') {
@@ -809,19 +845,36 @@ export class McpCapabilityProjection {
 			};
 		}
 
+		const cap = this.registry.get(name);
+		if (cap?.ui) {
+			assertToolCallableOnSurface(name, cap.ui, context, params);
+		}
+
 		// Native tool invocation
-		return this.invokeCapability(name, args, context);
+		return this.invokeCapability(name, args, context, params);
 	}
 
 	private async invokeCapability(
 		capabilityId: string,
 		args: Record<string, unknown>,
 		context: RequestContext,
+		toolCallParams?: Record<string, unknown>,
 	): Promise<CapabilityResult> {
 		const cap = this.registry.get(capabilityId);
 		if (!cap) {
 			throw new Error(`Capability '${capabilityId}' not found.`);
 		}
+
+		const artifactDenied = await enforceArtifactToolGate({
+			cap,
+			args,
+			context,
+			toolCallParams,
+			viewerSecret: this.artifactViewerSecret,
+			operationPort: this.operationPort,
+			isRevoked: this.isArtifactRevoked,
+		});
+		if (artifactDenied) return artifactDenied;
 
 		// Handle asynchronous capabilities: OperationPort is execution authority
 		if (cap.asyncPolicy === 'async') {
@@ -1085,11 +1138,27 @@ export class McpCapabilityProjection {
 			if (!context.capabilities.extensions.apps) {
 				throw new Error(`Resource '${uri}' requires MCP Apps capability.`);
 			}
-			const res = this.appManager.readUiResource(uri);
-			return {
-				resultType: 'complete',
-				contents: [{ uri, mimeType: res.mimeType, text: res.content, _meta: res._meta }],
-			};
+			try {
+				if (this.uiResourceReader) {
+					const res = await this.uiResourceReader.readUiResource(uri);
+					return {
+						resultType: 'complete',
+						contents: [{ uri, mimeType: res.mimeType, text: res.content, _meta: res._meta }],
+					};
+				}
+			} catch (error) {
+				if (!(error instanceof UiResourceNotFoundError)) throw error;
+			}
+			try {
+				const res = this.appManager.readUiResource(uri);
+				return {
+					resultType: 'complete',
+					contents: [{ uri, mimeType: res.mimeType, text: res.content, _meta: res._meta }],
+				};
+			} catch (error) {
+				if (error instanceof UiResourceRevokedError) throw error;
+				throw error;
+			}
 		}
 
 		// 8. Custom registered resource

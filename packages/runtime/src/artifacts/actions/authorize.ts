@@ -1,5 +1,5 @@
 /**
- * Server-side authorization for MCP App actions (P22-A7).
+ * Server-side authorization for MCP App actions (live-artifacts A7).
  *
  * Tool visibility (`app` vs `model`) never relaxes this check. Governed
  * effects are flagged for Fabric admission; Electric events do not admit them.

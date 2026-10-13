@@ -1,5 +1,5 @@
 /**
- * OAuth authorization-code + PKCE (S256) client (P22-A7).
+ * OAuth authorization-code + PKCE (S256) client (live-artifacts A7).
  *
  * Disabled until `enabled` is set. Tests inject fetch against a mock IdP.
  * No live provider is contacted from this module.

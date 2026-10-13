@@ -1,0 +1,18 @@
+{
+	"name": "@flue/fabric-live-artifacts",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"deploy:dry-run": "wrangler deploy --dry-run --outdir=dist/wrangler-dry-run",
+		"check:types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@flue/runtime": "workspace:*"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^5.20260721.1",
+		"typescript": "^7.0.2",
+		"wrangler": "^4.113.0"
+	}
+}

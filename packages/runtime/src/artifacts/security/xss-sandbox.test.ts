@@ -40,6 +40,15 @@ describe('XSS and sandbox corpus', () => {
 		}
 	});
 
+	it('rejects supply-chain remote script and import-map CDN entries', () => {
+		const corpus = JSON.parse(readFileSync(join(here, 'xss-corpus.json'), 'utf8')) as CorpusEntry[];
+		const supply = corpus.filter((entry) => entry.class === 'supply-chain');
+		expect(supply.length).toBeGreaterThanOrEqual(2);
+		for (const entry of supply) {
+			expect(() => compileHtmlArtifactBundle(entry.html ?? ''), entry.id).toThrow(/remote|supply|forbidden|cdn/i);
+		}
+	});
+
 	it.skipIf(!chromeBinary())('blocks parent DOM, cookies, and top navigation in headless Chrome', async () => {
 		const result = await new Promise<string>((resolve, reject) => {
 			const child = spawn(process.execPath, [join(here, 'xss-sandbox-harness.mjs')], {

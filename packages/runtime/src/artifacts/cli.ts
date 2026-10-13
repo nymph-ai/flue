@@ -1,5 +1,5 @@
 /**
- * `artifact` CLI (P22-A15).
+ * `artifact` CLI (live-artifacts A15).
  *
  * lint rejects oversized HTML and credential-like patterns.
  * validate checks the manifest fields the registry will store.

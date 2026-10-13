@@ -97,6 +97,18 @@ export interface AuthRequirements {
 	delegationAllowed?: boolean;
 }
 
+/** Live artifact tool binding for MCP tools/call authorization (A7). */
+export interface ArtifactToolPolicy {
+	readonly tenantId?: string;
+	readonly artifactId?: string;
+	readonly artifactIdArgument?: string;
+	readonly tenantIdArgument?: string;
+	readonly allowedTools?: readonly string[];
+	readonly appOnlyTools?: readonly string[];
+	/** When unset, governed if effects.write/destructive/moneyMovement or id prefix admin. */
+	readonly requiresFabricAdmission?: boolean;
+}
+
 export interface SearchMetadata {
 	tags?: string[];
 	category?: string;
@@ -206,6 +218,7 @@ export interface Capability {
 	trust?: TrustMetadata;
 	effects?: EffectMetadata;
 	authorization?: AuthRequirements;
+	artifact?: ArtifactToolPolicy;
 	variants?: Record<string, VariantOverride>;
 }
 

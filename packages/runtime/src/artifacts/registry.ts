@@ -1,5 +1,5 @@
 /**
- * Persistent artifact registry (P22-A3).
+ * Persistent artifact registry (live-artifacts A3).
  *
  * Stable artifact:// identities, content-addressed bundle digests, revision CAS,
  * and publish/revoke lifecycle. HTML bodies live in bundle storage — never Electric.

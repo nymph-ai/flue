@@ -1,5 +1,5 @@
 /**
- * SLI names and numeric targets for live artifacts (P22-A12).
+ * SLI names and numeric targets for live artifacts (live-artifacts A12).
  * These are the contract the dashboards and load scripts measure against.
  * Live burn-rate alerts require a production collector (pending).
  */

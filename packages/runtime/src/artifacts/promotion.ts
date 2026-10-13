@@ -1,12 +1,13 @@
 /**
  * Explicit promotion from an ephemeral generated HTML response to a
- * versioned artifact draft (P22-A9).
+ * versioned artifact draft (live-artifacts A9).
  *
  * Promotion never publishes and never reinvokes a model. Live state updates
  * patch the read model; they do not regenerate HTML.
  */
 
 import { compileHtmlArtifactBundle, type CompiledArtifactBundle } from './bundle/compiler.ts';
+import { artifactEventStreamId } from './gateway/stream-id.ts';
 
 export interface PromotionDraft {
 	readonly artifactId: string;
@@ -29,12 +30,8 @@ export function promoteEphemeralHtml(input: {
 		artifactId: input.artifactId,
 		reviewRequired: true,
 		bundle,
-		streamId: `flue/v1/artifact/${input.tenantId}/${artifactSlug(input.artifactId)}/events`,
+		streamId: artifactEventStreamId(input.artifactId),
 		published: false,
 	};
 }
 
-function artifactSlug(artifactId: string): string {
-	const parts = artifactId.replace(/^artifact:\/\//, '').split('/');
-	return parts[parts.length - 1] || 'artifact';
-}
