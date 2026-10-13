@@ -1,5 +1,5 @@
 /**
- * Producer fencing for artifact semantic events (P22-A6).
+ * Producer fencing for artifact semantic events (live-artifacts A6).
  *
  * Electric's HTTP producer headers are optional on the wire. This module
  * stamps an equivalent durable contract into each event so a lost append

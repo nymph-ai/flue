@@ -1,4 +1,4 @@
-/** Shared artifact read-model types (align with nymphai P22-A1 schemas). */
+/** Shared artifact read-model types (align with nymphai live-artifacts A1 schemas). */
 
 export interface ArtifactReadModelSnapshot {
 	schemaVersion: 1;

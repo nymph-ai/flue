@@ -1,5 +1,5 @@
 /**
- * Authoring helpers for the artifact SDK (P22-A15).
+ * Authoring helpers for the artifact SDK (live-artifacts A15).
  * Agents call these with declared capabilities. No ambient privilege.
  */
 

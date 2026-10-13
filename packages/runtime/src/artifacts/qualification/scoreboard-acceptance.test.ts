@@ -1,5 +1,5 @@
 /**
- * P22-A13 scoreboard acceptance gate (hermetic).
+ * live-artifacts A13 scoreboard acceptance gate (hermetic).
  *
  * publish → simulated worker restart → reload ui:// → live Electric patch → revoke.
  */
@@ -31,7 +31,7 @@ const STREAM = 'flue/v1/artifact/tenant-alpha/scoreboard/events';
 const UI_URI = 'ui://tenant-alpha/scoreboard/v1';
 const HTML = '<!doctype html><html><body><span id="home">0</span></body></html>';
 
-describe('P22 scoreboard acceptance (hermetic)', () => {
+describe('live-artifacts scoreboard acceptance (hermetic)', () => {
 	it('publish, restart registry, reload ui://, live patch, revoke', async () => {
 		const storage = new FakeDurableObjectStorage();
 		const blobs = new ContentAddressedBlobStore(new MemoryBlobBucket());

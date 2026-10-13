@@ -1,5 +1,5 @@
 /**
- * Fabric-governed effect admission (P22-A7).
+ * Fabric-governed effect admission (live-artifacts A7).
  *
  * Callers must not pass an unverified fabricAdmitted flag. Admission is decided
  * here from an injected verifier that talks to Fabric / OperationPort policy.

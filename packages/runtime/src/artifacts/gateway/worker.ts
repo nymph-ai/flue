@@ -1,8 +1,8 @@
 /**
- * Cloudflare fetch handler for the artifact read gateway (P22-A5).
+ * Cloudflare fetch handler for the artifact read gateway (live-artifacts A5).
  *
- * GET /p22/bootstrap?artifactId=  → JSON snapshot + cursor
- * GET /p22/stream?artifactId=&cursor= → text/event-stream
+ * GET /live-artifacts/bootstrap?artifactId=  → JSON snapshot + cursor
+ * GET /live-artifacts/stream?artifactId=&cursor= → text/event-stream
  *
  * The handler does not call an AgentDO. Authorization is the viewer token.
  */
@@ -31,7 +31,7 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 			if (!claims || claims.artifactId !== artifactId) return json({ error: 'UNAUTHORIZED' }, 401);
 
 			try {
-				if (url.pathname === '/p22/bootstrap') {
+				if (url.pathname === '/live-artifacts/bootstrap') {
 					const boot = await options.gateway.bootstrap(artifactId, token);
 					return json(boot, 200);
 				}
@@ -41,7 +41,7 @@ export function createArtifactGateway(options: ArtifactGatewayOptions) {
 				}
 				throw error;
 			}
-			if (url.pathname === '/p22/stream') {
+			if (url.pathname === '/live-artifacts/stream') {
 				const cursor = url.searchParams.get('cursor') ?? '';
 				if (!cursor) return json({ error: 'cursor required' }, 400);
 				const encoder = new TextEncoder();

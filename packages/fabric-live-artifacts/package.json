@@ -1,5 +1,5 @@
 {
-	"name": "@flue/p22-live-artifacts",
+	"name": "@flue/fabric-live-artifacts",
 	"private": true,
 	"type": "module",
 	"scripts": {

@@ -1,5 +1,5 @@
 /**
- * Read-gateway authorization backed by the DO artifact registry (P22).
+ * Read-gateway authorization backed by the DO artifact registry (live-artifacts).
  */
 
 import type { ViewerClaims } from '../auth/tokens.ts';

@@ -1,5 +1,5 @@
 /**
- * R2-backed immutable blob bucket for artifact bundles (P22 production).
+ * R2-backed immutable blob bucket for artifact bundles (live-artifacts production).
  */
 
 import type { BlobBucket } from './blob-store.ts';

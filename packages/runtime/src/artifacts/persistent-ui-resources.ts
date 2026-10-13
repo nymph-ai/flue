@@ -1,5 +1,5 @@
 /**
- * Durable ui:// resolution (P22-A2 / A3).
+ * Durable ui:// resolution (live-artifacts A2 / A3).
  *
  * MCP resources/read loads immutable bundle bytes from the artifact registry
  * and blob store. Process-local AppManager registrations remain a dev fallback.

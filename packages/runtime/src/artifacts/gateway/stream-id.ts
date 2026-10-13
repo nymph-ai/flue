@@ -1,4 +1,4 @@
-/** Durable stream path for an artifact's live event log (P22). */
+/** Durable stream path for an artifact's live event log (live-artifacts). */
 
 export function artifactSlug(artifactId: string): string {
 	const parts = artifactId.replace(/^artifact:\/\//, '').split('/');

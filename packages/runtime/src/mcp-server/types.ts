@@ -97,7 +97,7 @@ export interface AuthRequirements {
 	delegationAllowed?: boolean;
 }
 
-/** P22 artifact tool binding for MCP tools/call authorization (A7). */
+/** Live artifact tool binding for MCP tools/call authorization (A7). */
 export interface ArtifactToolPolicy {
 	readonly tenantId?: string;
 	readonly artifactId?: string;

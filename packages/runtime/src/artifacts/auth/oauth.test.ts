@@ -11,8 +11,8 @@ import {
 const config: OAuthProviderConfig = {
 	enabled: true,
 	issuer: 'https://idp.example',
-	clientId: 'p22-client',
-	clientSecret: 'p22-secret',
+	clientId: 'live-artifacts-client',
+	clientSecret: 'live-artifacts-secret',
 	redirectUri: 'https://app.example/callback',
 	scopes: ['artifact:read'],
 };
@@ -30,7 +30,7 @@ describe('OAuth PKCE client', () => {
 		const fetchImpl: typeof fetch = async (_input, init) => {
 			const params = new URLSearchParams(String(init?.body ?? ''));
 			seenVerifier = params.get('code_verifier') ?? '';
-			expect(params.get('client_secret')).toBe('p22-secret');
+			expect(params.get('client_secret')).toBe('live-artifacts-secret');
 			expect(params.get('code')).toBe('auth-code');
 			if (seenVerifier !== pkce.verifier) {
 				return new Response('bad verifier', { status: 400 });

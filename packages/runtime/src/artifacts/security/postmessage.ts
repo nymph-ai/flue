@@ -1,5 +1,5 @@
 /**
- * Origin-checked postMessage gate (P22-A4 / A11).
+ * Origin-checked postMessage gate (live-artifacts A4 / A11).
  * The sandbox iframe may only accept messages from the host origin.
  */
 

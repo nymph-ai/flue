@@ -1,6 +1,6 @@
 /**
  * Explicit promotion from an ephemeral generated HTML response to a
- * versioned artifact draft (P22-A9).
+ * versioned artifact draft (live-artifacts A9).
  *
  * Promotion never publishes and never reinvokes a model. Live state updates
  * patch the read model; they do not regenerate HTML.

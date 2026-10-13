@@ -1,5 +1,5 @@
 /**
- * MCP tools/call gate for artifact capabilities (P22-A7).
+ * MCP tools/call gate for artifact capabilities (live-artifacts A7).
  *
  * Governed artifact tools never accept a caller-supplied fabricAdmitted flag.
  * Admission is resolved through OperationPort policy via authorizeArtifactActionAsync.

@@ -1,5 +1,5 @@
 /**
- * Host delivery selection (P22-A10).
+ * Host delivery selection (live-artifacts A10).
  *
  * Same artifact id and stream authority on every host. Hosts that cannot
  * subscribe to Electric receive a static snapshot plus a live link.

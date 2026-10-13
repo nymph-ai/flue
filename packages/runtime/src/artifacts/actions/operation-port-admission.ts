@@ -1,5 +1,5 @@
 /**
- * Fabric governed-effect admission via OperationPort (P22-A7).
+ * Fabric governed-effect admission via OperationPort (live-artifacts A7).
  *
  * Callers never supply a fabricAdmitted boolean. Admission is decided by
  * creating a fabric.governed.admit operation and reading its structured result.

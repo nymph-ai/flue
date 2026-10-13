@@ -1,5 +1,5 @@
 /**
- * Draft → review → publish → durable ui:// (P22-A9).
+ * Draft → review → publish → durable ui:// (live-artifacts A9).
  */
 
 import { compileHtmlArtifactBundle } from './bundle/compiler.ts';

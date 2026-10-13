@@ -1,5 +1,5 @@
 /**
- * Deterministic artifact read-model reducer (P22-A5 / A6).
+ * Deterministic artifact read-model reducer (live-artifacts A5 / A6).
  *
  * Idempotent on eventId. Duplicate delivery, retries after a lost append
  * ack, and out-of-order arrival within one epoch converge to one state.

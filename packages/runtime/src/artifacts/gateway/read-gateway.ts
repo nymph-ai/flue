@@ -1,5 +1,5 @@
 /**
- * Streaming read gateway contract (P22-A5).
+ * Streaming read gateway contract (live-artifacts A5).
  *
  * Serves snapshot+cursor bootstrap and resumable SSE without waking AgentDO.
  */

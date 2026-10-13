@@ -6,7 +6,7 @@ declare global {
 		FLUE_STREAMS_URL: string;
 		FLUE_STREAMS_JWKS_URL?: string;
 		FLUE_STREAMS_TOKEN?: string;
-		P22_VIEWER_TOKEN_SECRET: string;
+		LIVE_ARTIFACTS_VIEWER_TOKEN_SECRET: string;
 	}
 }
 

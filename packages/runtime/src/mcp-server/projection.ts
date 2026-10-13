@@ -84,7 +84,7 @@ export interface ProjectionOptions {
 	streamLog?: DurableStreamLog;
 	uiResourceReader?: PersistentUiResourceReader;
 	uiHostActions?: UiHostBridgeActions;
-	/** HMAC secret for artifact viewer tokens on tools/call (P22-A7). */
+	/** HMAC secret for artifact viewer tokens on tools/call (live-artifacts A7). */
 	artifactViewerSecret?: string;
 	isArtifactRevoked?: (artifactId: string) => boolean;
 }

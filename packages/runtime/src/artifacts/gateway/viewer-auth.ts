@@ -1,5 +1,5 @@
 /**
- * Authoritative viewer checks for the read gateway (P22-A7).
+ * Authoritative viewer checks for the read gateway (live-artifacts A7).
  */
 
 import type { ViewerClaims } from '../auth/tokens.ts';

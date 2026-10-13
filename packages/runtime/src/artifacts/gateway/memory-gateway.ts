@@ -1,5 +1,5 @@
 /**
- * In-process read gateway (P22-A5).
+ * In-process read gateway (live-artifacts A5).
  *
  * Viewers bootstrap a consistent snapshot+cursor and follow the log. This
  * object never calls an AgentDO. Authorization is re-checked on every read.

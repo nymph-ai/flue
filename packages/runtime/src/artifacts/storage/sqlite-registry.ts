@@ -1,5 +1,5 @@
 /**
- * Artifact registry on Durable Object SQLite (P22-A3).
+ * Artifact registry on Durable Object SQLite (live-artifacts A3).
  *
  * Metadata and revision CAS live in DO SQL. HTML bytes do not: those go to
  * the content-addressed blob store. Re-opening the same SQL storage restores
@@ -17,7 +17,7 @@ import {
 export class SqliteArtifactRegistry {
 	constructor(private readonly storage: DurableObjectSqliteStorage) {
 		const sql = storage.sql;
-		sql.exec(`CREATE TABLE IF NOT EXISTS p22_artifacts (
+		sql.exec(`CREATE TABLE IF NOT EXISTS live_artifacts (
 			artifact_id TEXT PRIMARY KEY,
 			tenant_id TEXT NOT NULL,
 			owner_principal TEXT NOT NULL,
@@ -26,7 +26,7 @@ export class SqliteArtifactRegistry {
 			head_revision_id TEXT,
 			revoked INTEGER NOT NULL
 		)`);
-		sql.exec(`CREATE TABLE IF NOT EXISTS p22_revisions (
+		sql.exec(`CREATE TABLE IF NOT EXISTS live_artifact_revisions (
 			artifact_id TEXT NOT NULL,
 			revision_id TEXT NOT NULL,
 			parent_revision_id TEXT,
@@ -46,11 +46,11 @@ export class SqliteArtifactRegistry {
 		title?: string;
 	}): void {
 		const existing = this.storage.sql
-			.exec('SELECT artifact_id FROM p22_artifacts WHERE artifact_id = ?', input.artifactId)
+			.exec('SELECT artifact_id FROM live_artifacts WHERE artifact_id = ?', input.artifactId)
 			.toArray();
 		if (existing.length > 0) throw new Error(`Artifact '${input.artifactId}' already exists`);
 		this.storage.sql.exec(
-			`INSERT INTO p22_artifacts
+			`INSERT INTO live_artifacts
 			 (artifact_id, tenant_id, owner_principal, title, created_at, head_revision_id, revoked)
 			 VALUES (?, ?, ?, ?, ?, NULL, 0)`,
 			input.artifactId,
@@ -71,7 +71,7 @@ export class SqliteArtifactRegistry {
 	}): ArtifactRevision {
 		const rows = this.storage.sql
 			.exec(
-				'SELECT revision_id, bundle_digest, ui_resource_uri, cas_token, status, parent_revision_id, published_at FROM p22_revisions WHERE artifact_id = ? AND revision_id = ?',
+				'SELECT revision_id, bundle_digest, ui_resource_uri, cas_token, status, parent_revision_id, published_at FROM live_artifact_revisions WHERE artifact_id = ? AND revision_id = ?',
 				input.artifactId,
 				input.revisionId,
 			)
@@ -96,7 +96,7 @@ export class SqliteArtifactRegistry {
 		const publishedAt = new Date().toISOString();
 		const write = () => {
 			this.storage.sql.exec(
-				`INSERT INTO p22_revisions
+				`INSERT INTO live_artifact_revisions
 				 (artifact_id, revision_id, parent_revision_id, bundle_digest, ui_resource_uri, cas_token, status, published_at)
 				 VALUES (?, ?, ?, ?, ?, ?, 'published', ?)`,
 				input.artifactId,
@@ -108,7 +108,7 @@ export class SqliteArtifactRegistry {
 				publishedAt,
 			);
 			this.storage.sql.exec(
-				'UPDATE p22_artifacts SET head_revision_id = ? WHERE artifact_id = ?',
+				'UPDATE live_artifacts SET head_revision_id = ? WHERE artifact_id = ?',
 				input.revisionId,
 				input.artifactId,
 			);
@@ -128,13 +128,13 @@ export class SqliteArtifactRegistry {
 
 	head(artifactId: string): ArtifactRevision | undefined {
 		const artifacts = this.storage.sql
-			.exec('SELECT head_revision_id FROM p22_artifacts WHERE artifact_id = ?', artifactId)
+			.exec('SELECT head_revision_id FROM live_artifacts WHERE artifact_id = ?', artifactId)
 			.toArray();
 		const headId = artifacts[0]?.head_revision_id;
 		if (typeof headId !== 'string') return undefined;
 		const rows = this.storage.sql
 			.exec(
-				'SELECT revision_id, bundle_digest, ui_resource_uri, cas_token, status, parent_revision_id, published_at FROM p22_revisions WHERE artifact_id = ? AND revision_id = ?',
+				'SELECT revision_id, bundle_digest, ui_resource_uri, cas_token, status, parent_revision_id, published_at FROM live_artifact_revisions WHERE artifact_id = ? AND revision_id = ?',
 				artifactId,
 				headId,
 			)
@@ -145,7 +145,7 @@ export class SqliteArtifactRegistry {
 
 	isArtifactRevoked(artifactId: string): boolean {
 		const rows = this.storage.sql
-			.exec('SELECT revoked FROM p22_artifacts WHERE artifact_id = ?', artifactId)
+			.exec('SELECT revoked FROM live_artifacts WHERE artifact_id = ?', artifactId)
 			.toArray();
 		return Boolean(rows[0]?.revoked);
 	}
@@ -159,8 +159,8 @@ export class SqliteArtifactRegistry {
 		const rows = this.storage.sql
 			.exec(
 				`SELECT r.artifact_id, r.revision_id, r.bundle_digest, r.status, r.ui_resource_uri, a.head_revision_id
-				 FROM p22_revisions r
-				 JOIN p22_artifacts a ON a.artifact_id = r.artifact_id
+				 FROM live_artifact_revisions r
+				 JOIN live_artifacts a ON a.artifact_id = r.artifact_id
 				 WHERE r.ui_resource_uri = ? AND r.revision_id = a.head_revision_id`,
 				uiResourceUri,
 			)
@@ -177,14 +177,14 @@ export class SqliteArtifactRegistry {
 
 	revoke(artifactId: string, revisionId: string): void {
 		const changed = this.storage.sql.exec(
-			`UPDATE p22_revisions SET status = 'revoked' WHERE artifact_id = ? AND revision_id = ?`,
+			`UPDATE live_artifact_revisions SET status = 'revoked' WHERE artifact_id = ? AND revision_id = ?`,
 			artifactId,
 			revisionId,
 		);
 		if ((changed.rowsWritten ?? 0) === 0 && changed.toArray().length === 0) {
 			const found = this.storage.sql
 				.exec(
-					'SELECT revision_id FROM p22_revisions WHERE artifact_id = ? AND revision_id = ?',
+					'SELECT revision_id FROM live_artifact_revisions WHERE artifact_id = ? AND revision_id = ?',
 					artifactId,
 					revisionId,
 				)

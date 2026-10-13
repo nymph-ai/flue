@@ -11,7 +11,7 @@ export async function appendCreating(
 }
 
 /**
- * Append many messages in one POST (P22-A6). One subrequest per stream batch,
+ * Append many messages in one POST (live-artifacts A6). One subrequest per stream batch,
  * plus at most one ensure when the stream is missing.
  */
 export async function appendCreatingMany(

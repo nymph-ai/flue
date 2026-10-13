@@ -1,5 +1,5 @@
 /**
- * P22 artifact hub: registry, producer fence, blobs, and read gateway on one DO.
+ * Live artifact hub: registry, producer fence, blobs, and read gateway on one DO.
  */
 
 import type { DurableObjectSqliteStorage } from '../../cloudflare/do-sqlite-database.ts';
@@ -13,7 +13,7 @@ import type { ReadGatewayPort } from './read-gateway.ts';
 import { RegistryViewerAuthorizationPort } from './registry-viewer-auth.ts';
 import { artifactEventStreamId } from './stream-id.ts';
 
-export interface P22HubComponents {
+export interface LiveArtifactHubComponents {
 	readonly registry: SqliteArtifactRegistry;
 	readonly fenceStore: SqliteProducerFenceStore;
 	readonly blobs: ContentAddressedBlobStore;
@@ -21,19 +21,19 @@ export interface P22HubComponents {
 	readonly streamLog: DurableStreamLog;
 }
 
-export function createP22HubComponents(input: {
+export function createLiveArtifactHubComponents(input: {
 	readonly storage: DurableObjectSqliteStorage;
 	readonly env: Record<string, unknown>;
 	readonly blobBucket: BlobBucket;
 	readonly viewerSecret: string;
-}): P22HubComponents {
+}): LiveArtifactHubComponents {
 	const registry = new SqliteArtifactRegistry(input.storage);
 	const fenceStore = new SqliteProducerFenceStore(input.storage);
 	const blobs = new ContentAddressedBlobStore(input.blobBucket);
 	const streamLog = configuredStreamsLog(input.env);
 	if (!streamLog) {
 		throw new Error(
-			'[p22] Electric streams not configured: set FLUE_STREAMS_URL and optional FLUE_STREAMS / FLUE_STREAMS_TOKEN.',
+			'[live-artifacts] Electric streams not configured: set FLUE_STREAMS_URL and optional FLUE_STREAMS / FLUE_STREAMS_TOKEN.',
 		);
 	}
 	const authorization = new RegistryViewerAuthorizationPort(registry);

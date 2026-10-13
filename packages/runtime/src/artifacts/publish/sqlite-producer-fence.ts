@@ -1,5 +1,5 @@
 /**
- * Durable producer fence in DO SQLite (P22-A6).
+ * Durable producer fence in DO SQLite (live-artifacts A6).
  */
 
 import type { DurableObjectSqliteStorage } from '../../cloudflare/do-sqlite-database.ts';
@@ -7,7 +7,7 @@ import { createFence, stampEvent, type FencedEvent, type ProducerFence } from '.
 
 export class SqliteProducerFenceStore {
 	constructor(private readonly storage: DurableObjectSqliteStorage) {
-		storage.sql.exec(`CREATE TABLE IF NOT EXISTS p22_producer_fence (
+		storage.sql.exec(`CREATE TABLE IF NOT EXISTS live_artifact_producer_fence (
 			producer_id TEXT PRIMARY KEY,
 			epoch INTEGER NOT NULL,
 			seq INTEGER NOT NULL
@@ -16,7 +16,7 @@ export class SqliteProducerFenceStore {
 
 	load(producerId: string): ProducerFence {
 		const rows = this.storage.sql
-			.exec('SELECT epoch, seq FROM p22_producer_fence WHERE producer_id = ?', producerId)
+			.exec('SELECT epoch, seq FROM live_artifact_producer_fence WHERE producer_id = ?', producerId)
 			.toArray();
 		const row = rows[0];
 		if (!row) return createFence(producerId, 1);
@@ -25,7 +25,7 @@ export class SqliteProducerFenceStore {
 
 	save(fence: ProducerFence): void {
 		this.storage.sql.exec(
-			`INSERT INTO p22_producer_fence (producer_id, epoch, seq) VALUES (?, ?, ?)
+			`INSERT INTO live_artifact_producer_fence (producer_id, epoch, seq) VALUES (?, ?, ?)
 			 ON CONFLICT(producer_id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq`,
 			fence.producerId,
 			fence.epoch,

@@ -1,5 +1,5 @@
 /**
- * Local soak for the artifact read path (P22-A12).
+ * Local soak for the artifact read path (live-artifacts A12).
  *
  * One in-memory log, many viewers. This is a scaled smoke of the production
  * viewer SLO (`maxViewersPerArtifact`), not a live Electric or Cloudflare run.

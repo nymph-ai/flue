@@ -57,7 +57,7 @@ describe('artifact SSE worker', () => {
 	it('bootstraps JSON and streams SSE without an AgentDO wake header', async () => {
 		const app = await handler();
 		const boot = await app.fetch(
-			new Request(`https://gw.example/p22/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`, {
+			new Request(`https://gw.example/live-artifacts/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`, {
 				headers: { authorization: `Bearer ${token()}` },
 			}),
 		);
@@ -69,7 +69,7 @@ describe('artifact SSE worker', () => {
 		const controller = new AbortController();
 		const stream = await app.fetch(
 			new Request(
-				`https://gw.example/p22/stream?artifactId=${encodeURIComponent(ARTIFACT)}&cursor=${encodeURIComponent(STREAM_START)}`,
+				`https://gw.example/live-artifacts/stream?artifactId=${encodeURIComponent(ARTIFACT)}&cursor=${encodeURIComponent(STREAM_START)}`,
 				{ headers: { authorization: `Bearer ${token()}` }, signal: controller.signal },
 			),
 		);
@@ -91,11 +91,11 @@ describe('artifact SSE worker', () => {
 	it('refuses a missing token and a token for another artifact', async () => {
 		const app = await handler();
 		const missing = await app.fetch(
-			new Request(`https://gw.example/p22/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`),
+			new Request(`https://gw.example/live-artifacts/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`),
 		);
 		expect(missing.status).toBe(401);
 		const foreign = await app.fetch(
-			new Request(`https://gw.example/p22/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`, {
+			new Request(`https://gw.example/live-artifacts/bootstrap?artifactId=${encodeURIComponent(ARTIFACT)}`, {
 				headers: { authorization: `Bearer ${token('artifact://other/x')}` },
 			}),
 		);

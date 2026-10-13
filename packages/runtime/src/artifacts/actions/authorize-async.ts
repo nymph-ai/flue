@@ -1,5 +1,5 @@
 /**
- * Async artifact action authorization (P22-A7).
+ * Async artifact action authorization (live-artifacts A7).
  */
 
 import type { ViewerClaims } from '../auth/tokens.ts';

@@ -1,10 +1,10 @@
 /**
- * P22 live artifacts read gateway Worker (staging/production).
+ * Live artifacts read gateway Worker (staging/production).
  */
 
-import { P22ArtifactHub } from './artifact-hub-do.ts';
+import { LiveArtifactHub } from './artifact-hub-do.ts';
 
-export { P22ArtifactHub };
+export { LiveArtifactHub };
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
@@ -12,7 +12,7 @@ export default {
 		if (url.pathname === '/health') {
 			return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
 		}
-		if (url.pathname.startsWith('/p22/')) {
+		if (url.pathname.startsWith('/live-artifacts/')) {
 			const id = env.ARTIFACT_HUB.idFromName('primary');
 			const stub = env.ARTIFACT_HUB.get(id);
 			return stub.fetch(request);

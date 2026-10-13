@@ -1,5 +1,5 @@
 /**
- * Immutable content-addressed blob store (P22-A3).
+ * Immutable content-addressed blob store (live-artifacts A3).
  *
  * The registry stores digests. Bytes live here (R2 in production, memory in
  * tests). A second put of the same digest is a no-op; different bytes for the
