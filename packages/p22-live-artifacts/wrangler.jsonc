@@ -6,9 +6,13 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
 	"observability": { "enabled": true },
-	// Electric Agents in fabric-society (tunnel b5c8a1b2-99d5-4914-b64a-a7874383cb5e).
+	// Account 865babfb7b889533bb9357f7c79f1222 — no DNS zones. Reuse the existing
+	// Workers VPC service on tunnel fabric-society (do not create a second service).
 	"vpc_services": [
-		{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }
+		{
+			"binding": "FLUE_STREAMS",
+			"service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7"
+		}
 	],
 	"r2_buckets": [{ "binding": "ARTIFACT_BLOBS", "bucket_name": "p22-live-artifacts" }],
 	"durable_objects": {
