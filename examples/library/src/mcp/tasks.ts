@@ -12,6 +12,8 @@ import { LibraryVault } from '../wiki/storage.ts';
 import type { OKFConceptNote, OKFStoryNote } from '../wiki/types.ts';
 import type {
 	DeliveryRecord,
+	FabricDelivery,
+	FabricMessageIn,
 	SubscriptionRecord,
 	TaskChangedEvent,
 	TaskRecord,
@@ -32,9 +34,36 @@ export interface DurableObjectStateLike {
 	waitUntil?(promise: Promise<unknown>): void;
 }
 
+/** One of the Dot's Fabric tools, called as its proc through dots-host (fabric/DOTS.md D5). */
+export type FabricCaller = (tool: 'send' | 'delegate' | 'query', args: Record<string, unknown>) => Promise<unknown>;
+
 export interface TaskStoreOptions {
 	sql?: SqlStorageLike;
 	ctx?: DurableObjectStateLike;
+	fabric?: FabricCaller;
+}
+
+/** The Dot's proc (fabric/DOTS.md D2). */
+export const DOT_PROC = '/nymphai/dot-chatgpt';
+/** How long a Fabric message's capability lets the Dot act (DOTS D7). */
+export const CAPABILITY_TTL_MS = 7 * 86_400_000;
+/** Calls one capability may make in an hour, and all capabilities in a day. */
+export const CALLS_PER_CAPABILITY_HOUR = 30;
+export const CALLS_PER_DAY = 300;
+
+export class FabricRefusal extends Error {}
+
+async function sha256Hex(text: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+function randomHex(bytes: number): string {
+	return Array.from(crypto.getRandomValues(new Uint8Array(bytes)))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
 }
 
 export function decodeWebhookSecret(secret: string): Uint8Array {
@@ -164,11 +193,16 @@ export class TaskStore {
 	private readonly getVault: () => LibraryVault;
 	private readonly sql?: SqlStorageLike;
 	private readonly ctx?: DurableObjectStateLike;
+	private readonly fabric?: FabricCaller;
+	private readonly eventAudience = new Map<string, string>();
+	private readonly fabricMessages = new Map<string, Record<string, unknown>>();
+	private readonly fabricCalls: Array<{ capabilityHash: string; at: number }> = [];
 
 	constructor(getVault: () => LibraryVault = getOrCreateVault, options?: TaskStoreOptions) {
 		this.getVault = getVault;
 		this.sql = options?.sql;
 		this.ctx = options?.ctx;
+		this.fabric = options?.fabric;
 		if (this.sql) {
 			this.initSchema();
 		}
@@ -261,6 +295,41 @@ export class TaskStore {
 				`CREATE INDEX IF NOT EXISTS idx_mcp_deliveries_task ON mcp_deliveries(task_id)`,
 			);
 			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_vault_files_path ON mcp_vault_files(path)`);
+			// An event with an audience goes to that one subscription only: a
+			// Fabric message is the Dot's, never another subscriber's (DOTS D7).
+			if (
+				!this.sql
+					.exec(`PRAGMA table_info(mcp_events)`)
+					.toArray()
+					.some((c) => c.name === 'audience')
+			) {
+				this.sql.exec(`ALTER TABLE mcp_events ADD COLUMN audience TEXT`);
+			}
+			this.sql.exec(`CREATE TABLE IF NOT EXISTS fabric_messages (
+				message_id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL,
+				event_id TEXT NOT NULL,
+				subscription_id TEXT NOT NULL,
+				from_address TEXT NOT NULL,
+				capability TEXT NOT NULL,
+				capability_hash TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				delivered_at TEXT,
+				replied_at TEXT,
+				created_at TEXT NOT NULL
+			)`);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_fabric_messages_capability ON fabric_messages(capability_hash)`,
+			);
+			this.sql.exec(
+				`CREATE INDEX IF NOT EXISTS idx_fabric_messages_task ON fabric_messages(task_id)`,
+			);
+			this.sql.exec(`CREATE TABLE IF NOT EXISTS fabric_calls (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				capability_hash TEXT NOT NULL,
+				tool TEXT NOT NULL,
+				at TEXT NOT NULL
+			)`);
 			try {
 				this.scrubStoredAuditSecrets();
 			} catch (error) {
@@ -925,8 +994,8 @@ export class TaskStore {
 				now,
 			);
 
-			let query = `SELECT * FROM mcp_events WHERE 1=1`;
-			const bindings: unknown[] = [];
+			let query = `SELECT * FROM mcp_events WHERE (audience IS NULL OR audience = ?)`;
+			const bindings: unknown[] = [subId];
 			if (params.filter?.taskId) {
 				query += ` AND task_id = ?`;
 				bindings.push(params.filter.taskId);
@@ -958,6 +1027,8 @@ export class TaskStore {
 			this.subscriptions.set(subId, subscription);
 			matching = this.events
 				.filter((evt) => {
+					const audience = this.eventAudience.get(evt.eventId);
+					if (audience && audience !== subId) return false;
 					if (params.filter?.taskId && evt.taskId !== params.filter.taskId) return false;
 					if (params.filter?.correlationId && evt.correlationId !== params.filter.correlationId)
 						return false;
@@ -971,7 +1042,7 @@ export class TaskStore {
 		}
 
 		for (const evt of matching) {
-			const p = this.deliverEvent(subscription, evt);
+			const p = this.withFabricMessage(evt).then((e) => this.deliverEvent(subscription, e));
 			if (this.ctx?.waitUntil) this.ctx.waitUntil(p);
 			else void p;
 		}
@@ -1113,15 +1184,15 @@ export class TaskStore {
 		return this.deliveryRecords.filter((d) => d.taskId === taskId);
 	}
 
-	private recordEvent(event: TaskChangedEvent): void {
+	private recordEvent(event: TaskChangedEvent, audience?: string, dispatch = true): void {
 		if (!event.cursor) {
 			event.cursor = String(event.revision);
 		}
 
 		if (this.sql) {
 			this.sql.exec(
-				`INSERT INTO mcp_events (event_id, task_id, correlation_id, event, revision, status, summary, result_reference, error, timestamp)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO mcp_events (event_id, task_id, correlation_id, event, revision, status, summary, result_reference, error, timestamp, audience)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				event.eventId,
 				event.taskId,
 				event.correlationId ?? null,
@@ -1132,10 +1203,13 @@ export class TaskStore {
 				event.resultReference ?? null,
 				event.error ?? null,
 				event.timestamp,
+				audience ?? null,
 			);
+			if (!dispatch) return;
 
 			const subRows = this.sql.exec(`SELECT * FROM mcp_subscriptions`).toArray();
 			for (const r of subRows) {
+				if (audience && String(r.id) !== audience) continue;
 				const filterTaskId = r.filter_task_id ? String(r.filter_task_id) : undefined;
 				const filterCorrelationId = r.filter_correlation_id
 					? String(r.filter_correlation_id)
@@ -1158,9 +1232,12 @@ export class TaskStore {
 			}
 		} else {
 			this.events.push(event);
+			if (audience) this.eventAudience.set(event.eventId, audience);
+			if (!dispatch) return;
 
 			// Dispatch to all active subscriptions matching filter
 			for (const sub of this.subscriptions.values()) {
+				if (audience && sub.id !== audience) continue;
 				if (sub.filter?.taskId && sub.filter.taskId !== event.taskId) continue;
 				if (sub.filter?.correlationId && sub.filter.correlationId !== event.correlationId) continue;
 				const p = this.deliverEvent(sub, event);
@@ -1170,7 +1247,10 @@ export class TaskStore {
 		}
 	}
 
-	private async deliverEvent(sub: SubscriptionRecord, event: TaskChangedEvent): Promise<void> {
+	private async deliverEvent(
+		sub: SubscriptionRecord,
+		event: TaskChangedEvent,
+	): Promise<{ ok: boolean; status?: number; error?: string }> {
 		const cursor = event.cursor ?? String(event.revision);
 		const eventData = {
 			event: 'task_changed',
@@ -1184,6 +1264,7 @@ export class TaskStore {
 			resultReference: event.resultReference,
 			error: event.error,
 			timestamp: event.timestamp,
+			...(event.fabricMessage ? { kind: 'fabric_message', fabricMessage: event.fabricMessage } : {}),
 		};
 		const eventEnvelope = {
 			eventId: event.eventId,
@@ -1284,6 +1365,7 @@ export class TaskStore {
 					timestamp: now,
 				});
 			}
+			return { ok: res.ok, status: res.status };
 		} catch (err) {
 			const errMsg = err instanceof Error ? err.message : String(err);
 			this.logAudit('mcp:deliverEvent:error', {
@@ -1321,6 +1403,366 @@ export class TaskStore {
 					timestamp: now,
 				});
 			}
+			return { ok: false, error: errMsg };
+		}
+	}
+
+	// ─── Fabric: the operator's Dot as a Fabric proc (fabric/DOTS.md) ─────────
+
+	private subscriptionById(id: string): SubscriptionRecord | null {
+		if (!this.sql) return this.subscriptions.get(id) ?? null;
+		const r = this.sql.exec(`SELECT * FROM mcp_subscriptions WHERE id = ?`, id).toArray()[0];
+		if (!r) return null;
+		const taskId = r.filter_task_id ? String(r.filter_task_id) : undefined;
+		const correlationId = r.filter_correlation_id ? String(r.filter_correlation_id) : undefined;
+		return {
+			id: String(r.id),
+			callbackUrl: String(r.callback_url),
+			secret: r.secret ? String(r.secret) : undefined,
+			filter: taskId || correlationId ? { taskId, correlationId } : undefined,
+			createdAt: String(r.created_at),
+		};
+	}
+
+	private fabricMessageRow(where: 'message_id' | 'task_id' | 'capability_hash', value: string) {
+		if (!this.sql) {
+			for (const row of this.fabricMessages.values()) if (row[where] === value) return row;
+			return null;
+		}
+		return (
+			this.sql.exec(`SELECT * FROM fabric_messages WHERE ${where} = ?`, value).toArray()[0] ??
+			null
+		);
+	}
+
+	/** An event of a Fabric message's task carries the message to the Dot. */
+	private async withFabricMessage(event: TaskChangedEvent): Promise<TaskChangedEvent> {
+		if (event.fabricMessage || event.status !== 'input_required') return event;
+		const row = this.fabricMessageRow('task_id', event.taskId);
+		if (!row) return event;
+		const task = this.getTask(event.taskId);
+		const payload = (task?.payload ?? {}) as Record<string, unknown>;
+		return {
+			...event,
+			fabricMessage: {
+				messageId: String(row.message_id),
+				from: String(row.from_address),
+				text: String(payload.text ?? ''),
+				inReplyTo: (payload.in_reply_to as string | null | undefined) ?? null,
+				expectsReply: payload.expects_reply === true,
+				sentAt: payload.sent_at ? String(payload.sent_at) : undefined,
+				replyCapability: String(row.capability),
+				capabilityExpiresAt: String(row.expires_at),
+				howToReply:
+					'Answer with acknowledge_result(task_id, receipt: {reply: "<your answer>", capability: "<replyCapability>"}). ' +
+					'To message another Fabric agent, delegate work, or read Fabric, call send, delegate or query with the same capability.',
+			},
+		};
+	}
+
+	/**
+	 * A message from Fabric for the Dot (DOTS D4): a `fabric_message` task under
+	 * the Dot's subscription, whose `task_changed` event goes to that
+	 * subscription alone and is sent before this returns. Idempotent by the
+	 * Fabric message id: a message dots-host sends again is the same task and
+	 * the same event, and one already delivered is not sent again.
+	 */
+	async deliverFabricMessage(
+		message: FabricMessageIn,
+		subscriptionId: string | undefined,
+	): Promise<FabricDelivery> {
+		if (
+			!message ||
+			typeof message.message_id !== 'string' ||
+			!message.message_id ||
+			typeof message.text !== 'string' ||
+			typeof message.from !== 'string'
+		) {
+			return { delivered: false, reason: 'invalid' };
+		}
+		const sub = subscriptionId ? this.subscriptionById(subscriptionId) : null;
+		if (!sub) return { delivered: false, reason: 'no_subscription' };
+
+		let row = this.fabricMessageRow('message_id', message.message_id);
+		if (row?.delivered_at) {
+			return { delivered: true, taskId: String(row.task_id) };
+		}
+		let event: TaskChangedEvent;
+		if (row) {
+			const stored = this.listEvents({ taskId: String(row.task_id) }).find(
+				(e) => e.eventId === String(row!.event_id),
+			);
+			if (!stored) return { delivered: false, reason: 'invalid' };
+			event = stored;
+		} else {
+			const now = new Date();
+			const taskId = `task_${randomHex(8)}`;
+			const eventId = `evt_${randomHex(8)}`;
+			const capability = `cap_${randomHex(16)}`;
+			const expiresAt = new Date(now.getTime() + CAPABILITY_TTL_MS).toISOString();
+			const correlationId = sub.filter?.correlationId;
+			const summary =
+				`Fabric message from ${message.from}${message.expects_reply ? ' (expects a reply)' : ''}: ` +
+				message.text.slice(0, 500) +
+				(message.text.length > 500 ? '…' : '');
+			const payload = {
+				kind: 'fabric_message',
+				message_id: message.message_id,
+				from: message.from,
+				text: message.text,
+				in_reply_to: message.in_reply_to ?? null,
+				expects_reply: message.expects_reply === true,
+				sent_at: message.sent_at,
+				proc: DOT_PROC,
+			};
+			const at = now.toISOString();
+			const task: TaskRecord = {
+				id: taskId,
+				correlationId,
+				type: 'fabric_message',
+				status: 'input_required',
+				revision: 1,
+				summary,
+				payload,
+				createdAt: at,
+				updatedAt: at,
+			};
+			row = {
+				message_id: message.message_id,
+				task_id: taskId,
+				event_id: eventId,
+				subscription_id: sub.id,
+				from_address: message.from,
+				capability,
+				capability_hash: await sha256Hex(capability),
+				expires_at: expiresAt,
+				delivered_at: null,
+				replied_at: null,
+				created_at: at,
+			};
+			if (this.sql) {
+				this.sql.exec(
+					`INSERT INTO mcp_tasks (id, correlation_id, type, status, revision, summary, payload, created_at, updated_at)
+					 VALUES (?, ?, 'fabric_message', 'input_required', 1, ?, ?, ?, ?)`,
+					taskId,
+					correlationId ?? null,
+					summary,
+					JSON.stringify(payload),
+					at,
+					at,
+				);
+				this.sql.exec(
+					`INSERT INTO fabric_messages (message_id, task_id, event_id, subscription_id, from_address, capability, capability_hash, expires_at, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					row.message_id,
+					taskId,
+					eventId,
+					sub.id,
+					message.from,
+					capability,
+					row.capability_hash,
+					expiresAt,
+					at,
+				);
+			} else {
+				this.tasks.set(taskId, task);
+				this.fabricMessages.set(message.message_id, row);
+			}
+			event = {
+				event: 'task_changed',
+				eventId,
+				taskId,
+				correlationId,
+				revision: 1,
+				cursor: '1',
+				status: 'input_required',
+				summary,
+				timestamp: at,
+			};
+			this.recordEvent(event, sub.id, false);
+		}
+		const sent = await this.deliverEvent(sub, await this.withFabricMessage(event));
+		if (!sent.ok) {
+			return {
+				delivered: false,
+				taskId: String(row.task_id),
+				statusCode: sent.status,
+				reason: sent.status ? 'webhook_refused' : 'webhook_unreachable',
+			};
+		}
+		const deliveredAt = new Date().toISOString();
+		if (this.sql) {
+			this.sql.exec(
+				`UPDATE fabric_messages SET delivered_at = ? WHERE message_id = ?`,
+				deliveredAt,
+				message.message_id,
+			);
+		} else {
+			row.delivered_at = deliveredAt;
+		}
+		return { delivered: true, taskId: String(row.task_id), statusCode: sent.status };
+	}
+
+	/**
+	 * Checks a capability the Dot quoted (DOTS D7): it must name a Fabric
+	 * message delivered to the Dot's subscription, be unexpired, and be within
+	 * the call budget. Each accepted call is counted.
+	 */
+	private async admitCapability(capability: unknown, tool: string): Promise<Record<string, unknown>> {
+		if (typeof capability !== 'string' || !capability.startsWith('cap_')) {
+			throw new FabricRefusal(
+				'Fabric tools need the capability from a Fabric message event (fabricMessage.replyCapability).',
+			);
+		}
+		const hash = await sha256Hex(capability);
+		const row = this.fabricMessageRow('capability_hash', hash);
+		if (!row || !row.delivered_at) throw new FabricRefusal('That capability is not one Fabric gave the Dot.');
+		if (Date.parse(String(row.expires_at)) <= Date.now()) {
+			throw new FabricRefusal('That capability has expired; use the one from a newer Fabric message.');
+		}
+		const now = Date.now();
+		const hourAgo = new Date(now - 3_600_000).toISOString();
+		const dayAgo = new Date(now - 86_400_000).toISOString();
+		let perCapability: number;
+		let perDay: number;
+		if (this.sql) {
+			this.sql.exec(`DELETE FROM fabric_calls WHERE at < ?`, new Date(now - 2 * 86_400_000).toISOString());
+			perCapability = Number(
+				this.sql
+					.exec(`SELECT COUNT(*) AS n FROM fabric_calls WHERE capability_hash = ? AND at >= ?`, hash, hourAgo)
+					.toArray()[0]?.n ?? 0,
+			);
+			perDay = Number(
+				this.sql.exec(`SELECT COUNT(*) AS n FROM fabric_calls WHERE at >= ?`, dayAgo).toArray()[0]?.n ?? 0,
+			);
+		} else {
+			perCapability = this.fabricCalls.filter((c) => c.capabilityHash === hash && c.at >= now - 3_600_000).length;
+			perDay = this.fabricCalls.filter((c) => c.at >= now - 86_400_000).length;
+		}
+		if (perCapability >= CALLS_PER_CAPABILITY_HOUR || perDay >= CALLS_PER_DAY) {
+			throw new FabricRefusal(
+				`Fabric call budget spent (${CALLS_PER_CAPABILITY_HOUR} an hour per capability, ${CALLS_PER_DAY} a day); try later.`,
+			);
+		}
+		if (this.sql) {
+			this.sql.exec(
+				`INSERT INTO fabric_calls (capability_hash, tool, at) VALUES (?, ?, ?)`,
+				hash,
+				tool,
+				new Date(now).toISOString(),
+			);
+		} else {
+			this.fabricCalls.push({ capabilityHash: hash, at: now });
+		}
+		return row;
+	}
+
+	/** One of the Dot's Fabric tools (DOTS D5), behind its capability (D7). */
+	async fabricCall(
+		tool: 'send' | 'delegate' | 'query',
+		args: Record<string, unknown>,
+	): Promise<unknown> {
+		if (!this.fabric) throw new FabricRefusal('Fabric is not connected to this library.');
+		const { capability, ...rest } = args;
+		await this.admitCapability(capability, tool);
+		this.logAudit('fabric:call', { tool, to: typeof rest.to === 'string' ? rest.to : undefined });
+		return this.fabric(tool, rest);
+	}
+
+	/**
+	 * acknowledge_result on a Fabric message's task: the Dot's answer, sent to
+	 * the message's sender in its thread (reply_to the Fabric message), and the
+	 * task completed. The receipt must quote that message's capability.
+	 */
+	async replyFabricMessage(
+		taskId: string,
+		receipt: unknown,
+	): Promise<{ replied: boolean; sent?: unknown } | null> {
+		const row = this.fabricMessageRow('task_id', taskId);
+		if (!row) return null;
+		const r = (receipt ?? {}) as Record<string, unknown>;
+		const capability = r.capability;
+		if (typeof capability !== 'string' || (await sha256Hex(capability)) !== String(row.capability_hash)) {
+			throw new FabricRefusal(
+				'This task is a Fabric message: quote its capability (fabricMessage.replyCapability) in receipt.capability.',
+			);
+		}
+		const reply = typeof r.reply === 'string' ? r.reply : typeof r.text === 'string' ? r.text : undefined;
+		let sent: unknown;
+		if (reply) {
+			if (!this.fabric) throw new FabricRefusal('Fabric is not connected to this library.');
+			await this.admitCapability(capability, 'send');
+			sent = await this.fabric('send', {
+				to: String(row.from_address),
+				text: reply,
+				reply_to: String(row.message_id),
+			});
+		}
+		const task = this.getTask(taskId);
+		if (task && task.status === 'input_required') {
+			const now = new Date().toISOString();
+			const revision = task.revision + 1;
+			const summary = reply
+				? `Answered Fabric message ${String(row.message_id)} to ${String(row.from_address)}; nothing further is owed.`
+				: `Fabric message ${String(row.message_id)} acknowledged; nothing further is owed.`;
+			if (this.sql) {
+				this.sql.exec(
+					`UPDATE mcp_tasks SET status = 'completed', revision = ?, summary = ?, updated_at = ? WHERE id = ?`,
+					revision,
+					summary,
+					now,
+					taskId,
+				);
+				this.sql.exec(
+					`UPDATE fabric_messages SET replied_at = ? WHERE task_id = ?`,
+					reply ? now : null,
+					taskId,
+				);
+			} else {
+				Object.assign(task, { status: 'completed', revision, summary, updatedAt: now });
+				this.tasks.set(taskId, task);
+				if (reply) row.replied_at = now;
+			}
+			this.recordEvent(
+				{
+					event: 'task_changed',
+					eventId: `evt_${randomHex(8)}`,
+					taskId,
+					correlationId: task.correlationId,
+					revision,
+					status: 'completed',
+					summary,
+					timestamp: now,
+				},
+				String(row.subscription_id),
+			);
+		}
+		return { replied: Boolean(reply), sent };
+	}
+
+	/** fabricCall, a refusal given back as `{refused}` (it crosses DO RPC). */
+	async fabricTool(
+		tool: 'send' | 'delegate' | 'query',
+		args: Record<string, unknown>,
+	): Promise<{ result?: unknown; refused?: string }> {
+		try {
+			return { result: await this.fabricCall(tool, args) };
+		} catch (error) {
+			if (error instanceof FabricRefusal) return { refused: error.message };
+			throw error;
+		}
+	}
+
+	/** replyFabricMessage, a refusal given back as `{refused}`; `null` result for a task that is not a Fabric message. */
+	async fabricReply(
+		taskId: string,
+		receipt: unknown,
+	): Promise<{ result?: { replied: boolean; sent?: unknown } | null; refused?: string }> {
+		try {
+			return { result: await this.replyFabricMessage(taskId, receipt) };
+		} catch (error) {
+			if (error instanceof FabricRefusal) return { refused: error.message };
+			throw error;
 		}
 	}
 
@@ -1632,6 +2074,32 @@ export class TaskStore {
 	}
 }
 
+/**
+ * The Dot's way to Fabric (fabric/DOTS.md D5): the service binding
+ * FABRIC_DOTS to the Worker fabric-cursor-tools' DotsLibrary entrypoint,
+ * whose relay carries the call to dots-host, which makes it as the Dot's proc.
+ * FABRIC_DOTS_TOKEN (D6) is what dots-host checks.
+ */
+export function fabricCaller(env: Record<string, unknown> | undefined): FabricCaller | undefined {
+	const binding = env?.FABRIC_DOTS as { fetch(request: Request): Promise<Response> } | undefined;
+	const token = env?.FABRIC_DOTS_TOKEN;
+	if (!binding || typeof binding.fetch !== 'function' || typeof token !== 'string' || !token) {
+		return undefined;
+	}
+	return async (tool, args) => {
+		const response = await binding.fetch(
+			new Request('https://fabric-dots/library/call', {
+				method: 'POST',
+				headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ tool, arguments: args }),
+			}),
+		);
+		const text = await response.text();
+		if (!response.ok) throw new FabricRefusal(`Fabric did not answer (${response.status}): ${text.slice(0, 300)}`);
+		return JSON.parse(text);
+	};
+}
+
 let defaultTaskStore: TaskStore | null = null;
 
 export function getOrCreateTaskStore(
@@ -1667,6 +2135,7 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 				this.mcpTaskStore = new TaskStore(() => getOrCreateVault(env), {
 					sql: ctx?.storage?.sql,
 					ctx,
+					fabric: fabricCaller(env),
 				});
 			}
 			return this.mcpTaskStore;
@@ -1738,6 +2207,18 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 
 		async logMcpAudit(category: string, details: Record<string, unknown>): Promise<void> {
 			this.getMcpStore().logAudit(category, details);
+		}
+
+		async deliverFabricMessage(message: FabricMessageIn, subscriptionId: string | undefined) {
+			return this.getMcpStore().deliverFabricMessage(message, subscriptionId);
+		}
+
+		async fabricMcpTool(tool: 'send' | 'delegate' | 'query', args: Record<string, unknown>) {
+			return this.getMcpStore().fabricTool(tool, args);
+		}
+
+		async fabricMcpReply(taskId: string, receipt: unknown) {
+			return this.getMcpStore().fabricReply(taskId, receipt);
 		}
 
 		async listMcpSubscriptions() {

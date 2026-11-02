@@ -15,6 +15,12 @@
 		{ "binding": "FLUE_STREAMS", "service_id": "01a0f462-e30b-7df3-bae8-e64c24c720c7" }
 	],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	// The Dot's way to Fabric (nymphai fabric/DOTS.md D5): the Worker
+	// fabric-cursor-tools' DotsLibrary entrypoint, reachable only by service
+	// binding, relays each call to dots-host in the cluster.
+	"services": [
+		{ "binding": "FABRIC_DOTS", "service": "fabric-cursor-tools", "entrypoint": "DotsLibrary" }
+	],
 	"artifacts": [
 		{ "binding": "ARTIFACTS", "namespace": "default" }
 	],
@@ -48,6 +54,9 @@
 		"LIVE_MODEL": "meta/muse-spark-1.3-contributor",
 		"SCRIPTED_TOKENS_PER_SECOND": "50",
 		// Serves /qual/* when the build compiled it in (QUALIFICATION=1 vite build).
-		"QUALIFICATION": "1"
+		"QUALIFICATION": "1",
+		// The operator's ChatGPT connector's events subscription (DOTS D3): the
+		// only subscription Fabric messages, and the capabilities they carry, go to.
+		"DOT_SUBSCRIPTION_ID": "sub_c8f786f5d3f47887eb56582b0742ce79"
 	}
 }
