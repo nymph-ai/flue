@@ -5,6 +5,7 @@
  * Backed by Cloudflare Durable Object SQLite (ctx.storage.sql) with in-memory fallback.
  */
 import { liveModel } from '../model.ts';
+import { redactSecrets, secretFingerprint } from './redact.ts';
 import { formatConceptNote, slugify } from '../wiki/okf.ts';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
@@ -260,6 +261,11 @@ export class TaskStore {
 				`CREATE INDEX IF NOT EXISTS idx_mcp_deliveries_task ON mcp_deliveries(task_id)`,
 			);
 			this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_vault_files_path ON mcp_vault_files(path)`);
+			try {
+				this.scrubStoredAuditSecrets();
+			} catch (error) {
+				console.error('[flue:mcp] audit secret scrub failed', error);
+			}
 
 			// Resume any pending or interrupted tasks from prior boot
 			const pending = this.sql
@@ -274,7 +280,94 @@ export class TaskStore {
 		}
 	}
 
+	/**
+	 * Audit rows written before redaction existed carry subscribers' delivery
+	 * secrets in rawParams. Rewrite them once; the marker row makes it a no-op
+	 * on every later boot.
+	 */
+	private scrubStoredAuditSecrets(): void {
+		if (!this.sql) return;
+		this.sql.exec(`CREATE TABLE IF NOT EXISTS mcp_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+		const marker = 'audit_secrets_redacted_v1';
+		if (this.sql.exec(`SELECT key FROM mcp_meta WHERE key = ?`, marker).toArray()[0]) return;
+		let rewritten = 0;
+		for (const row of this.sql.exec(`SELECT id, details FROM mcp_audit_logs`).toArray()) {
+			const before = String(row.details ?? '');
+			let after = before;
+			try {
+				after = JSON.stringify(redactSecrets(JSON.parse(before)));
+			} catch {
+				after = JSON.stringify(redactSecrets(before));
+			}
+			if (after !== before) {
+				this.sql.exec(`UPDATE mcp_audit_logs SET details = ? WHERE id = ?`, after, row.id);
+				rewritten++;
+			}
+		}
+		this.sql.exec(
+			`INSERT INTO mcp_meta (key, value) VALUES (?, ?)`,
+			marker,
+			JSON.stringify({ at: new Date().toISOString(), rewritten }),
+		);
+	}
+
+	/** Subscriptions as an operator may see them: never the secret, only its fingerprint. */
+	async listSubscriptions(): Promise<
+		Array<{
+			id: string;
+			callbackUrl: string;
+			filter?: { taskId?: string; correlationId?: string };
+			createdAt: string;
+			lastSubscribedAt: string | null;
+			secretFingerprint: string | null;
+		}>
+	> {
+		const records: SubscriptionRecord[] = this.sql
+			? this.sql
+					.exec(`SELECT * FROM mcp_subscriptions ORDER BY created_at ASC`)
+					.toArray()
+					.map((r) => ({
+						id: String(r.id),
+						callbackUrl: String(r.callback_url),
+						secret: r.secret ? String(r.secret) : undefined,
+						filter:
+							r.filter_task_id || r.filter_correlation_id
+								? {
+										taskId: r.filter_task_id ? String(r.filter_task_id) : undefined,
+										correlationId: r.filter_correlation_id
+											? String(r.filter_correlation_id)
+											: undefined,
+									}
+								: undefined,
+						createdAt: String(r.created_at),
+					}))
+			: [...this.subscriptions.values()];
+		const out = [];
+		for (const sub of records) {
+			let lastSubscribedAt: string | null = null;
+			if (this.sql) {
+				const row = this.sql
+					.exec(
+						`SELECT MAX(timestamp) AS at FROM mcp_audit_logs WHERE category = 'events/subscribe:success' AND details LIKE ?`,
+						`%"subId":"${sub.id}"%`,
+					)
+					.toArray()[0];
+				lastSubscribedAt = row?.at ? String(row.at) : null;
+			}
+			out.push({
+				id: sub.id,
+				callbackUrl: redactSecrets(sub.callbackUrl),
+				filter: sub.filter,
+				createdAt: sub.createdAt,
+				lastSubscribedAt,
+				secretFingerprint: await secretFingerprint(sub.secret),
+			});
+		}
+		return out;
+	}
+
 	logAudit(category: string, details: Record<string, unknown>): void {
+		details = redactSecrets(details);
 		const id = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 		const timestamp = new Date().toISOString();
 		if (this.sql) {
@@ -306,14 +399,14 @@ export class TaskStore {
 				return rows.map((r) => ({
 					id: String(r.id),
 					category: String(r.category),
-					details: r.details ? JSON.parse(String(r.details)) : null,
+					details: r.details ? redactSecrets(JSON.parse(String(r.details))) : null,
 					timestamp: String(r.timestamp),
 				}));
 			} catch {
 				return [];
 			}
 		}
-		return this.auditLogs.slice(0, limit);
+		return redactSecrets(this.auditLogs.slice(0, limit));
 	}
 
 	saveNote(path: string, content: string): void {
@@ -1141,7 +1234,7 @@ export class TaskStore {
 
 		try {
 			console.log(
-				`[mcp:deliverEvent] Delivering event ${event.eventId} (status=${event.status}) to ${sub.callbackUrl}`,
+				`[mcp:deliverEvent] Delivering event ${event.eventId} (status=${event.status}) to ${redactSecrets(sub.callbackUrl)}`,
 			);
 			const res = await fetch(sub.callbackUrl, {
 				method: 'POST',
@@ -1645,6 +1738,10 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 
 		async logMcpAudit(category: string, details: Record<string, unknown>): Promise<void> {
 			this.getMcpStore().logAudit(category, details);
+		}
+
+		async listMcpSubscriptions() {
+			return this.getMcpStore().listSubscriptions();
 		}
 
 		async getMcpAuditLogs(

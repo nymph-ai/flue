@@ -18,6 +18,14 @@ import { createMcpRouter } from '../src/mcp/router.ts';
 import { TaskStore } from '../src/mcp/tasks.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
+import { REDACTED, redactSecrets } from '../src/mcp/redact.ts';
+
+const OPERATOR_TOKEN = 'operator-test-token';
+const OPERATOR_ENV = { LIBRARY_TOKEN: OPERATOR_TOKEN };
+const operator = (init: RequestInit = {}): RequestInit => ({
+	...init,
+	headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${OPERATOR_TOKEN}` },
+});
 import type { OKFConceptNote, OKFStoryNote } from '../src/wiki/types.ts';
 import { curateStory, rebuildIndex, searchVault } from '../src/agent.ts';
 
@@ -1001,7 +1009,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 
 		try {
 			// Clear test callback inbox
-			await app.request('/mcp/test-callback', { method: 'DELETE' });
+			await app.request('/mcp/test-callback', operator({ method: 'DELETE' }), OPERATOR_ENV);
 
 			const testSecret = 'dots_webhook_hmac_secret_super_secure_998';
 			const correlationId = 'dots-thread-wake-test-001';
@@ -1082,7 +1090,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
 			// 4. Verify the webhook receiver caught the wake callback with a verified HMAC signature
-			const resCallbacks = await app.request('/mcp/test-callback');
+			const resCallbacks = await app.request('/mcp/test-callback', operator(), OPERATOR_ENV);
 			expect(resCallbacks.status).toBe(200);
 			const callbacksData = (await resCallbacks.json()) as {
 				total: number;
@@ -1170,7 +1178,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(resAck.status).toBe(200);
 
 			// 7. Verify delivery audit trail
-			const resDeliveries = await app.request(`/mcp/deliveries/${taskId}`);
+			const resDeliveries = await app.request(`/mcp/deliveries/${taskId}`, operator(), OPERATOR_ENV);
 			expect(resDeliveries.status).toBe(200);
 			const deliveriesData = (await resDeliveries.json()) as {
 				total: number;
@@ -1181,7 +1189,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(deliveriesData.deliveries[0]?.statusCode).toBe(200);
 
 			// 8. Verify audit logs
-			const resAudit = await app.request('/mcp/audit-logs');
+			const resAudit = await app.request('/mcp/audit-logs', operator(), OPERATOR_ENV);
 			expect(resAudit.status).toBe(200);
 			const auditData = (await resAudit.json()) as {
 				total: number;
@@ -1212,7 +1220,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 
 		try {
-			await app.request('/mcp/test-callback', { method: 'DELETE' });
+			await app.request('/mcp/test-callback', operator({ method: 'DELETE' }), OPERATOR_ENV);
 
 			// Standard OpenAI whsec_ secret with URL-safe base64 (- and _) and unpadded
 			const urlSafeSecret = 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-1_abc99';
@@ -1237,7 +1245,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			const subJson = (await resSub.json()) as any;
 			expect(subJson.result.id).toMatch(/^sub_/);
 
-			const resInbox = await app.request('/mcp/test-callback');
+			const resInbox = await app.request('/mcp/test-callback', operator(), OPERATOR_ENV);
 			const inbox = (await resInbox.json()) as {
 				callbacks: Array<{ headers: Record<string, string>; payload: any }>;
 			};
@@ -1252,7 +1260,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		}
 	});
 
-	it('handles exact OpenAI ChatGPT events/subscribe payload structure with arguments.filter and exposes get_audit_logs tool', async () => {
+	it('handles exact OpenAI ChatGPT events/subscribe payload structure with arguments.filter and keeps its delivery secret out of every route', async () => {
 		const originalFetch = globalThis.fetch;
 		vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
 			const urlStr =
@@ -1268,7 +1276,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		});
 
 		try {
-			await app.request('/mcp/test-callback', { method: 'DELETE' });
+			await app.request('/mcp/test-callback', operator({ method: 'DELETE' }), OPERATOR_ENV);
 
 			const secret = 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-1_abc99';
 			const correlationId = 'nyai-wake-test-20261003-exact-openai';
@@ -1304,7 +1312,18 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 			expect(subJson.result.cursor).toBeNull();
 			expect(subJson.result.truncated).toBe(false);
 
-			// Verify get_audit_logs MCP tool
+			// The audit log is an operator route; it never returns the delivery secret.
+			const anonymousAudit = await app.request('/mcp/audit-logs');
+			expect(anonymousAudit.status).toBe(401);
+			const resAudit = await app.request('/mcp/audit-logs', operator(), OPERATOR_ENV);
+			expect(resAudit.status).toBe(200);
+			const auditText = await resAudit.text();
+			expect(auditText).toContain('events/subscribe:received');
+			expect(auditText).toContain('events/subscribe:success');
+			expect(auditText).not.toContain(secret);
+			expect(auditText).not.toContain('whsec_');
+
+			// No tool exposes the audit log over the anonymous MCP surface.
 			const resTool = await app.request('/mcp', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -1312,16 +1331,22 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 					jsonrpc: '2.0',
 					id: 12,
 					method: 'tools/call',
-					params: {
-						name: 'get_audit_logs',
-						arguments: { limit: 10 },
-					},
+					params: { name: 'get_audit_logs', arguments: { limit: 10 } },
 				}),
 			});
-			expect(resTool.status).toBe(200);
 			const toolJson = (await resTool.json()) as any;
-			expect(toolJson.result.content[0].text).toContain('events/subscribe:received');
-			expect(toolJson.result.content[0].text).toContain('events/subscribe:success');
+			expect(toolJson.error?.code).toBe(-32601);
+
+			const resSubs = await app.request('/mcp/subscriptions', operator(), OPERATOR_ENV);
+			const subsText = await resSubs.text();
+			expect(subsText).toContain(subJson.result.id);
+			expect(subsText).not.toContain(secret);
+			const subs = JSON.parse(subsText) as {
+				subscriptions: Array<{ id: string; secretFingerprint: string | null }>;
+			};
+			expect(subs.subscriptions.find((x) => x.id === subJson.result.id)?.secretFingerprint).toMatch(
+				/^[0-9a-f]{8}$/,
+			);
 		} finally {
 			vi.unstubAllGlobals();
 		}
@@ -1416,5 +1441,73 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		}
 
 		db.close();
+	});
+
+	it('redacts delivery secrets from audit details, including rows stored before redaction', async () => {
+		const secret = 'whsec_c2VjcmV0LWZvci10ZXN0cy1vbmx5';
+		expect(
+			redactSecrets({
+				rawParams: { delivery: { url: `https://x.test/cb?secret=${secret}`, secret } },
+				secretPresent: true,
+				note: `key ${secret} here`,
+			}),
+		).toEqual({
+			rawParams: { delivery: { url: `https://x.test/cb?secret=${REDACTED}`, secret: REDACTED } },
+			secretPresent: true,
+			note: `key ${REDACTED} here`,
+		});
+
+		const db = new DatabaseSync(':memory:');
+		const sql = {
+			exec: (query: string, ...bindings: unknown[]) => {
+				const stmt = db.prepare(query);
+				const clean = bindings.map((b) => (b === undefined ? null : b));
+				if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(query)) {
+					const rows = stmt.all(...(clean as never[])) as Record<string, unknown>[];
+					return { toArray: () => rows };
+				}
+				stmt.run(...(clean as never[]));
+				return { toArray: () => [] };
+			},
+		};
+		db.exec(`CREATE TABLE mcp_audit_logs (id TEXT PRIMARY KEY, category TEXT NOT NULL, details TEXT NOT NULL, timestamp TEXT NOT NULL)`);
+		db.prepare(`INSERT INTO mcp_audit_logs VALUES (?, ?, ?, ?)`).run(
+			'aud_old',
+			'events/subscribe:received',
+			JSON.stringify({ subId: 'sub_old', rawParams: { delivery: { mode: 'webhook', secret } } }),
+			'2026-10-03T00:00:00.000Z',
+		);
+		const store = new TaskStore(() => new LibraryVault(), { sql });
+		const stored = db.prepare(`SELECT details FROM mcp_audit_logs WHERE id = 'aud_old'`).get() as {
+			details: string;
+		};
+		expect(stored.details).not.toContain(secret);
+		expect(JSON.parse(stored.details).rawParams.delivery.secret).toBe(REDACTED);
+
+		store.logAudit('events/subscribe:received', { rawParams: { delivery: { secret } } });
+		expect(JSON.stringify(store.getAuditLogs(10))).not.toContain(secret);
+		const all = db.prepare(`SELECT details FROM mcp_audit_logs`).all() as Array<{ details: string }>;
+		expect(all.every((r) => !r.details.includes(secret))).toBe(true);
+
+		// The scrub runs once: a second store on the same database finds its marker.
+		new TaskStore(() => new LibraryVault(), { sql });
+		const markers = db.prepare(`SELECT key FROM mcp_meta`).all();
+		expect(markers).toHaveLength(1);
+		db.close();
+	});
+
+	it('serves operator routes only to the LIBRARY_TOKEN bearer', async () => {
+		for (const path of ['/wiki/manifest', '/mcp/audit-logs', '/mcp/subscriptions', '/mcp/deliveries', '/mcp/test-callback', '/mcp/events', '/mcp/tasks/task_x']) {
+			expect((await app.request(path, {}, OPERATOR_ENV)).status, path).toBe(401);
+			expect(
+				(await app.request(path, { headers: { authorization: 'Bearer wrong-token-of-same-length' } }, OPERATOR_ENV)).status,
+				path,
+			).toBe(401);
+		}
+		const token = await app.request('/wiki/git/token', { method: 'POST' }, OPERATOR_ENV);
+		expect(token.status).toBe(401);
+		expect((await app.request('/mcp/subscriptions', operator(), OPERATOR_ENV)).status).toBe(200);
+		// The connector's own surface stays anonymous.
+		expect((await app.request('/mcp', {}, OPERATOR_ENV)).status).toBe(200);
 	});
 });
