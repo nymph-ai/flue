@@ -53,6 +53,9 @@ export const CALLS_PER_DAY = 300;
 
 export class FabricRefusal extends Error {}
 
+/** A subscribe that would move an existing subscription to another callback. */
+export class SubscriptionConflict extends Error {}
+
 async function sha256Hex(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
 	return Array.from(new Uint8Array(digest))
@@ -961,6 +964,20 @@ export class TaskStore {
 				.slice(0, 16)
 				.join('');
 			subId = `sub_${hash}`;
+		}
+		// A subscription's callback is fixed by whoever made it: the MCP surface
+		// is anonymous, so a subscribe naming an existing subscription id with
+		// another callback would take that subscription's events, the Dot's
+		// Fabric messages and their capabilities among them (DOTS D7).
+		const existingCallback = this.sql
+			? this.sql
+					.exec(`SELECT callback_url FROM mcp_subscriptions WHERE id = ?`, subId)
+					.toArray()[0]?.callback_url
+			: this.subscriptions.get(subId)?.callbackUrl;
+		if (existingCallback !== undefined && String(existingCallback) !== params.callbackUrl) {
+			throw new SubscriptionConflict(
+				`Subscription ${subId} belongs to another callback; subscribe without a subscriptionId.`,
+			);
 		}
 		const now = new Date().toISOString();
 		const subscription: SubscriptionRecord = {
