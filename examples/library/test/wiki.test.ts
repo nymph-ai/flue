@@ -563,7 +563,7 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect(ackData.acknowledged).toBe(true);
 
 		// Verify result is now marked acknowledged
-		const resResultAcked = await mcp.request(`/results/${taskId}`);
+		const resResultAcked = await mcp.request(`/results/${taskId}`, operator(), OPERATOR_ENV);
 		expect(resResultAcked.status).toBe(200);
 		const resultAckedJson = (await resResultAcked.json()) as { acknowledged: boolean };
 		expect(resultAckedJson.acknowledged).toBe(true);
