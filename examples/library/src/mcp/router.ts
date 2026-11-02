@@ -972,14 +972,24 @@ export function createMcpRouter(
 				}
 			}
 
-			const { subscription, replayedEvents, cursor } = await taskStore.subscribe({
-				subscriptionId: subId,
-				callbackUrl,
-				secret,
-				filter,
-				fromRevision,
-				cursor: cursorParam,
-			});
+			let subscribed: Awaited<ReturnType<McpTaskStore['subscribe']>>;
+			try {
+				subscribed = await taskStore.subscribe({
+					subscriptionId: subId,
+					callbackUrl,
+					secret,
+					filter,
+					fromRevision,
+					cursor: cursorParam,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes('belongs to another callback')) {
+					return rpcError(id, -32602, message, { reason: 'subscription_conflict' });
+				}
+				throw error;
+			}
+			const { subscription, replayedEvents, cursor } = subscribed;
 
 			if (taskStore.logAudit) {
 				await taskStore.logAudit('events/subscribe:success', {

