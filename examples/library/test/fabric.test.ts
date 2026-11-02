@@ -152,7 +152,9 @@ describe("The Dot's Fabric tools", () => {
 			['send', { to: '/nymphai/claude-1', text: 'Done: it is public.', reply_to: 'msg-1' }],
 		]);
 		expect(store.getTask(taskId!)?.status).toBe('completed');
-		expect(seen.at(-1)!.body.data).toMatchObject({ taskId, status: 'completed' });
+		// The completion event is sent in the background.
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(seen.some((x) => x.body.data.taskId === taskId && x.body.data.status === 'completed')).toBe(true);
 		// Not a Fabric message: the ordinary acknowledgement path.
 		expect((await store.fabricReply('task_other', {})).result).toBeNull();
 	});
