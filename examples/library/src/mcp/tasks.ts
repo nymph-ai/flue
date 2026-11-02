@@ -1740,6 +1740,26 @@ export class TaskStore {
 		return { replied: Boolean(reply), sent };
 	}
 
+	/**
+	 * What get_task shows of a Fabric message: the message and how to answer,
+	 * capability included. The task id is itself unguessable and reaches only
+	 * the Dot's subscription, so this tells nobody the event did not (DOTS D14).
+	 */
+	async fabricView(taskId: string): Promise<unknown> {
+		const task = this.getTask(taskId);
+		if (!task || task.type !== 'fabric_message') return null;
+		const event = await this.withFabricMessage({
+			event: 'task_changed',
+			eventId: '',
+			taskId,
+			revision: task.revision,
+			status: 'input_required',
+			summary: '',
+			timestamp: task.updatedAt,
+		});
+		return event.fabricMessage ?? null;
+	}
+
 	/** fabricCall, a refusal given back as `{refused}` (it crosses DO RPC). */
 	async fabricTool(
 		tool: 'send' | 'delegate' | 'query',
@@ -2215,6 +2235,10 @@ export function mcpBase<TBase extends new (...args: any[]) => any>(Base: TBase):
 
 		async fabricMcpTool(tool: 'send' | 'delegate' | 'query', args: Record<string, unknown>) {
 			return this.getMcpStore().fabricTool(tool, args);
+		}
+
+		async fabricMcpView(taskId: string) {
+			return this.getMcpStore().fabricView(taskId);
 		}
 
 		async fabricMcpReply(taskId: string, receipt: unknown) {

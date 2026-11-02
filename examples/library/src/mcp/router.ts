@@ -342,6 +342,7 @@ export interface McpTaskStore {
 		tool: 'send' | 'delegate' | 'query',
 		args: Record<string, unknown>,
 	): Promise<{ result?: unknown; refused?: string }>;
+	fabricView?(taskId: string): Promise<unknown>;
 	fabricReply?(
 		taskId: string,
 		receipt: unknown,
@@ -431,6 +432,7 @@ export function createMcpRouter(
 				logAudit: (category, details) => stub.logMcpAudit(category, details),
 				listSubscriptions: () => stub.listMcpSubscriptions(),
 				fabricTool: (tool, args) => stub.fabricMcpTool(tool, args),
+				fabricView: (taskId) => stub.fabricMcpView(taskId),
 				fabricReply: (taskId, receipt) => stub.fabricMcpReply(taskId, receipt),
 				getAuditLogs: (limit) => stub.getMcpAuditLogs(limit),
 			};
@@ -1056,6 +1058,10 @@ export function createMcpRouter(
 					if (!taskId) return toolResult(id, 'get_task requires task_id', true);
 					const task = await taskStore.getTask(taskId);
 					if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
+					if (task.type === 'fabric_message' && taskStore.fabricView) {
+						const fabricMessage = await taskStore.fabricView(taskId);
+						return toolResult(id, JSON.stringify({ ...task, fabricMessage }, null, 2));
+					}
 					return toolResult(id, JSON.stringify(task, null, 2));
 				}
 
