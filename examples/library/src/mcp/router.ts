@@ -36,6 +36,73 @@ export const SERVER_INFO = {
 	version: '2.0.0',
 };
 
+const CAPABILITY = {
+	type: 'string',
+	description:
+		'The replyCapability of a Fabric message event (fabricMessage.replyCapability): it lets you act as your Fabric proc for seven days.',
+};
+
+/**
+ * SESSIONS S9's three tools, made as the Dot's Fabric proc /nymphai/dot-chatgpt
+ * (fabric/DOTS.md D5). Each needs a capability Fabric gave the Dot (D7).
+ */
+export const FABRIC_TOOLS = [
+	{
+		name: 'send',
+		description:
+			'Send a message to a Fabric agent, as your Fabric proc /nymphai/dot-chatgpt. To answer a Fabric message, set reply_to to its messageId (or use acknowledge_result on its task).',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				to: { type: 'string', description: 'Exact proc address, such as /nymphai/worker-3.' },
+				text: { type: 'string' },
+				reply_to: { type: 'string', description: 'Id of the Fabric message this answers.' },
+				expects_reply: { type: 'boolean', description: 'You are owed an answer; it arrives as a new Fabric message event.' },
+				capability: CAPABILITY,
+			},
+			required: ['to', 'text', 'capability'],
+		},
+		annotations: { destructiveHint: false, openWorldHint: true },
+	},
+	{
+		name: 'delegate',
+		description:
+			'Put work on the Fabric board for whichever agent is free. The brief must be self-contained. Its result arrives later as a Fabric message event.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				brief: { type: 'string', description: 'Self-contained instruction.' },
+				acceptance: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'What must be observably true when it is done, one criterion each.',
+				},
+				inputs: { type: 'array', items: { type: 'string' }, description: 'Files, links or artifacts to consult.' },
+				capability: CAPABILITY,
+			},
+			required: ['brief', 'capability'],
+		},
+		annotations: { destructiveHint: false, openWorldHint: true },
+	},
+	{
+		name: 'query',
+		description:
+			"Read Fabric's state: who is working on what, what became of a task, recent activity. Targets: procs, tasks, proc (selector.address), task (selector.id), activity, stuck, messages, pools, events.",
+		inputSchema: {
+			type: 'object',
+			properties: {
+				target: { type: 'string' },
+				selector: { type: 'object' },
+				limit: { type: 'integer' },
+				fields: { type: 'array', items: { type: 'string' } },
+				capability: CAPABILITY,
+			},
+			required: ['target', 'capability'],
+		},
+		annotations: { readOnlyHint: true },
+	},
+];
+
 export const COMMAND_TOOLS = [
 	{
 		name: 'submit_task',
@@ -140,7 +207,7 @@ export const COMMAND_TOOLS = [
 	{
 		name: 'acknowledge_result',
 		description:
-			'Explicitly acknowledge that the client (OpenAI Dot) has read and processed a task result. Distinct from HTTP delivery acknowledgement.',
+			'Explicitly acknowledge that the client (OpenAI Dot) has read and processed a task result. Distinct from HTTP delivery acknowledgement. For a fabric_message task this is the answer to the Fabric agent who sent it: receipt {reply, capability}, the capability from the event\'s fabricMessage.replyCapability.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -148,13 +215,14 @@ export const COMMAND_TOOLS = [
 				receipt: {
 					type: 'object',
 					description:
-						'Optional client processing metadata, e.g. thread_id, processed_at, action_taken.',
+						'Optional client processing metadata, e.g. thread_id, processed_at, action_taken. For a fabric_message task: reply (your answer, sent to the message\'s sender in its thread) and capability (required).',
 				},
 			},
 			required: ['task_id'],
 		},
 		annotations: { destructiveHint: false },
 	},
+	...FABRIC_TOOLS,
 ];
 
 export const EVENT_DEFINITIONS = [
@@ -270,6 +338,15 @@ export interface McpTaskStore {
 	listNotes?(prefix?: string): Promise<string[]> | string[];
 	logAudit?(category: string, details: Record<string, unknown>): Promise<void> | void;
 	listSubscriptions?(): Promise<unknown[]> | unknown[];
+	fabricTool?(
+		tool: 'send' | 'delegate' | 'query',
+		args: Record<string, unknown>,
+	): Promise<{ result?: unknown; refused?: string }>;
+	fabricView?(taskId: string): Promise<unknown>;
+	fabricReply?(
+		taskId: string,
+		receipt: unknown,
+	): Promise<{ result?: { replied: boolean; sent?: unknown } | null; refused?: string }>;
 	getAuditLogs?(
 		limit?: number,
 	):
@@ -354,6 +431,9 @@ export function createMcpRouter(
 				listNotes: (prefix) => stub.listMcpNotes(prefix),
 				logAudit: (category, details) => stub.logMcpAudit(category, details),
 				listSubscriptions: () => stub.listMcpSubscriptions(),
+				fabricTool: (tool, args) => stub.fabricMcpTool(tool, args),
+				fabricView: (taskId) => stub.fabricMcpView(taskId),
+				fabricReply: (taskId, receipt) => stub.fabricMcpReply(taskId, receipt),
 				getAuditLogs: (limit) => stub.getMcpAuditLogs(limit),
 			};
 		}
@@ -978,6 +1058,10 @@ export function createMcpRouter(
 					if (!taskId) return toolResult(id, 'get_task requires task_id', true);
 					const task = await taskStore.getTask(taskId);
 					if (!task) return toolResult(id, `Task not found: ${taskId}`, true);
+					if (task.type === 'fabric_message' && taskStore.fabricView) {
+						const fabricMessage = await taskStore.fabricView(taskId);
+						return toolResult(id, JSON.stringify({ ...task, fabricMessage }, null, 2));
+					}
 					return toolResult(id, JSON.stringify(task, null, 2));
 				}
 
@@ -1009,6 +1093,16 @@ export function createMcpRouter(
 					const taskId = String(args.task_id ?? '');
 					const receipt = args.receipt;
 					if (!taskId) return toolResult(id, 'acknowledge_result requires task_id', true);
+					if (taskStore.fabricReply) {
+						const fabric = await taskStore.fabricReply(taskId, receipt);
+						if (fabric.refused) return toolResult(id, fabric.refused, true);
+						if (fabric.result) {
+							return toolResult(
+								id,
+								JSON.stringify({ taskId, acknowledged: true, ...fabric.result }, null, 2),
+							);
+						}
+					}
 					const ok = await taskStore.acknowledgeResult(taskId, receipt);
 					return toolResult(id, JSON.stringify({ taskId, acknowledged: ok }));
 				}
@@ -1066,6 +1160,21 @@ export function createMcpRouter(
 						return toolResult(id, `Note not found: ${path}`, true);
 					}
 					return toolResult(id, content);
+				}
+
+				case 'send':
+				case 'delegate':
+				case 'query': {
+					if (!taskStore.fabricTool) return toolResult(id, 'Fabric is not connected to this library.', true);
+					const fabric = await taskStore.fabricTool(toolName, args);
+					if (fabric.refused) return toolResult(id, fabric.refused, true);
+					// dots-host answers {proc, result}: the result is the kernel's CallToolResult.
+					const answer = fabric.result as { result?: { content?: unknown; isError?: boolean } } | undefined;
+					const inner = answer?.result;
+					if (inner && Array.isArray(inner.content)) {
+						return rpcSuccess(id, { content: inner.content, ...(inner.isError ? { isError: true } : {}) });
+					}
+					return toolResult(id, JSON.stringify(fabric.result ?? null));
 				}
 
 				default:

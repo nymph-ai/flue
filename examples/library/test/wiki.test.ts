@@ -15,7 +15,7 @@ import {
 	slugify,
 } from '../src/wiki/okf.ts';
 import { createMcpRouter } from '../src/mcp/router.ts';
-import { TaskStore } from '../src/mcp/tasks.ts';
+import { CALLS_PER_CAPABILITY_HOUR, TaskStore } from '../src/mcp/tasks.ts';
 import { createWikiRouter } from '../src/wiki/routes.ts';
 import { LibraryVault } from '../src/wiki/storage.ts';
 import { REDACTED, redactSecrets } from '../src/mcp/redact.ts';
@@ -1509,5 +1509,173 @@ describe('Google Open Knowledge Format (OKF) & Obsidian Vault', () => {
 		expect((await app.request('/mcp/subscriptions', operator(), OPERATOR_ENV)).status).toBe(200);
 		// The connector's own surface stays anonymous.
 		expect((await app.request('/mcp', {}, OPERATOR_ENV)).status).toBe(200);
+	});
+
+	describe('Fabric messages for the operator\'s Dot (nymphai fabric/DOTS.md)', () => {
+		function sqlite() {
+			const db = new DatabaseSync(':memory:');
+			return {
+				db,
+				sql: {
+					exec: (query: string, ...bindings: unknown[]) => {
+						const stmt = db.prepare(query);
+						const clean = bindings.map((b) => (b === undefined ? null : b));
+						if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(query)) {
+							const rows = stmt.all(...(clean as never[])) as Record<string, unknown>[];
+							return { toArray: () => rows };
+						}
+						stmt.run(...(clean as never[]));
+						return { toArray: () => [] };
+					},
+				},
+			};
+		}
+
+		async function world(webhookStatus = 200) {
+			const posted: Array<{ url: string; body: any }> = [];
+			vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				posted.push({ url, body: JSON.parse(String(init?.body ?? 'null')) });
+				return new Response('{}', { status: url.includes('dot-hook') ? webhookStatus : 200 });
+			});
+			const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+			const { db, sql } = sqlite();
+			const store = new TaskStore(() => new LibraryVault(), {
+				sql,
+				fabric: async (tool, args) => {
+					calls.push({ tool, args });
+					return { proc: '/nymphai/dot-chatgpt', result: { content: [{ type: 'text', text: `${tool} ok` }] } };
+				},
+			});
+			const dot = await store.subscribe({
+				subscriptionId: 'sub_dot',
+				callbackUrl: 'https://connectors.test/dot-hook',
+				secret: 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-1_abc99',
+				filter: { correlationId: 'dot-thread' },
+			});
+			// A stranger's subscription, with no filter at all.
+			await store.subscribe({ subscriptionId: 'sub_stranger', callbackUrl: 'https://stranger.test/hook' });
+			const env = { FABRIC_DOTS_TOKEN: 'f'.repeat(64), DOT_SUBSCRIPTION_ID: dot.subscription.id };
+			return { db, store, posted, calls, env };
+		}
+
+		const message = {
+			message_id: 'msg-1',
+			from: '/nymphai/claude-1',
+			text: 'Please make fabric-thc-toolchain public in GitHub Package Settings.',
+			in_reply_to: null,
+			expects_reply: true,
+			sent_at: '2026-11-02T00:00:00Z',
+		};
+
+		it('delivers a message to the Dot\'s subscription alone, once, with a capability', async () => {
+			try {
+				const { store, posted, env } = await world();
+				const first = await store.deliverFabricMessage(message, env.DOT_SUBSCRIPTION_ID);
+				expect(first.delivered).toBe(true);
+				const events = posted.filter((p) => p.body?.data?.kind === 'fabric_message');
+				expect(events).toHaveLength(1);
+				expect(events[0]!.url).toBe('https://connectors.test/dot-hook');
+				const data = events[0]!.body.data;
+				expect(data.taskId).toBe(first.taskId);
+				expect(data.correlationId).toBe('dot-thread');
+				expect(data.status).toBe('input_required');
+				expect(data.fabricMessage.messageId).toBe('msg-1');
+				expect(data.fabricMessage.from).toBe('/nymphai/claude-1');
+				expect(data.fabricMessage.replyCapability).toMatch(/^cap_[0-9a-f]{32}$/);
+				expect(posted.some((p) => p.url.includes('stranger'))).toBe(false);
+
+				// dots-host sending it again is the same task, and nothing is sent twice.
+				const again = await store.deliverFabricMessage(message, env.DOT_SUBSCRIPTION_ID);
+				expect(again).toEqual({ delivered: true, taskId: first.taskId });
+				expect(posted.filter((p) => p.body?.data?.kind === 'fabric_message')).toHaveLength(1);
+
+				// The task shows the message but never the capability.
+				expect(JSON.stringify(store.getTask(first.taskId!))).not.toContain('cap_');
+
+				// A stranger re-subscribing with a cursor is replayed no Fabric event.
+				posted.length = 0;
+				await store.subscribe({ subscriptionId: 'sub_stranger', callbackUrl: 'https://stranger.test/hook', fromRevision: 0 });
+				expect(posted.some((p) => JSON.stringify(p.body).includes('msg-1'))).toBe(false);
+
+				expect(await store.deliverFabricMessage({ ...message, message_id: 'msg-2' }, 'sub_gone')).toEqual({
+					delivered: false,
+					reason: 'no_subscription',
+				});
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+
+		it('keeps a message undelivered while ChatGPT\'s webhook refuses it', async () => {
+			try {
+				const { store, env } = await world(500);
+				const outcome = await store.deliverFabricMessage(message, env.DOT_SUBSCRIPTION_ID);
+				expect(outcome.delivered).toBe(false);
+				expect(outcome.reason).toBe('webhook_refused');
+				expect(outcome.statusCode).toBe(500);
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+
+		it('answers dots-host on POST /fabric/messages only with the shared token', async () => {
+			try {
+				const env = { FABRIC_DOTS_TOKEN: 'f'.repeat(64) };
+				const post = (headers: Record<string, string>, extra: Record<string, unknown> = {}) =>
+					app.request('/fabric/messages', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(message) }, { ...env, ...extra });
+				expect((await post({})).status).toBe(401);
+				expect((await post({ authorization: `Bearer ${'e'.repeat(64)}` })).status).toBe(401);
+				// No subscription named: the message waits in Fabric.
+				const waiting = await post({ authorization: `Bearer ${'f'.repeat(64)}` }, { DOT_SUBSCRIPTION_ID: 'sub_none' });
+				expect(waiting.status).toBe(503);
+				expect(await waiting.json()).toEqual({ delivered: false, reason: 'no_subscription' });
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+
+		it('lets the Dot act as its proc only with a capability Fabric gave it', async () => {
+			try {
+				const { store, posted, calls, env } = await world();
+				const delivered = await store.deliverFabricMessage(message, env.DOT_SUBSCRIPTION_ID);
+				const capability = posted.find((p) => p.body?.data?.kind === 'fabric_message')!.body.data.fabricMessage.replyCapability;
+				const mcp = createMcpRouter(() => new LibraryVault(), () => store);
+				const tool = async (name: string, args: Record<string, unknown>) =>
+					(await (
+						await mcp.request('/', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+						})
+					).json()) as any;
+
+				const tools = (await (await mcp.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).json()) as any;
+				const names = tools.result.tools.map((t: { name: string }) => t.name);
+				expect(names).toEqual(expect.arrayContaining(['send', 'delegate', 'query']));
+
+				expect((await tool('query', { target: 'procs' })).result.isError).toBe(true);
+				expect((await tool('query', { target: 'procs', capability: `cap_${'0'.repeat(32)}` })).result.isError).toBe(true);
+				expect(calls).toHaveLength(0);
+
+				const asked = await tool('query', { target: 'procs', capability });
+				expect(asked.result.content[0].text).toBe('query ok');
+				expect(calls[0]).toEqual({ tool: 'query', args: { target: 'procs' } });
+
+				// The answer to the message goes to its sender, in its thread.
+				expect((await tool('acknowledge_result', { task_id: delivered.taskId, receipt: { reply: 'Done.' } })).result.isError).toBe(true);
+				const answered = await tool('acknowledge_result', { task_id: delivered.taskId, receipt: { reply: 'Done.', capability } });
+				expect(answered.result.isError).toBeUndefined();
+				expect(calls[1]).toEqual({ tool: 'send', args: { to: '/nymphai/claude-1', text: 'Done.', reply_to: 'msg-1' } });
+				expect(store.getTask(delivered.taskId!)?.status).toBe('completed');
+
+				for (let i = calls.length; i < CALLS_PER_CAPABILITY_HOUR; i++) await tool('query', { target: 'procs', capability });
+				const spent = await tool('query', { target: 'procs', capability });
+				expect(spent.result.isError).toBe(true);
+				expect(spent.result.content[0].text).toContain('budget');
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
 	});
 });

@@ -59,7 +59,41 @@ export interface TaskChangedEvent {
 		prompt: string;
 		schema?: Record<string, unknown>;
 	};
+	/** A message from a Fabric agent to the operator's Dot (fabric/DOTS.md D4). */
+	fabricMessage?: FabricMessageEvent;
 	timestamp: string;
+}
+
+/** What the Dot is told of one Fabric message, in its task_changed event only. */
+export interface FabricMessageEvent {
+	messageId: string;
+	from: string;
+	text: string;
+	inReplyTo?: string | null;
+	expectsReply: boolean;
+	sentAt?: string;
+	/** Quoted by the Dot to act as its Fabric proc (DOTS D7). */
+	replyCapability: string;
+	capabilityExpiresAt: string;
+	howToReply: string;
+}
+
+/** One message from Fabric, as dots-host POSTs it. */
+export interface FabricMessageIn {
+	message_id: string;
+	from: string;
+	text: string;
+	in_reply_to?: string | null;
+	expects_reply?: boolean;
+	sent_at?: string;
+}
+
+/** What the library says back to dots-host for one message. */
+export interface FabricDelivery {
+	delivered: boolean;
+	taskId?: string;
+	statusCode?: number;
+	reason?: 'no_subscription' | 'webhook_refused' | 'webhook_unreachable' | 'invalid';
 }
 
 export interface SubscriptionRecord {

@@ -10,6 +10,8 @@ import { Curator } from './agent.ts';
 import { getOpenApiSpec } from './mcp/openapi.ts';
 import { bearerAuthorized } from './mcp/redact.ts';
 import { createMcpRouter } from './mcp/router.ts';
+import { getOrCreateTaskStore } from './mcp/tasks.ts';
+import type { FabricDelivery, FabricMessageIn } from './mcp/types.ts';
 import { libraryModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
 import { createWikiRouter } from './wiki/routes.ts';
@@ -132,6 +134,38 @@ const requireLibraryToken = async (c: any, next: () => Promise<void>) => {
 	}
 	await next();
 };
+
+// Fabric to the operator's Dot (fabric/DOTS.md D4): dots-host POSTs each
+// message owed to the Dot's proc here, with the shared FABRIC_DOTS_TOKEN (D6).
+// The message becomes a fabric_message task under ChatGPT's subscription
+// (DOT_SUBSCRIPTION_ID), whose task_changed event is sent before the answer:
+// 200 with delivered true once ChatGPT's webhook took it, 503 when that
+// subscription is gone, 502 when the webhook refused it.
+app.post('/fabric/messages', async (c) => {
+	const token = c.env?.FABRIC_DOTS_TOKEN;
+	const given = c.req.header('authorization');
+	if (typeof token !== 'string' || !bearerAuthorized({ LIBRARY_TOKEN: token }, given)) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+	let message: FabricMessageIn;
+	try {
+		message = await c.req.json();
+	} catch {
+		return c.json({ delivered: false, reason: 'invalid' }, 400);
+	}
+	const subscriptionId = c.env?.DOT_SUBSCRIPTION_ID as string | undefined;
+	const curator = c.env?.FLUE_CURATOR_AGENT as { getByName(name: string): any } | undefined;
+	const store = curator ? curator.getByName('curator') : getOrCreateTaskStore();
+	const outcome: FabricDelivery = await store.deliverFabricMessage(message, subscriptionId);
+	const status = outcome.delivered
+		? 200
+		: outcome.reason === 'invalid'
+			? 400
+			: outcome.reason === 'no_subscription'
+				? 503
+				: 502;
+	return c.json(outcome, status);
+});
 
 // Wiki vault routes (Obsidian sync, git tokens): operator only.
 app.use('/wiki', requireLibraryToken);
