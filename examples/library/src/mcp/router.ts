@@ -11,6 +11,7 @@ import { cors } from 'hono/cors';
 import { getOrCreateVault } from '../wiki/routes.ts';
 import { LibraryVault } from '../wiki/storage.ts';
 import { getOpenApiSpec } from './openapi.ts';
+import { bearerAuthorized, redactSecrets } from './redact.ts';
 import {
 	constantTimeEqual,
 	deriveSubscriptionId,
@@ -154,21 +155,6 @@ export const COMMAND_TOOLS = [
 		},
 		annotations: { destructiveHint: false },
 	},
-	{
-		name: 'get_audit_logs',
-		description:
-			'Retrieve recent audit logs for MCP subscriptions, challenge verifications, and event deliveries. Useful for diagnosing connection handshakes and delivery statuses.',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				limit: {
-					type: 'integer',
-					description: 'Maximum number of audit log records to return (default: 50).',
-				},
-			},
-		},
-		annotations: { destructiveHint: false },
-	},
 ];
 
 export const EVENT_DEFINITIONS = [
@@ -283,6 +269,7 @@ export interface McpTaskStore {
 	getNote?(path: string): Promise<string | null> | string | null;
 	listNotes?(prefix?: string): Promise<string[]> | string[];
 	logAudit?(category: string, details: Record<string, unknown>): Promise<void> | void;
+	listSubscriptions?(): Promise<unknown[]> | unknown[];
 	getAuditLogs?(
 		limit?: number,
 	):
@@ -366,11 +353,20 @@ export function createMcpRouter(
 				getNote: (path) => stub.getMcpNote(path),
 				listNotes: (prefix) => stub.listMcpNotes(prefix),
 				logAudit: (category, details) => stub.logMcpAudit(category, details),
+				listSubscriptions: () => stub.listMcpSubscriptions(),
 				getAuditLogs: (limit) => stub.getMcpAuditLogs(limit),
 			};
 		}
 		return resolveTaskStore();
 	};
+
+	// Everything here except the JSON-RPC surface (POST /, GET / discovery,
+	// /openapi.json, the challenge receiver POST /test-callback) is an
+	// operator route: LIBRARY_TOKEN bearer only.
+	const denied = (c: any): Response | null =>
+		bearerAuthorized(c.env, c.req.header('authorization'))
+			? null
+			: c.json({ error: 'unauthorized' }, 401);
 
 	// GET /mcp — Discovery and protocol capability negotiation
 	router.get('/', (c) =>
@@ -406,6 +402,8 @@ export function createMcpRouter(
 
 	// REST endpoints for direct inspection
 	router.get('/tasks/:id', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		const store = resolveStore(c.env);
 		const task = await store.getTask(c.req.param('id'));
 		if (!task) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
@@ -413,6 +411,8 @@ export function createMcpRouter(
 	});
 
 	router.get('/results/:id', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		const store = resolveStore(c.env);
 		const result = await store.getResult(c.req.param('id'));
 		if (!result) return c.json({ error: 'not_found', taskId: c.req.param('id') }, 404);
@@ -420,6 +420,8 @@ export function createMcpRouter(
 	});
 
 	router.get('/events', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		const store = resolveStore(c.env);
 		const taskId = c.req.query('taskId');
 		const correlationId = c.req.query('correlationId');
@@ -428,6 +430,8 @@ export function createMcpRouter(
 	});
 
 	router.get('/deliveries/:taskId', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		const store = resolveStore(c.env);
 		const deliveries = await store.getDeliveryRecords(c.req.param('taskId'));
 		return c.json({ total: deliveries.length, deliveries });
@@ -438,15 +442,30 @@ export function createMcpRouter(
 		return c.json(getOpenApiSpec(origin));
 	});
 
-	const handleAuditLogs = async (c: any) => {
+	router.get('/deliveries', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		const store = resolveStore(c.env);
-		const limit = Number(c.req.query('limit')) || 50;
+		const deliveries = await store.getDeliveryRecords();
+		const limit = Math.min(Math.max(Number(c.req.query('limit')) || 100, 1), 1000);
+		return c.json({ total: deliveries.length, deliveries: deliveries.slice(-limit) });
+	});
+
+	router.get('/subscriptions', async (c) => {
+		const refused = denied(c);
+		if (refused) return refused;
+		const store = resolveStore(c.env);
+		const subscriptions = store.listSubscriptions ? await store.listSubscriptions() : [];
+		return c.json({ total: subscriptions.length, subscriptions });
+	});
+
+	const handleAuditLogs = async (c: any) => {
+		const refused = denied(c);
+		if (refused) return refused;
+		const store = resolveStore(c.env);
+		const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 1000);
 		const logs = store.getAuditLogs ? await store.getAuditLogs(limit) : [];
-		return c.json({ total: logs.length, logs }, 200, {
-			'access-control-allow-origin': '*',
-			'access-control-allow-methods': 'GET, OPTIONS',
-			'access-control-allow-headers': '*',
-		});
+		return c.json({ total: logs.length, logs: redactSecrets(logs) });
 	};
 
 	router.get('/audit-logs', handleAuditLogs);
@@ -489,6 +508,7 @@ export function createMcpRouter(
 			signatureValid,
 		};
 		testCallbacks.push(record);
+		if (testCallbacks.length > 100) testCallbacks.shift();
 
 		if (
 			payload &&
@@ -517,6 +537,8 @@ export function createMcpRouter(
 	router.post('/mcp/test-callback', handleTestCallback);
 
 	const getTestCallback = (c: any) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		return c.json({
 			total: testCallbacks.length,
 			callbacks: testCallbacks,
@@ -524,6 +546,8 @@ export function createMcpRouter(
 	};
 
 	const deleteTestCallback = (c: any) => {
+		const refused = denied(c);
+		if (refused) return refused;
 		testCallbacks.length = 0;
 		return c.json({ cleared: true });
 	};
@@ -628,7 +652,9 @@ export function createMcpRouter(
 		// 6. events/subscribe
 		if (method === 'events/subscribe') {
 			const params = body.params ?? {};
-			console.log(`[mcp:events/subscribe] Incoming params: ${JSON.stringify(params)}`);
+			console.log(
+				`[mcp:events/subscribe] Incoming params: ${JSON.stringify(redactSecrets(params))}`,
+			);
 			const delivery = (params.delivery ?? {}) as Record<string, unknown>;
 			const callbackUrl = String(
 				delivery.url ?? delivery.callbackUrl ?? params.callbackUrl ?? params.callback_url ?? '',
@@ -753,7 +779,7 @@ export function createMcpRouter(
 
 				try {
 					console.log(
-						`[mcp:events/subscribe] Dispatching verification challenge to: ${callbackUrl}`,
+						`[mcp:events/subscribe] Dispatching verification challenge to: ${redactSecrets(callbackUrl)}`,
 					);
 					let chgRes: Response;
 					if (
@@ -1040,13 +1066,6 @@ export function createMcpRouter(
 						return toolResult(id, `Note not found: ${path}`, true);
 					}
 					return toolResult(id, content);
-				}
-
-				case 'get_audit_logs': {
-					const limit =
-						typeof args.limit === 'number' ? Math.min(Math.max(args.limit, 1), 100) : 50;
-					const logs = taskStore.getAuditLogs ? await taskStore.getAuditLogs(limit) : [];
-					return toolResult(id, JSON.stringify({ total: logs.length, logs }, null, 2));
 				}
 
 				default:

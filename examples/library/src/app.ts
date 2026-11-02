@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { Curator } from './agent.ts';
 import { getOpenApiSpec } from './mcp/openapi.ts';
+import { bearerAuthorized } from './mcp/redact.ts';
 import { createMcpRouter } from './mcp/router.ts';
 import { libraryModel } from './model.ts';
 import { installQualification } from './qualification/install.ts';
@@ -122,29 +123,27 @@ app.get('/mcp/openapi.json', (c) => {
 	return c.json(getOpenApiSpec(origin));
 });
 
-// Wiki vault routes (public / accessible for Obsidian sync)
+// Operator routes take the LIBRARY_TOKEN bearer secret. The only anonymous
+// surface is the MCP connector (POST /mcp, GET /mcp discovery) and the
+// public manifests above; the vault's notes are read through its tools.
+const requireLibraryToken = async (c: any, next: () => Promise<void>) => {
+	if (!bearerAuthorized(c.env, c.req.header('authorization'))) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+	await next();
+};
+
+// Wiki vault routes (Obsidian sync, git tokens): operator only.
+app.use('/wiki', requireLibraryToken);
+app.use('/wiki/*', requireLibraryToken);
 app.route('/wiki', createWikiRouter());
 
 // MCP server endpoint for OpenAI Dots & external AI tools
 app.route('/mcp', createMcpRouter());
 
 // Agent route protected by bearer token
-app.use('/agents/*', async (c, next) => {
-	const token = c.env.LIBRARY_TOKEN as string | undefined;
-	const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
-	if (typeof token !== 'string' || token.length === 0 || given !== token) {
-		return c.json({ error: 'unauthorized' }, 401);
-	}
-	await next();
-});
-app.use('/agent/*', async (c, next) => {
-	const token = c.env.LIBRARY_TOKEN as string | undefined;
-	const given = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
-	if (typeof token !== 'string' || token.length === 0 || given !== token) {
-		return c.json({ error: 'unauthorized' }, 401);
-	}
-	await next();
-});
+app.use('/agents/*', requireLibraryToken);
+app.use('/agent/*', requireLibraryToken);
 
 if (__QUALIFICATION__) installQualification(app as never);
 
